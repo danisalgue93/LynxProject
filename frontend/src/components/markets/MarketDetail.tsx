@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
-import { Market, Position } from '@/src/types';
+import React, { useState, useEffect } from 'react';
+import { Market, Position, Duel } from '@/src/types';
 import { X, TrendingUp, ShieldCheck, Zap, Info, BarChart3, Clock, ArrowRight, Sword } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatSOL, cn } from '@/src/lib/utils';
-import { MOCK_DUELS } from '@/src/constants';
+import { useProgram } from '@/src/hooks/useProgram';
 
 interface MarketDetailProps {
   market: Market;
@@ -11,12 +11,24 @@ interface MarketDetailProps {
 }
 
 export function MarketDetail({ market, onClose }: MarketDetailProps) {
+  const { fetchDuels } = useProgram();
+  const [marketDuels, setMarketDuels] = useState<Duel[]>([]);
+  
   const [betAmount, setBetAmount] = useState('5.0');
   const [selectedSide, setSelectedSide] = useState<Position>(Position.YES);
   const [isPending, setIsPending] = useState(false);
 
   const [activeMode, setActiveMode] = useState<'quick' | 'book' | 'duels'>('quick');
-  const marketDuels = MOCK_DUELS.filter(d => d.parentMarketId === market.id);
+
+  useEffect(() => {
+    if (activeMode === 'duels') {
+      const loadDuels = async () => {
+        const duels = await fetchDuels();
+        setMarketDuels(duels.filter(d => d.parentMarketId === market.id));
+      };
+      loadDuels();
+    }
+  }, [fetchDuels, activeMode, market.id]);
 
   const handleQuickBet = () => {
     setIsPending(true);
@@ -203,15 +215,15 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
         </div>
 
         {/* Right Side: Execution Panel */}
-        <aside className="w-full md:w-[360px] lg:w-[400px] bg-[#0D0D0E] border-t md:border-t-0 md:border-l border-[#1F1F23] flex flex-col shrink-0">
-          <div className="p-5 md:p-6 border-b border-[#1F1F23]">
-             <h3 className="text-[10px] md:text-[11px] font-bold text-[#71717A] uppercase tracking-widest mb-4 md:mb-6">Market Access</h3>
+         <aside className="w-full md:w-[360px] lg:w-[400px] bg-[#0D0D0E] border-t md:border-t-0 md:border-l border-[#1F1F23] flex flex-col shrink-0">
+          <div className="p-4 md:p-6 border-b border-[#1F1F23]">
+             <h3 className="hidden md:block text-[10px] md:text-[11px] font-bold text-[#71717A] uppercase tracking-widest mb-4 md:mb-6">Market Access</h3>
              
-             <div className="flex gap-1 bg-[#18181B] p-0.5 rounded mb-6 border border-[#27272A]">
+             <div className="flex gap-1 bg-[#18181B] p-0.5 rounded mb-4 md:mb-6 border border-[#27272A]">
                <button 
                 onClick={() => setActiveMode('quick')}
                 className={cn(
-                  "flex-1 py-2 md:py-3 text-[9px] md:text-[10px] font-bold rounded uppercase tracking-widest transition-all",
+                  "flex-1 py-1.5 md:py-3 text-[8px] md:text-[10px] font-bold rounded uppercase tracking-widest transition-all",
                   activeMode === 'quick' ? (isLynx ? "bg-[#9945FF] text-white" : "bg-[#0A0A0B] text-[#00FFD1]") : "text-[#52525B] hover:text-white"
                 )}
                >
@@ -220,7 +232,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                <button 
                 onClick={() => setActiveMode('book')}
                 className={cn(
-                  "flex-1 py-2 md:py-3 text-[9px] md:text-[10px] font-bold rounded uppercase tracking-widest transition-all",
+                  "flex-1 py-1.5 md:py-3 text-[8px] md:text-[10px] font-bold rounded uppercase tracking-widest transition-all",
                   activeMode === 'book' ? (isLynx ? "bg-[#9945FF] text-white" : "bg-[#0A0A0B] text-[#00FFD1]") : "text-[#52525B] hover:text-white"
                 )}
                >
@@ -229,7 +241,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                <button 
                 onClick={() => setActiveMode('duels')}
                 className={cn(
-                  "flex-1 py-2 md:py-3 text-[9px] md:text-[10px] font-bold rounded uppercase tracking-widest transition-all",
+                  "flex-1 py-1.5 md:py-3 text-[8px] md:text-[10px] font-bold rounded uppercase tracking-widest transition-all",
                   activeMode === 'duels' ? (isLynx ? "bg-[#9945FF] text-white" : "bg-[#0A0A0B] text-[#00FFD1]") : "text-[#52525B] hover:text-white"
                 )}
                >
@@ -247,12 +259,11 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                     className="space-y-4 md:space-y-6"
                  >
                     <div>
-                      <label className="text-[9px] md:text-[10px] text-[#71717A] uppercase mb-2 md:mb-3 block font-bold tracking-wider">Outcome</label>
                       <div className="flex gap-2">
                         <button 
                           onClick={() => setSelectedSide(Position.YES)}
                           className={cn(
-                            "flex-1 py-3 md:py-4 rounded border transition-all font-black text-xs md:text-sm",
+                            "flex-1 py-2 md:py-4 rounded border transition-all font-black text-[10px] md:text-sm",
                             selectedSide === Position.YES 
                               ? (isLynx ? "bg-[#9945FF]/10 border-[#9945FF] text-[#9945FF]" : "bg-[#00FFD1]/5 border-[#00FFD1] text-[#00FFD1]")
                               : "bg-[#18181B] border-[#27272A] text-[#52525B]"
@@ -263,7 +274,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                         <button 
                           onClick={() => setSelectedSide(Position.NO)}
                           className={cn(
-                            "flex-1 py-3 md:py-4 rounded border transition-all font-black text-xs md:text-sm",
+                            "flex-1 py-2 md:py-4 rounded border transition-all font-black text-[10px] md:text-sm",
                             selectedSide === Position.NO 
                               ? "bg-red-400/10 border-red-400 text-red-400" 
                               : "bg-[#18181B] border-red-900/20 text-red-400/40 hover:text-red-400 hover:border-red-400/40"
@@ -275,19 +286,19 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                     </div>
 
                     <div>
-                      <div className="flex justify-between items-center mb-2">
-                        <label className="text-[9px] md:text-[10px] text-[#71717A] uppercase font-bold tracking-wider">Stake ({market.currency})</label>
-                        <span className={cn("text-[9px] md:text-[10px] font-mono font-bold", isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>MAX: {isLynx ? '5K' : '42'}</span>
+                      <div className="flex justify-between items-center mb-1.5 md:mb-2">
+                        <label className="text-[8px] md:text-[10px] text-[#71717A] uppercase font-bold tracking-wider">Stake ({market.currency})</label>
+                        <span className={cn("text-[8px] md:text-[10px] font-mono font-bold", isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>MAX: {isLynx ? '5K' : '42'}</span>
                       </div>
                       <div className="relative group">
                         <input 
                           type="number" 
-                          className="w-full bg-[#18181B] border border-[#27272A] rounded p-3 md:p-4 text-xl md:text-2xl font-mono text-white outline-none focus:border-[#00FFD1] tracking-tighter" 
+                          className="w-full bg-[#18181B] border border-[#27272A] rounded p-2.5 md:p-4 text-lg md:text-2xl font-mono text-white outline-none focus:border-[#00FFD1] tracking-tighter" 
                           value={betAmount}
                           onChange={(e) => setBetAmount(e.target.value)}
                         />
                         <button 
-                          className="absolute right-2 top-2 bottom-2 px-3 bg-[#27272A] text-[9px] md:text-[10px] font-black text-[#A1A1AA] hover:text-[#00FFD1] hover:bg-[#2D2D33] uppercase rounded transition-all z-10"
+                          className="absolute right-1.5 md:right-2 top-1.5 md:top-2 bottom-1.5 md:bottom-2 px-2.5 md:px-3 bg-[#27272A] text-[8px] md:text-[10px] font-black text-[#A1A1AA] hover:text-[#00FFD1] hover:bg-[#2D2D33] uppercase rounded transition-all z-10"
                           onClick={() => setBetAmount(isLynx ? '5000' : '42')}
                         >
                           Max
@@ -295,12 +306,12 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                       </div>
                     </div>
 
-                    <div className="bg-[#18181B] p-4 md:p-5 rounded border border-[#27272A] space-y-3 md:space-y-4">
-                      <div className="flex justify-between text-[10px] md:text-[11px] font-medium items-center">
+                    <div className="bg-[#18181B] p-3 md:p-5 rounded border border-[#27272A] space-y-2 md:space-y-4">
+                      <div className="flex justify-between text-[9px] md:text-[11px] font-medium items-center">
                         <span className="text-[#52525B] uppercase tracking-widest">Shares</span>
                         <span className="font-mono text-white font-bold">{tokenAmount}</span>
                       </div>
-                      <div className="flex justify-between text-[10px] md:text-[11px] font-medium items-center">
+                      <div className="flex justify-between text-[9px] md:text-[11px] font-medium items-center">
                         <span className="text-[#52525B] uppercase tracking-widest">Est. Payout</span>
                         <span className={cn("font-mono font-bold", isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>{(parseFloat(betAmount) * 1.6).toFixed(2)}</span>
                       </div>
@@ -310,7 +321,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                       onClick={handleQuickBet}
                       disabled={isPending}
                       className={cn(
-                        "w-full text-black font-black py-4 rounded uppercase tracking-tighter text-xs md:text-sm transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:scale-100 flex items-center justify-center gap-3",
+                        "w-full text-black font-black py-3 md:py-4 rounded uppercase tracking-tighter text-[10px] md:text-sm transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:scale-100 flex items-center justify-center gap-2 md:gap-3",
                         isLynx ? "bg-[#9945FF] shadow-[0_0_20px_rgba(153,69,255,0.3)]" : "bg-gradient-to-r from-[#00FFD1] to-[#9945FF] shadow-[0_0_20px_rgba(0,255,209,0.3)]"
                       )}
                     >

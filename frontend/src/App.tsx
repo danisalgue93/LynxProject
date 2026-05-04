@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { MarketsGrid } from './components/markets/MarketsGrid';
@@ -17,18 +17,26 @@ import { MarketDetail } from './components/markets/MarketDetail';
 import { CreateDuelModal } from './components/duels/CreateDuelModal';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowUpRight, TrendingUp, ShieldCheck, Zap } from 'lucide-react';
-import { MOCK_MARKETS } from './constants';
 import { Market } from './types';
 import { cn } from './lib/utils';
+import { useProgram } from './hooks/useProgram';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('markets');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
   const [isCreateDuelOpen, setIsCreateDuelOpen] = useState(false);
+  const { fetchMarkets } = useProgram();
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
   const closeSidebar = () => setIsSidebarOpen(false);
+
+  const launchFirstMarket = async () => {
+    const markets = await fetchMarkets();
+    if (markets.length > 0) {
+      setSelectedMarket(markets[0]);
+    }
+  };
 
   return (
     <div className="flex h-screen bg-[#0A0A0B] text-[#E4E4E7] font-sans overflow-hidden lynx-grid">
@@ -78,7 +86,7 @@ export default function App() {
 
                       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
                         <button 
-                          onClick={() => setSelectedMarket(MOCK_MARKETS[0])}
+                          onClick={launchFirstMarket}
                           className="px-6 md:px-8 py-3 md:py-4 bg-[#00FFD1] text-black font-black text-xs md:text-sm rounded shadow-[0_0_20px_rgba(0,255,209,0.2)] uppercase tracking-tight hover:bg-[#00E5BC] transition-all flex items-center justify-center gap-2 group"
                         >
                           Launch Markets

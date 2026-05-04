@@ -1,18 +1,44 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Wallet, PieChart, TrendingUp, History, Coins, CheckCircle2, Trophy as RewardIcon } from 'lucide-react';
 import { formatSOL, formatNumber, cn } from '@/src/lib/utils';
-import { MOCK_MARKETS } from '@/src/constants';
+import { useProgram } from '@/src/hooks/useProgram';
+import { Market } from '@/src/types';
 
 export function PortfolioView() {
-  const userStats = {
-    solBalance: 42.5,
-    lynxBalance: 1250,
-    totalProfit: 15.2,
-    holdings: [
-      { marketId: '1', position: 'YES', amount: 500, currentPrice: 0.54, entryPrice: 0.42 },
-      { marketId: '3', position: 'YES', amount: 1000, currentPrice: 0.50, entryPrice: 0.50 }
-    ]
-  };
+  const { fetchMarkets, fetchPortfolio, isLoading, error } = useProgram();
+  const [markets, setMarkets] = useState<Market[]>([]);
+  const [portfolio, setPortfolio] = useState<any>(null);
+
+  useEffect(() => {
+    const loadData = async () => {
+      const [marketData, portfolioData] = await Promise.all([
+        fetchMarkets(),
+        fetchPortfolio()
+      ]);
+      setMarkets(marketData);
+      setPortfolio(portfolioData);
+    };
+    loadData();
+  }, [fetchMarkets, fetchPortfolio]);
+
+  if (isLoading || !portfolio) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[500px]">
+        <div className="w-8 h-8 rounded-full border-t-2 border-[#00FFD1] animate-spin mb-4" />
+        <span className="font-mono text-[#71717A] text-sm uppercase tracking-widest">Loading on-chain portfolio...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[500px]">
+        <div className="text-red-400 font-mono text-sm border-dashed border border-red-400/20 bg-red-400/5 p-4 rounded-xl">
+          Error: {error}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8">
@@ -31,7 +57,7 @@ export function PortfolioView() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 md:gap-6 mb-8 md:mb-12">
         <div className="lg:col-span-1 glass-card rounded p-4 md:p-6 border border-[#1F1F23] bg-[#0D0D0E]">
           <div className="text-[9px] md:text-[10px] uppercase font-black text-[#71717A] tracking-widest mb-3 md:mb-4">Total Assets</div>
-          <div className="text-2xl md:text-3xl font-mono font-bold text-white mb-2 tracking-tighter">{formatSOL(userStats.solBalance)}</div>
+          <div className="text-2xl md:text-3xl font-mono font-bold text-white mb-2 tracking-tighter">{formatSOL(portfolio.solBalance)}</div>
           <div className="text-[9px] md:text-[10px] text-[#00FFD1] flex items-center gap-1 font-bold uppercase tracking-wider">
             <TrendingUp className="w-3 h-3" />
             Active Vault
@@ -40,7 +66,7 @@ export function PortfolioView() {
 
         <div className="lg:col-span-1 glass-card rounded p-4 md:p-6 border border-[#27272A] bg-[#141417]">
           <div className="text-[9px] md:text-[10px] uppercase font-black text-[#A1A1AA] tracking-widest mb-3 md:mb-4">$LYNX Holding</div>
-          <div className="text-2xl md:text-3xl font-mono font-bold text-white mb-2 tracking-tighter">{formatNumber(userStats.lynxBalance)}</div>
+          <div className="text-2xl md:text-3xl font-mono font-bold text-white mb-2 tracking-tighter">{formatNumber(portfolio.lynxBalance)}</div>
           <div className="text-[9px] md:text-[10px] text-[#71717A] flex items-center gap-1 font-bold uppercase tracking-widest">
             Yield Weight: High
           </div>
@@ -49,7 +75,7 @@ export function PortfolioView() {
         <div className="lg:col-span-2 glass-card rounded p-4 md:p-6 border border-[#1F1F23] flex items-center justify-between bg-[#0D0D0E]">
           <div>
             <div className="text-[9px] md:text-[10px] uppercase font-black text-[#71717A] tracking-widest mb-3 md:mb-4">Total Reward Pool</div>
-            <div className="text-2xl md:text-3xl font-mono font-bold text-[#00FFD1] tracking-tighter">+{formatSOL(userStats.totalProfit)}</div>
+            <div className="text-2xl md:text-3xl font-mono font-bold text-[#00FFD1] tracking-tighter">+{formatSOL(portfolio.totalProfit || 0)}</div>
             <div className="text-[8px] md:text-[9px] text-[#52525B] mt-2 uppercase font-bold tracking-widest">REAL-TIME ON-CHAIN SYNC</div>
           </div>
           <div className="h-full w-24 md:w-32 relative opacity-10 md:opacity-20 hidden sm:block">
@@ -67,14 +93,11 @@ export function PortfolioView() {
                 <CheckCircle2 className="w-4 h-4 text-[#00FFD1]" />
                 <h3 className="text-[10px] md:text-[11px] font-bold text-white uppercase tracking-widest">Pending Event Settlements</h3>
               </div>
-              <button className="text-[9px] md:text-[10px] font-bold text-[#00FFD1] hover:underline uppercase tracking-widest">Claim All (2)</button>
+              <button className="text-[9px] md:text-[10px] font-bold text-[#00FFD1] hover:underline uppercase tracking-widest">Claim All</button>
             </div>
             
             <div className="space-y-3">
-              {[
-                { title: "Trump vs Harris Election Outcome", amount: "15.40", side: "YES", date: "Resolved 2h ago" },
-                { title: "Solana TVL > $5B by April", amount: "8.25", side: "NO", date: "Resolved 1d ago" }
-              ].map((claim, i) => (
+              {portfolio.payments?.map((claim: any, i: number) => (
                 <div key={i} className="glass-card rounded p-4 border border-[#00FFD1]/20 bg-[#00FFD1]/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all">
                   <div className="flex items-center gap-4">
                     <div className="w-10 h-10 bg-[#00FFD1]/10 rounded flex items-center justify-center text-[#00FFD1] border border-[#00FFD1]/10">
@@ -103,6 +126,11 @@ export function PortfolioView() {
                   </div>
                 </div>
               ))}
+              {(!portfolio.payments || portfolio.payments.length === 0) && (
+                 <div className="text-center p-8 glass-card border border-dashed border-[#1F1F23] rounded-xl bg-[#0D0D0E]">
+                   <p className="text-[#A1A1AA] text-xs font-mono uppercase tracking-widest">No pending claims</p>
+                 </div>
+              )}
             </div>
           </div>
 
@@ -116,8 +144,9 @@ export function PortfolioView() {
             </div>
             
             <div className="space-y-2">
-              {userStats.holdings.map((holding, idx) => {
-                const market = MOCK_MARKETS.find(m => m.id === holding.marketId);
+              {portfolio.holdings?.map((holding: any, idx: number) => {
+                const market = markets.find(m => m.id === holding.marketId);
+                const title = market ? market.title : `Unknown Market (Loading...)`;
                 const pnl = (holding.currentPrice - holding.entryPrice) * holding.amount;
                 const isProfit = pnl >= 0;
 
@@ -128,7 +157,7 @@ export function PortfolioView() {
                         <TrendingUp className="w-4 h-4" />
                       </div>
                       <div>
-                        <h4 className="text-[11px] md:text-xs font-bold text-white mb-1 tracking-tight truncate max-w-[150px] sm:max-w-none">{market?.title}</h4>
+                        <h4 className="text-[11px] md:text-xs font-bold text-white mb-1 tracking-tight truncate max-w-[150px] sm:max-w-none">{title}</h4>
                         <div className="flex items-center gap-2 text-[9px]">
                           <span className={cn("font-bold px-1.5 py-0.5 rounded border tracking-tighter", holding.position === 'YES' ? "text-[#00FFD1] bg-[#00FFD1]/5 border-[#00FFD1]/20" : "text-red-400 bg-red-400/5 border-red-400/20")}>{holding.position}</span>
                           <span className="text-[#52525B] font-bold uppercase tracking-widest">{holding.amount} Shares</span>
@@ -147,6 +176,11 @@ export function PortfolioView() {
                   </div>
                 );
               })}
+              {(!portfolio.holdings || portfolio.holdings.length === 0) && (
+                 <div className="text-center p-8 glass-card border border-dashed border-[#1F1F23] rounded-xl bg-[#0D0D0E]">
+                   <p className="text-[#A1A1AA] text-xs font-mono uppercase tracking-widest">No active positions</p>
+                 </div>
+              )}
             </div>
           </div>
         </div>
@@ -160,22 +194,22 @@ export function PortfolioView() {
               </div>
               <h4 className="text-sm font-bold text-white mb-2 text-center uppercase tracking-widest">Protocol Dividends</h4>
               <p className="text-xs text-[#71717A] mb-8 leading-relaxed text-center">
-                You have accrued <span className="text-[#00FFD1] font-mono font-bold">1.24 SOL</span> from passive fees.
+                You have accrued <span className="text-[#00FFD1] font-mono font-bold">{portfolio.totalProfit || '0.00'} SOL</span> from passive fees.
               </p>
               
               <div className="space-y-2 mb-8 bg-[#18181B] p-4 rounded border border-[#27272A]">
                 <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider">
                   <span className="text-[#52525B]">Staked</span>
-                  <span className="text-white font-mono tracking-tighter">1,250 $LYNX</span>
+                  <span className="text-white font-mono tracking-tighter">{formatNumber(portfolio.lynxBalance || 0)} $LYNX</span>
                 </div>
                 <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider">
                   <span className="text-[#52525B]">Fee Share</span>
-                  <span className="text-white font-mono tracking-tighter">7.5%</span>
+                  <span className="text-white font-mono tracking-tighter">{portfolio.feeShare || '0.0'}%</span>
                 </div>
               </div>
 
               <button className="w-full py-4 bg-gradient-to-r from-[#00FFD1] to-[#9945FF] text-black font-black text-xs rounded shadow-[0_0_20px_rgba(0,255,209,0.2)] uppercase tracking-tighter transition-all hover:scale-[1.02] active:scale-95">
-                Claim 1.24 SOL
+                Claim {portfolio.totalProfit || '0.00'} SOL
               </button>
             </div>
           </div>

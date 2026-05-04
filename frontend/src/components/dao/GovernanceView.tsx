@@ -1,62 +1,50 @@
-import React, { useState } from 'react';
-import { Vote, Users, MessageSquare, ChevronRight, CheckCircle2, Clock, AlertCircle, PlusCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Vote, Users, MessageSquare, ChevronRight, CheckCircle2, Clock, AlertCircle, PlusCircle, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/src/lib/utils';
-
-interface Proposal {
-  id: string;
-  title: string;
-  description: string;
-  status: 'active' | 'passed' | 'rejected' | 'pending';
-  votesYes: number;
-  votesNo: number;
-  endTime: string;
-  category: 'protocol' | 'markets' | 'fees' | 'community';
-  author: string;
-}
-
-const MOCK_PROPOSALS: Proposal[] = [
-  {
-    id: 'LXP-042',
-    title: 'Increase Protocol Fee sharing for LYNX Holders',
-    description: 'Proposal to increase the percentage of trading fees distributed to $LYNX stakers from 30% to 45% for the next quarter.',
-    status: 'active',
-    votesYes: 1250000,
-    votesNo: 450000,
-    endTime: '2d 4h left',
-    category: 'fees',
-    author: 'onix_manager.sol'
-  },
-  {
-    id: 'LXP-041',
-    title: 'New Market Category: Politicians Performance',
-    description: 'Add a new market category tracking legislative success rates of major world leaders.',
-    status: 'passed',
-    votesYes: 2100000,
-    votesNo: 150000,
-    endTime: 'Ended 3 days ago',
-    category: 'markets',
-    author: 'lynx_dev.sol'
-  },
-  {
-    id: 'LXP-040',
-    title: 'Reduce Minimum Duel Stake to 0.1 SOL',
-    description: 'Lowering the barrier to entry for 1v1 duels to encourage micro-betting between retail users.',
-    status: 'passed',
-    votesYes: 3400000,
-    votesNo: 50000,
-    endTime: 'Ended 1 week ago',
-    category: 'protocol',
-    author: 'community_advocate.eth'
-  }
-];
+import { useProgram } from '@/src/hooks/useProgram';
+import { Proposal } from '@/src/types';
 
 export function GovernanceView() {
+  const { fetchProposals, fetchDaoStats, isLoading, error } = useProgram();
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [stats, setStats] = useState<any>(null);
   const [activeCategory, setActiveCategory] = useState<string>('all');
 
+  useEffect(() => {
+    const loadData = async () => {
+      const [proposalsData, statsData] = await Promise.all([
+        fetchProposals(),
+        fetchDaoStats()
+      ]);
+      setProposals(proposalsData);
+      setStats(statsData);
+    };
+    loadData();
+  }, [fetchProposals, fetchDaoStats]);
+
   const filteredProposals = activeCategory === 'all' 
-    ? MOCK_PROPOSALS 
-    : MOCK_PROPOSALS.filter(p => p.status === activeCategory);
+    ? proposals 
+    : proposals.filter(p => p.status === activeCategory);
+
+  if (isLoading || !stats) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[500px]">
+        <Loader2 className="w-8 h-8 text-[#00FFD1] animate-spin mb-4" />
+        <span className="font-mono text-[#71717A] text-sm uppercase tracking-widest">Loading governance data...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[500px]">
+        <div className="text-red-400 font-mono text-sm border-dashed border border-red-400/20 bg-red-400/5 p-4 rounded-xl">
+          Error: {error}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto">
@@ -87,7 +75,7 @@ export function GovernanceView() {
             </div>
             <span className="text-[11px] font-bold text-[#71717A] uppercase tracking-widest">Active Voters</span>
           </div>
-          <div className="text-3xl font-mono font-bold text-white tracking-tighter">12,482</div>
+          <div className="text-3xl font-mono font-bold text-white tracking-tighter">{stats.activeVoters.toLocaleString()}</div>
           <div className="text-[10px] text-[#00FFD1] mt-1 font-bold">+12% vs last week</div>
         </div>
         
@@ -98,7 +86,7 @@ export function GovernanceView() {
             </div>
             <span className="text-[11px] font-bold text-[#71717A] uppercase tracking-widest">Total LYNX Staked</span>
           </div>
-          <div className="text-3xl font-mono font-bold text-white tracking-tighter">48.2M</div>
+          <div className="text-3xl font-mono font-bold text-white tracking-tighter">{(stats.totalLynxStaked / 1000000).toFixed(1)}M</div>
           <div className="text-[10px] text-[#71717A] mt-1 font-bold">62.4% of Supply</div>
         </div>
 
@@ -110,7 +98,7 @@ export function GovernanceView() {
             <span className="text-[11px] font-bold text-[#71717A] uppercase tracking-widest">Forum Activity</span>
           </div>
           <div className="text-3xl font-mono font-bold text-white tracking-tighter">High</div>
-          <div className="text-[10px] text-amber-400 mt-1 font-bold">24 active discussions</div>
+          <div className="text-[10px] text-amber-400 mt-1 font-bold">{stats.activeDiscussions} active discussions</div>
         </div>
       </div>
 
@@ -135,17 +123,27 @@ export function GovernanceView() {
 
         <div className="grid grid-cols-1 gap-4">
           <AnimatePresence mode="popLayout">
-            {filteredProposals.map((proposal) => (
-              <motion.div
-                key={proposal.id}
-                layout
-                initial={{ opacity: 0, scale: 0.98 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.98 }}
-                className="glass-card bg-[#0D0D0E] border border-[#1F1F23] rounded-xl overflow-hidden hover:border-[#27272A] transition-all group"
-              >
-                <div className="p-6 md:p-8 flex flex-col md:flex-row gap-6">
-                  <div className="flex-1">
+            {filteredProposals.length === 0 ? (
+               <motion.div
+                 initial={{ opacity: 0 }}
+                 animate={{ opacity: 1 }}
+                 exit={{ opacity: 0 }}
+                 className="text-center p-12 glass-card border border-dashed border-[#1F1F23] rounded-xl bg-[#0D0D0E]"
+               >
+                 <p className="text-[#A1A1AA] text-sm font-mono uppercase tracking-widest">No proposals found</p>
+               </motion.div>
+            ) : (
+              filteredProposals.map((proposal) => (
+                <motion.div
+                  key={proposal.id}
+                  layout
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.98 }}
+                  className="glass-card bg-[#0D0D0E] border border-[#1F1F23] rounded-xl overflow-hidden hover:border-[#27272A] transition-all group"
+                >
+                  <div className="p-6 md:p-8 flex flex-col md:flex-row gap-6">
+                    <div className="flex-1">
                     <div className="flex items-center gap-3 mb-3">
                       <span className="text-[10px] font-mono text-[#52525B] font-bold">{proposal.id}</span>
                       <span className={cn(
@@ -210,7 +208,7 @@ export function GovernanceView() {
                   </div>
                 </div>
               </motion.div>
-            ))}
+            )))}
           </AnimatePresence>
         </div>
       </div>

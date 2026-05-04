@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Market, Position } from '@/src/types';
-import { MOCK_MARKETS } from '@/src/constants';
-import { X, Sword, Target, ChevronRight, Info } from 'lucide-react';
+import { useProgram } from '@/src/hooks/useProgram';
+import { X, Sword, Target, ChevronRight, Info, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatSOL, cn } from '@/src/lib/utils';
 
@@ -11,10 +11,21 @@ interface CreateDuelModalProps {
 }
 
 export function CreateDuelModal({ onClose, onSubmit }: CreateDuelModalProps) {
+  const { fetchMarkets, isLoading } = useProgram();
+  const [markets, setMarkets] = useState<Market[]>([]);
+  
   const [step, setStep] = useState(1);
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
   const [side, setSide] = useState<Position | null>(null);
   const [amount, setAmount] = useState<number>(0.1);
+
+  useEffect(() => {
+    const loadMarkets = async () => {
+      const data = await fetchMarkets();
+      setMarkets(data);
+    };
+    loadMarkets();
+  }, [fetchMarkets]);
 
   const currency = selectedMarket?.currency || 'SOL';
   const FIXED_AMOUNTS = currency === 'SOL' ? [0.1, 0.25, 0.5, 1, 5, 10] : [100, 250, 500, 1000, 5000, 10000];
@@ -74,36 +85,47 @@ export function CreateDuelModal({ onClose, onSubmit }: CreateDuelModalProps) {
                 <div>
                   <label className="text-[10px] font-bold text-[#71717A] uppercase tracking-[0.2em] mb-4 block">1. Select Target Event</label>
                   <p className="text-[10px] text-[#52525B] font-bold uppercase mb-4">Choose a market to build your duel around</p>
-                  <div className="space-y-2 max-h-[350px] overflow-y-auto pr-2 custom-scrollbar">
-                    {MOCK_MARKETS.map(market => {
-                      const isLynx = market.currency === 'LYNX';
-                      return (
-                        <button
-                          key={market.id}
-                          onClick={() => selectMarketAndNext(market)}
-                          className={cn(
-                            "w-full p-4 rounded border text-left transition-all group flex items-center justify-between relative overflow-hidden",
-                            isLynx 
-                              ? "bg-[#9945FF]/5 border-[#9945FF]/30 hover:border-[#9945FF]/60" 
-                              : "bg-[#18181B] border-[#27272A] hover:border-[#00FFD1]/50"
-                          )}
-                        >
-                          {isLynx && (
-                            <div className="absolute top-0 right-0 px-2 py-0.5 bg-[#9945FF] text-white text-[7px] font-black uppercase tracking-widest rounded-bl">
-                              Special Event
+                  
+                  {isLoading ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="w-6 h-6 text-[#00FFD1] animate-spin" />
+                    </div>
+                  ) : markets.length === 0 ? (
+                    <div className="text-center py-8">
+                       <p className="text-[#A1A1AA] text-xs font-mono">No active markets available for duel</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-[350px] overflow-y-auto pr-2 custom-scrollbar">
+                      {markets.map(market => {
+                        const isLynx = market.currency === 'LYNX';
+                        return (
+                          <button
+                            key={market.id}
+                            onClick={() => selectMarketAndNext(market)}
+                            className={cn(
+                              "w-full p-4 rounded border text-left transition-all group flex items-center justify-between relative overflow-hidden",
+                              isLynx 
+                                ? "bg-[#9945FF]/5 border-[#9945FF]/30 hover:border-[#9945FF]/60" 
+                                : "bg-[#18181B] border-[#27272A] hover:border-[#00FFD1]/50"
+                            )}
+                          >
+                            {isLynx && (
+                              <div className="absolute top-0 right-0 px-2 py-0.5 bg-[#9945FF] text-white text-[7px] font-black uppercase tracking-widest rounded-bl">
+                                Special Event
+                              </div>
+                            )}
+                            <div>
+                              <div className="text-[9px] text-[#52525B] font-bold uppercase mb-1">{market.category}</div>
+                              <div className={cn("text-sm font-bold group-hover:text-[#00FFD1] line-clamp-1", isLynx ? "text-[#9945FF]" : "text-white")}>
+                                {market.title}
+                              </div>
                             </div>
-                          )}
-                          <div>
-                            <div className="text-[9px] text-[#52525B] font-bold uppercase mb-1">{market.category}</div>
-                            <div className={cn("text-sm font-bold group-hover:text-[#00FFD1] line-clamp-1", isLynx ? "text-[#9945FF]" : "text-white")}>
-                              {market.title}
-                            </div>
-                          </div>
-                          <ChevronRight className="w-4 h-4 text-[#27272A] group-hover:text-[#00FFD1]" />
-                        </button>
-                      );
-                    })}
-                  </div>
+                            <ChevronRight className="w-4 h-4 text-[#27272A] group-hover:text-[#00FFD1]" />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </motion.div>
             )}

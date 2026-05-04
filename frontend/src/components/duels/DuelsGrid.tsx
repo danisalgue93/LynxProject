@@ -1,13 +1,25 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { DuelCard } from './DuelCard';
-import { MOCK_DUELS } from '@/src/constants';
-import { Sword, Plus } from 'lucide-react';
+import { Duel } from '@/src/types';
+import { useProgram } from '@/src/hooks/useProgram';
+import { Sword, Plus, Loader2 } from 'lucide-react';
 
 interface DuelsGridProps {
   onCreateDuel?: () => void;
 }
 
 export function DuelsGrid({ onCreateDuel }: DuelsGridProps) {
+  const { fetchDuels, isLoading, error } = useProgram();
+  const [duels, setDuels] = useState<Duel[]>([]);
+
+  useEffect(() => {
+    const loadDuels = async () => {
+      const data = await fetchDuels();
+      setDuels(data);
+    };
+    loadDuels();
+  }, [fetchDuels]);
+
   return (
     <div className="p-4 md:p-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-6">
@@ -30,23 +42,34 @@ export function DuelsGrid({ onCreateDuel }: DuelsGridProps) {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-        {MOCK_DUELS.map(duel => (
-          <DuelCard key={duel.id} duel={duel} />
-        ))}
-        
-        {/* Invitation card */}
-        <div 
-          onClick={onCreateDuel}
-          className="glass-card rounded p-6 border-dashed border-[#1F1F23] flex flex-col items-center justify-center text-center group cursor-pointer hover:border-[#00FFD1]/30 transition-all min-h-[300px] bg-[#0A0A0B]"
-        >
-          <div className="w-12 h-12 rounded bg-[#18181B] flex items-center justify-center mb-4 group-hover:scale-110 transition-transform border border-[#27272A]">
-            <Plus className="w-5 h-5 text-[#52525B] group-hover:text-[#00FFD1]" />
-          </div>
-          <h4 className="text-[11px] font-black text-white mb-2 uppercase tracking-widest">Host active Duel</h4>
-          <p className="text-[10px] text-[#71717A] max-w-[140px] uppercase font-bold tracking-tight">Challenge the pool to a fixed-odds outcome.</p>
+      {isLoading ? (
+        <div className="flex items-center justify-center min-h-[300px]">
+          <Loader2 className="w-8 h-8 text-[#00FFD1] animate-spin" />
+          <span className="ml-4 font-mono text-[#71717A] text-sm uppercase tracking-widest">Syncing with blockchain...</span>
         </div>
-      </div>
+      ) : error ? (
+        <div className="flex items-center justify-center w-full min-h-[300px] bg-red-400/5 border border-red-400/20 rounded-xl p-8 text-center">
+          <p className="text-red-400 text-sm font-mono">{error}</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+          {duels.map(duel => (
+            <DuelCard key={duel.id} duel={duel} />
+          ))}
+          
+          {/* Invitation card */}
+          <div 
+            onClick={onCreateDuel}
+            className="glass-card rounded p-6 border-dashed border-[#1F1F23] flex flex-col items-center justify-center text-center group cursor-pointer hover:border-[#00FFD1]/30 transition-all min-h-[300px] bg-[#0A0A0B]"
+          >
+            <div className="w-12 h-12 rounded bg-[#18181B] flex items-center justify-center mb-4 group-hover:scale-110 transition-transform border border-[#27272A]">
+              <Plus className="w-5 h-5 text-[#52525B] group-hover:text-[#00FFD1]" />
+            </div>
+            <h4 className="text-[11px] font-black text-white mb-2 uppercase tracking-widest">Host active Duel</h4>
+            <p className="text-[10px] text-[#71717A] max-w-[140px] uppercase font-bold tracking-tight">Challenge the pool to a fixed-odds outcome.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

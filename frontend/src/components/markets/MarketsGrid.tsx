@@ -1,13 +1,25 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { MarketCard } from './MarketCard';
-import { MOCK_MARKETS } from '@/src/constants';
 import { Market } from '@/src/types';
+import { useProgram } from '@/src/hooks/useProgram';
+import { Loader2 } from 'lucide-react';
 
 interface MarketsGridProps {
   onMarketSelect: (market: Market) => void;
 }
 
 export function MarketsGrid({ onMarketSelect }: MarketsGridProps) {
+  const { fetchMarkets, isLoading, error } = useProgram();
+  const [markets, setMarkets] = useState<Market[]>([]);
+
+  useEffect(() => {
+    const loadMarkets = async () => {
+      const data = await fetchMarkets();
+      setMarkets(data);
+    };
+    loadMarkets();
+  }, [fetchMarkets]);
+
   return (
     <div className="p-4 md:p-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 md:mb-10 gap-6">
@@ -32,15 +44,31 @@ export function MarketsGrid({ onMarketSelect }: MarketsGridProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-8">
-        {MOCK_MARKETS.map(market => (
-          <MarketCard 
-            key={market.id} 
-            market={market} 
-            onClick={() => onMarketSelect(market)} 
-          />
-        ))}
-      </div>
+      {isLoading ? (
+        <div className="flex items-center justify-center min-h-[300px]">
+          <Loader2 className="w-8 h-8 text-[#00FFD1] animate-spin" />
+          <span className="ml-4 font-mono text-[#71717A] text-sm uppercase tracking-widest">Syncing with blockchain...</span>
+        </div>
+      ) : error ? (
+        <div className="flex items-center justify-center w-full min-h-[300px] bg-red-400/5 border border-red-400/20 rounded-xl p-8 text-center">
+          <p className="text-red-400 text-sm font-mono">{error}</p>
+        </div>
+      ) : markets.length === 0 ? (
+         <div className="flex flex-col items-center justify-center w-full min-h-[300px] border border-dashed border-[#27272A] rounded-xl p-8 text-center bg-[#0D0D0E]/50">
+           <p className="text-[#A1A1AA] text-sm font-bold uppercase tracking-widest mb-2">No Active Markets</p>
+           <p className="text-[#52525B] text-[10px] uppercase tracking-wider font-mono">Connect wallet to load contracts or deploy initial data.</p>
+         </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-8">
+          {markets.map(market => (
+            <MarketCard 
+              key={market.id} 
+              market={market} 
+              onClick={() => onMarketSelect(market)} 
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -64,6 +64,18 @@ export interface Order {
   createdAt: number;
 }
 
+export interface Proposal {
+  id: string;
+  title: string;
+  description: string;
+  status: 'active' | 'passed' | 'rejected' | 'pending';
+  votesYes: number;
+  votesNo: number;
+  endTime: string;
+  category: 'protocol' | 'markets' | 'fees' | 'community';
+  author: string;
+}
+
 export interface UserWallet {
   address: string;
   solBalance: number;
