@@ -1,6 +1,3 @@
-[toolchain]
-package_manager = "yarn"
-
 [features]
 resolution = true
 skip-lint = false
@@ -13,6 +10,4 @@ cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
-test = "cargo test"
-
-[hooks]
+test = "anchor test"

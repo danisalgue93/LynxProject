@@ -4,6 +4,7 @@ import { X, TrendingUp, ShieldCheck, Zap, Info, BarChart3, Clock, ArrowRight, Sw
 import { motion, AnimatePresence } from 'motion/react';
 import { formatSOL, cn } from '@/src/lib/utils';
 import { useProgram } from '@/src/hooks/useProgram';
+import { useTranslation } from 'react-i18next';
 
 interface MarketDetailProps {
   market: Market;
@@ -11,7 +12,8 @@ interface MarketDetailProps {
 }
 
 export function MarketDetail({ market, onClose }: MarketDetailProps) {
-  const { fetchDuels } = useProgram();
+  const { t } = useTranslation();
+  const { fetchDuels, executeTrade } = useProgram();
   const [marketDuels, setMarketDuels] = useState<Duel[]>([]);
   
   const [betAmount, setBetAmount] = useState('5.0');
@@ -30,12 +32,21 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
     }
   }, [fetchDuels, activeMode, market.id]);
 
-  const handleQuickBet = () => {
+  const handleQuickBet = async () => {
     setIsPending(true);
-    setTimeout(() => {
-      setIsPending(false);
+    try {
+      await executeTrade(
+        market.id,
+        parseFloat(betAmount),
+        selectedSide === Position.YES,
+        'swap'
+      );
       onClose();
-    }, 2000);
+    } catch (err) {
+      console.error('Quick bet failed', err);
+    } finally {
+      setIsPending(false);
+    }
   };
 
   const isLynx = market.currency === 'LYNX';
@@ -65,9 +76,9 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                 "text-[8px] md:text-[9px] px-2 py-0.5 rounded border tracking-[0.2em] uppercase font-bold",
                 isLynx ? "bg-[#9945FF]/10 text-[#9945FF] border-[#9945FF]/20" : "bg-[#18181B] text-[#A1A1AA] border-[#27272A]"
               )}>
-                {market.category} Market #{market.id} {isLynx && "• SPECIAL"}
+                {market.category} Market #{market.id} {isLynx && `• ${t('marketDetail.special', 'SPECIAL')}`}
               </span>
-              <span className="text-[8px] md:text-[9px] text-[#52525B] font-mono font-bold">ORACLE: SWITCHBOARD</span>
+              <span className="text-[8px] md:text-[9px] text-[#52525B] font-mono font-bold">{t('marketDetail.oracle', 'ORACLE: SWITCHBOARD')}</span>
             </div>
             <h1 className="text-2xl md:text-4xl font-bold tracking-tight text-white mb-4 leading-tight">
               {market.title}
@@ -97,10 +108,10 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
               >
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
                    {[
-                     { label: 'Ratio', value: '62% YES', color: isLynx ? 'text-[#9945FF]' : 'text-[#00FFD1]' },
-                     { label: 'Asset', value: market.currency, color: 'text-white' },
-                     { label: 'Yield', value: '7.5%', color: 'text-[#9945FF]' },
-                     { label: 'Status', value: 'PRE-EVENT', color: 'text-amber-400' }
+                     { label: t('marketDetail.ratio', 'Ratio'), value: '62% YES', color: isLynx ? 'text-[#9945FF]' : 'text-[#00FFD1]' },
+                     { label: t('marketDetail.asset', 'Asset'), value: market.currency, color: 'text-white' },
+                     { label: t('marketDetail.yield', 'Yield'), value: '7.5%', color: 'text-[#9945FF]' },
+                     { label: t('marketDetail.status', 'Status'), value: t('marketDetail.preEvent', 'PRE-EVENT'), color: 'text-amber-400' }
                    ].map((stat, i) => (
                      <div key={i} className="p-3 md:p-4 bg-[#141417] border border-[#27272A] rounded">
                        <span className="text-[8px] md:text-[9px] text-[#71717A] block uppercase font-bold mb-1">{stat.label}</span>
@@ -112,7 +123,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                 <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-[#27272A] rounded-xl relative overflow-hidden bg-[#0D0D0E] min-h-[250px] md:min-h-[300px] p-6">
                    <div className={cn("absolute inset-0 opacity-10", isLynx ? "bg-[radial-gradient(circle_at_50%_50%,_#9945FF_0%,_transparent_70%)]" : "bg-[radial-gradient(circle_at_50%_50%,_#00FFD1_0%,_transparent_70%)]")}></div>
                    <div className="z-10 flex flex-col items-center text-center w-full max-w-xs">
-                      <span className="text-[9px] md:text-[10px] text-[#52525B] uppercase font-bold tracking-widest mb-4">Probability</span>
+                      <span className="text-[9px] md:text-[10px] text-[#52525B] uppercase font-bold tracking-widest mb-4">{t('marketDetail.probability', 'Probability')}</span>
                       <span className="text-4xl md:text-6xl font-mono font-bold text-white mb-2 tracking-tighter">0.621 <span className="text-xs md:text-sm text-[#52525B]">{market.currency}</span></span>
                       <div className="flex gap-2 mt-4 md:mt-6 w-full">
                         <div className="w-full h-1.5 md:h-2 bg-[#27272A] rounded-full overflow-hidden flex">
@@ -141,7 +152,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
               >
                 <div className="grid grid-cols-2 gap-4 md:gap-8">
                   <div>
-                    <h4 className="text-[8px] md:text-[10px] font-bold text-[#00FFD1] uppercase tracking-widest mb-3 md:mb-4">Buy Orders</h4>
+                    <h4 className="text-[8px] md:text-[10px] font-bold text-[#00FFD1] uppercase tracking-widest mb-3 md:mb-4">{t('marketDetail.buyOrders', 'Buy Orders')}</h4>
                     <div className="space-y-1 font-mono text-[10px] md:text-[11px]">
                       {[0.645, 0.640, 0.635, 0.630, 0.625].map((p, i) => (
                         <div key={i} className="flex justify-between p-1.5 md:p-2 hover:bg-white/5 rounded transition-colors group">
@@ -152,7 +163,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                     </div>
                   </div>
                   <div>
-                    <h4 className="text-[8px] md:text-[10px] font-bold text-red-400 uppercase tracking-widest mb-3 md:mb-4">Sell Orders</h4>
+                    <h4 className="text-[8px] md:text-[10px] font-bold text-red-400 uppercase tracking-widest mb-3 md:mb-4">{t('marketDetail.sellOrders', 'Sell Orders')}</h4>
                     <div className="space-y-1 font-mono text-[10px] md:text-[11px]">
                       {[0.615, 0.610, 0.605, 0.600, 0.595].map((p, i) => (
                         <div key={i} className="flex justify-between p-1.5 md:p-2 hover:bg-white/5 rounded transition-colors group">
@@ -165,7 +176,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                 </div>
                 <div className="p-6 md:p-8 border border-dashed border-[#27272A] rounded-xl flex flex-col items-center justify-center text-center bg-[#0A0A0B]">
                     <BarChart3 className={cn("w-8 h-8 md:w-12 md:h-12 mb-3 md:mb-4 opacity-20", isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")} />
-                    <p className="text-[8px] md:text-[10px] font-bold text-[#52525B] uppercase tracking-widest">Connect wallet to trade</p>
+                    <p className="text-[8px] md:text-[10px] font-bold text-[#52525B] uppercase tracking-widest">{t('marketDetail.connectToTrade', 'Connect wallet to trade')}</p>
                 </div>
               </motion.div>
             )}
@@ -179,9 +190,9 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                 className="space-y-6"
               >
                 <div className="flex items-center justify-between">
-                  <h4 className="text-[10px] font-bold text-white uppercase tracking-widest">Open Challenges ({marketDuels.length})</h4>
+                  <h4 className="text-[10px] font-bold text-white uppercase tracking-widest">{t('marketDetail.openChallenges', 'Open Challenges ({{count}})', { count: marketDuels.length })}</h4>
                   <button className={cn("px-4 py-1.5 rounded text-[10px] font-bold uppercase tracking-widest border transition-all", isLynx ? "border-[#9945FF]/30 text-[#9945FF] hover:bg-[#9945FF]/10" : "border-[#00FFD1]/30 text-[#00FFD1] hover:bg-[#00FFD1]/10")}>
-                    Host New Duel
+                    {t('marketDetail.hostNewDuel', 'Host New Duel')}
                   </button>
                 </div>
                 
@@ -193,19 +204,19 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                           <Sword className="w-5 h-5" />
                         </div>
                         <div>
-                          <div className="text-[10px] text-[#52525B] font-bold uppercase mb-0.5">Creator: {duel.creator}</div>
-                          <div className="text-sm font-bold text-white uppercase italic tracking-tighter">VERSUS {duel.positionA}</div>
+                          <div className="text-[10px] text-[#52525B] font-bold uppercase mb-0.5">{t('marketDetail.creator', 'Creator: {{creator}}', { creator: duel.creator })}</div>
+                          <div className="text-sm font-bold text-white uppercase italic tracking-tighter">{t('marketDetail.versus', 'VERSUS {{position}}', { position: duel.positionA })}</div>
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="text-[10px] text-[#52525B] font-bold uppercase mb-0.5">Stake</div>
+                        <div className="text-[10px] text-[#52525B] font-bold uppercase mb-0.5">{t('marketDetail.stakeStandalone', 'Stake')}</div>
                         <div className={cn("font-mono font-bold", isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>{duel.amount} {market.currency}</div>
                       </div>
                     </div>
                   )) : (
                     <div className="p-20 border border-dashed border-[#27272A] rounded-xl text-center">
-                       <p className="text-[10px] font-bold text-[#52525B] uppercase tracking-widest">No active duels for this event.</p>
-                       <p className="text-[9px] text-[#52525B] uppercase mt-2">Be the first to host one!</p>
+                       <p className="text-[10px] font-bold text-[#52525B] uppercase tracking-widest">{t('marketDetail.noActiveDuels', 'No active duels for this event.')}</p>
+                       <p className="text-[9px] text-[#52525B] uppercase mt-2">{t('marketDetail.beTheFirst', 'Be the first to host one!')}</p>
                     </div>
                   )}
                 </div>
@@ -217,7 +228,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
         {/* Right Side: Execution Panel */}
          <aside className="w-full md:w-[360px] lg:w-[400px] bg-[#0D0D0E] border-t md:border-t-0 md:border-l border-[#1F1F23] flex flex-col shrink-0">
           <div className="p-4 md:p-6 border-b border-[#1F1F23]">
-             <h3 className="hidden md:block text-[10px] md:text-[11px] font-bold text-[#71717A] uppercase tracking-widest mb-4 md:mb-6">Market Access</h3>
+             <h3 className="hidden md:block text-[10px] md:text-[11px] font-bold text-[#71717A] uppercase tracking-widest mb-4 md:mb-6">{t('marketDetail.marketAccess', 'Market Access')}</h3>
              
              <div className="flex gap-1 bg-[#18181B] p-0.5 rounded mb-4 md:mb-6 border border-[#27272A]">
                <button 
@@ -227,7 +238,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                   activeMode === 'quick' ? (isLynx ? "bg-[#9945FF] text-white" : "bg-[#0A0A0B] text-[#00FFD1]") : "text-[#52525B] hover:text-white"
                 )}
                >
-                 Quick
+                 {t('marketDetail.quick', 'Quick')}
                </button>
                <button 
                 onClick={() => setActiveMode('book')}
@@ -236,7 +247,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                   activeMode === 'book' ? (isLynx ? "bg-[#9945FF] text-white" : "bg-[#0A0A0B] text-[#00FFD1]") : "text-[#52525B] hover:text-white"
                 )}
                >
-                 Book
+                 {t('marketDetail.book', 'Book')}
                </button>
                <button 
                 onClick={() => setActiveMode('duels')}
@@ -245,7 +256,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                   activeMode === 'duels' ? (isLynx ? "bg-[#9945FF] text-white" : "bg-[#0A0A0B] text-[#00FFD1]") : "text-[#52525B] hover:text-white"
                 )}
                >
-                 Duels
+                 {t('marketDetail.duels', 'Duels')}
                </button>
              </div>
 
@@ -269,7 +280,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                               : "bg-[#18181B] border-[#27272A] text-[#52525B]"
                           )}
                         >
-                          YES
+                          {t('marketDetail.yes', 'YES')}
                         </button>
                         <button 
                           onClick={() => setSelectedSide(Position.NO)}
@@ -280,15 +291,15 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                               : "bg-[#18181B] border-red-900/20 text-red-400/40 hover:text-red-400 hover:border-red-400/40"
                           )}
                         >
-                          NO
+                          {t('marketDetail.no', 'NO')}
                         </button>
                       </div>
                     </div>
 
                     <div>
                       <div className="flex justify-between items-center mb-1.5 md:mb-2">
-                        <label className="text-[8px] md:text-[10px] text-[#71717A] uppercase font-bold tracking-wider">Stake ({market.currency})</label>
-                        <span className={cn("text-[8px] md:text-[10px] font-mono font-bold", isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>MAX: {isLynx ? '5K' : '42'}</span>
+                        <label className="text-[8px] md:text-[10px] text-[#71717A] uppercase font-bold tracking-wider">{t('marketDetail.stake', 'Stake ({{currency}})', { currency: market.currency })}</label>
+                        <span className={cn("text-[8px] md:text-[10px] font-mono font-bold", isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>{t('marketDetail.max', 'MAX: {{max}}', { max: isLynx ? '5K' : '42' })}</span>
                       </div>
                       <div className="relative group">
                         <input 
@@ -308,11 +319,11 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
 
                     <div className="bg-[#18181B] p-3 md:p-5 rounded border border-[#27272A] space-y-2 md:space-y-4">
                       <div className="flex justify-between text-[9px] md:text-[11px] font-medium items-center">
-                        <span className="text-[#52525B] uppercase tracking-widest">Shares</span>
+                        <span className="text-[#52525B] uppercase tracking-widest">{t('marketDetail.shares', 'Shares')}</span>
                         <span className="font-mono text-white font-bold">{tokenAmount}</span>
                       </div>
                       <div className="flex justify-between text-[9px] md:text-[11px] font-medium items-center">
-                        <span className="text-[#52525B] uppercase tracking-widest">Est. Payout</span>
+                        <span className="text-[#52525B] uppercase tracking-widest">{t('marketDetail.estPayout', 'Est. Payout')}</span>
                         <span className={cn("font-mono font-bold", isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>{(parseFloat(betAmount) * 1.6).toFixed(2)}</span>
                       </div>
                     </div>
@@ -328,10 +339,10 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                       {isPending ? (
                         <>
                           <div className="w-3 h-3 md:w-4 md:h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
-                          Processing...
+                          {t('marketDetail.processing', 'Processing...')}
                         </>
                       ) : (
-                        "Confirm Trade"
+                        t('marketDetail.confirmTrade', "Confirm Trade")
                       )}
                     </button>
                  </motion.div>
@@ -346,11 +357,11 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                     <div className={cn("w-12 h-12 mx-auto rounded-full flex items-center justify-center mb-4", isLynx ? "bg-[#9945FF]/10 text-[#9945FF]" : "bg-[#00FFD1]/10 text-[#00FFD1]")}>
                        <Zap className="w-5 h-5" />
                     </div>
-                    <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2">Professional Mode</h4>
+                    <h4 className="text-[11px] font-black text-white uppercase tracking-widest mb-2">{t('marketDetail.professionalMode', 'Professional Mode')}</h4>
                     <p className="text-[10px] text-[#71717A] leading-relaxed uppercase font-bold">
                       {activeMode === 'book' 
-                        ? "Select a price point on the left to pre-fill an order. Direct P2P matching with zero spread."
-                        : "Browse direct challenges for this event. These are fixed-odds duels with pre-defined stakes."}
+                        ? t('marketDetail.bookInfo', "Select a price point on the left to pre-fill an order. Direct P2P matching with zero spread.")
+                        : t('marketDetail.duelsInfo', "Browse direct challenges for this event. These are fixed-odds duels with pre-defined stakes.")}
                     </p>
                  </motion.div>
                )}
@@ -359,7 +370,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
           
           <div className="p-6 mt-auto">
              <button onClick={onClose} className="w-full text-[10px] font-bold text-[#52525B] uppercase tracking-[0.3em] hover:text-white transition-colors">
-               Discard & Return
+               {t('marketDetail.discardAndReturn', 'Discard & Return')}
              </button>
           </div>
         </aside>

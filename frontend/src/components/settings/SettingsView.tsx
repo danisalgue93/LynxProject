@@ -15,8 +15,10 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '@/src/lib/utils';
+import { useTranslation } from 'react-i18next';
 
 export function SettingsView() {
+  const { t } = useTranslation();
   const [slippage, setSlippage] = useState('0.5');
   const [priorityFee, setPriorityFee] = useState('fast');
   const [showKey, setShowKey] = useState(false);
@@ -33,9 +35,9 @@ export function SettingsView() {
           <div className="p-2 bg-[#00FFD1]/10 rounded border border-[#00FFD1]/20">
             <SettingsIcon className="w-5 h-5 text-[#00FFD1]" />
           </div>
-          <h2 className="text-3xl font-bold text-white tracking-tight">System Settings</h2>
+          <h2 className="text-3xl font-bold text-white tracking-tight">{t('settings.systemSettings', 'System Settings')}</h2>
         </div>
-        <p className="text-[#71717A] text-sm uppercase tracking-widest font-medium">Configure your P2P execution environment.</p>
+        <p className="text-[#71717A] text-sm uppercase tracking-widest font-medium">{t('settings.systemDesc', 'Configure your P2P execution environment.')}</p>
       </div>
 
       <div className="space-y-8">
@@ -44,15 +46,15 @@ export function SettingsView() {
           <div className="p-6 border-b border-[#1F1F23] flex items-center justify-between bg-[#141417]/50">
             <div className="flex items-center gap-3">
               <Zap className="w-4 h-4 text-[#00FFD1]" />
-              <h3 className="text-xs font-black text-white uppercase tracking-widest">Trade Execution</h3>
+              <h3 className="text-xs font-black text-white uppercase tracking-widest">{t('settings.tradeExecution', 'Trade Execution')}</h3>
             </div>
-            <span className="text-[9px] font-bold text-[#52525B] uppercase tracking-widest">Auto-save enabled</span>
+            <span className="text-[9px] font-bold text-[#52525B] uppercase tracking-widest">{t('settings.autoSaveEnabled', 'Auto-save enabled')}</span>
           </div>
           
           <div className="p-6 space-y-8">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div>
-                <label className="text-[10px] text-[#71717A] font-black uppercase tracking-widest mb-4 block">Slippage Tolerance (%)</label>
+                <label className="text-[10px] text-[#71717A] font-black uppercase tracking-widest mb-4 block">{t('settings.slippageTolerance', 'Slippage Tolerance (%)')}</label>
                 <div className="flex gap-2">
                   {['0.1', '0.5', '1.0'].map(val => (
                     <button 
@@ -72,19 +74,19 @@ export function SettingsView() {
                       value={slippage} 
                       onChange={(e) => setSlippage(e.target.value)}
                       className="w-full h-full bg-[#18181B] border border-[#27272A] rounded px-4 text-[11px] font-mono text-white outline-none focus:border-[#00FFD1]"
-                      placeholder="Custom"
+                      placeholder={t('settings.custom', 'Custom')}
                     />
                   </div>
                 </div>
               </div>
 
               <div>
-                <label className="text-[10px] text-[#71717A] font-black uppercase tracking-widest mb-4 block">Solana Priority Fee</label>
+                <label className="text-[10px] text-[#71717A] font-black uppercase tracking-widest mb-4 block">{t('settings.solanaPriorityFee', 'Solana Priority Fee')}</label>
                 <div className="grid grid-cols-3 gap-2">
                   {[
-                    { id: 'global', label: 'Static' },
-                    { id: 'fast', label: 'Turbo' },
-                    { id: 'ultra', label: 'MeV+' }
+                    { id: 'global', label: t('settings.feeStatic', 'Static') },
+                    { id: 'fast', label: t('settings.feeTurbo', 'Turbo') },
+                    { id: 'ultra', label: t('settings.feeUltra', 'MeV+') }
                   ].map(fee => (
                     <button 
                       key={fee.id}
@@ -107,7 +109,7 @@ export function SettingsView() {
         <section className="glass-card rounded-2xl border border-[#1F1F23] bg-[#0D0D0E] overflow-hidden">
           <div className="p-6 border-b border-[#1F1F23] flex items-center gap-3 bg-[#141417]/50">
             <Shield className="w-4 h-4 text-[#9945FF]" />
-            <h3 className="text-xs font-black text-white uppercase tracking-widest">Security & MPC Vault</h3>
+            <h3 className="text-xs font-black text-white uppercase tracking-widest">{t('settings.securityAndVault', 'Security & MPC Vault')}</h3>
           </div>
           
           <div className="p-6 space-y-6">
@@ -117,8 +119,8 @@ export function SettingsView() {
                   <Lock className="w-6 h-6" />
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-white mb-0.5 tracking-tight">Session Key Management</h4>
-                  <p className="text-[10px] text-[#52525B] font-medium uppercase tracking-wider">Trading enabled without constant signing</p>
+                  <h4 className="text-sm font-bold text-white mb-0.5 tracking-tight">{t('settings.sessionManagement', 'Session Key Management')}</h4>
+                  <p className="text-[10px] text-[#52525B] font-medium uppercase tracking-wider">{t('settings.tradingEnabledDesc', 'Trading enabled without constant signing')}</p>
                 </div>
               </div>
               <button 
@@ -126,7 +128,7 @@ export function SettingsView() {
                 className="flex items-center gap-2 px-4 py-2 bg-[#18181B] border border-[#27272A] rounded text-[9px] font-black uppercase text-[#A1A1AA] hover:text-white transition-all"
               >
                 {showKey ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                {showKey ? 'Hide Managed Auth' : 'Reveal Managed Auth'}
+                {showKey ? t('settings.hideAuth', 'Hide Managed Auth') : t('settings.revealAuth', 'Reveal Managed Auth')}
               </button>
             </div>
 
@@ -144,8 +146,8 @@ export function SettingsView() {
 
             <div className="pt-2">
               <div className="flex justify-between items-center mb-4">
-                <span className="text-[10px] text-[#71717A] uppercase font-bold tracking-widest">Global Spending Limit</span>
-                <span className="text-[10px] text-white font-mono">15.00 SOL / Month</span>
+                <span className="text-[10px] text-[#71717A] uppercase font-bold tracking-widest">{t('settings.globalSpendingLimit', 'Global Spending Limit')}</span>
+                <span className="text-[10px] text-white font-mono">{t('settings.spendingAmount', '15.00 SOL / Month')}</span>
               </div>
               <div className="h-1.5 w-full bg-[#1F1F23] rounded-full">
                 <div className="h-full w-[35%] bg-[#9945FF] rounded-full" />
@@ -158,27 +160,27 @@ export function SettingsView() {
         <section className="glass-card rounded-2xl border border-[#1F1F23] bg-[#0D0D0E] overflow-hidden">
           <div className="p-6 border-b border-[#1F1F23] flex items-center gap-3 bg-[#141417]/50">
             <Cpu className="w-4 h-4 text-amber-400" />
-            <h3 className="text-xs font-black text-white uppercase tracking-widest">Network Architecture</h3>
+            <h3 className="text-xs font-black text-white uppercase tracking-widest">{t('settings.networkArchitecture', 'Network Architecture')}</h3>
           </div>
           
           <div className="p-6 space-y-6">
             <div className="flex flex-col md:flex-row gap-6">
               <div className="flex-1">
-                <label className="text-[10px] text-[#71717A] font-black uppercase tracking-widest mb-3 block">RPC Cluster</label>
+                <label className="text-[10px] text-[#71717A] font-black uppercase tracking-widest mb-3 block">{t('settings.rpcCluster', 'RPC Cluster')}</label>
                 <div className="relative">
                   <select className="w-full bg-[#18181B] border border-[#27272A] rounded p-3 text-xs font-bold text-white outline-none focus:border-[#00FFD1] appearance-none">
-                    <option>Lynx Optimized (Default)</option>
-                    <option>Helius Managed RPC</option>
-                    <option>Quicknode Performance</option>
-                    <option>Localhost 8899</option>
+                    <option>{t('settings.lynxOptimized', 'Lynx Optimized (Default)')}</option>
+                    <option>{t('settings.heliusManaged', 'Helius Managed RPC')}</option>
+                    <option>{t('settings.quicknodePerf', 'Quicknode Performance')}</option>
+                    <option>{t('settings.localhost', 'Localhost 8899')}</option>
                   </select>
                   <RefreshCw className="w-3 h-3 absolute right-4 top-1/2 -translate-y-1/2 text-[#52525B]" />
                 </div>
               </div>
               <div className="flex-1">
-                <label className="text-[10px] text-[#71717A] font-black uppercase tracking-widest mb-3 block">On-Chain Data Stream</label>
+                <label className="text-[10px] text-[#71717A] font-black uppercase tracking-widest mb-3 block">{t('settings.onChainStream', 'On-Chain Data Stream')}</label>
                 <div className="p-3 bg-[#141417] border border-[#1F1F23] rounded flex items-center justify-between">
-                   <span className="text-[11px] font-mono text-[#00FFD1]">LATENCY: 12ms</span>
+                   <span className="text-[11px] font-mono text-[#00FFD1]">{t('settings.latency', 'LATENCY: 12ms')}</span>
                    <div className="flex gap-1">
                       {[1,2,3,4,5].map(i => <div key={i} className="w-1 h-3 bg-[#00FFD1] rounded-full" />)}
                    </div>
@@ -190,12 +192,16 @@ export function SettingsView() {
 
         {/* Action Bar */}
         <div className="pt-4 flex flex-col md:flex-row gap-4">
-          <button className="flex-1 py-4 bg-[#00FFD1] text-black font-black uppercase text-xs tracking-widest rounded shadow-[0_0_20px_rgba(0,255,209,0.2)] hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2">
+          <button 
+            onClick={() => alert("Settings saved to local storage (mock).")}
+            className="flex-1 py-4 bg-[#00FFD1] text-black font-black uppercase text-xs tracking-widest rounded shadow-[0_0_20px_rgba(0,255,209,0.2)] hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2">
             <Save className="w-4 h-4" />
-            Synchronize Config
+            {t('settings.synchronizeConfig', 'Synchronize Config')}
           </button>
-          <button className="px-8 py-4 bg-[#18181B] border border-[#27272A] text-[#71717A] font-bold uppercase text-xs tracking-widest rounded hover:text-white transition-all">
-            Factory Reset
+          <button 
+            onClick={() => alert("Settings reset to factory defaults (mock).")}
+            className="px-8 py-4 bg-[#18181B] border border-[#27272A] text-[#71717A] font-bold uppercase text-xs tracking-widest rounded hover:text-white transition-all">
+            {t('settings.factoryReset', 'Factory Reset')}
           </button>
         </div>
 

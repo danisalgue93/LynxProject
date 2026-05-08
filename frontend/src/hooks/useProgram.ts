@@ -145,6 +145,60 @@ export function useProgram() {
     }
   }, []);
 
+  // Example: Cast a vote on a DAO proposal
+  const castVote = useCallback(async (proposalId: string, voteType: 'yes' | 'no') => {
+    setIsLoading(true);
+    try {
+      // TODO: Implement voting contract call
+      console.log('Casting vote...', { proposalId, voteType });
+    } catch (err: any) {
+      setError(err.message || 'Failed to vote');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Example: Stake LYNX tokens
+  const stakeLynx = useCallback(async (amount: number) => {
+    setIsLoading(true);
+    try {
+      // TODO: Implement staking contract call
+      console.log('Staking LYNX...', { amount });
+    } catch (err: any) {
+      setError(err.message || 'Failed to stake');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Example: Claim rewards
+  const claimRewards = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      console.log('Claiming rewards...');
+    } catch (err: any) {
+      setError(err.message || 'Failed to claim rewards');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Example: Accept a duel
+  const acceptDuel = useCallback(async (duelId: string) => {
+    setIsLoading(true);
+    try {
+      console.log('Accepting duel...', { duelId });
+    } catch (err: any) {
+      setError(err.message || 'Failed to accept duel');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   return {
     isLoading,
     error,
@@ -152,8 +206,12 @@ export function useProgram() {
     executeTrade,
     fetchDuels,
     createDuel,
+    acceptDuel,
     fetchPortfolio,
     fetchProposals,
-    fetchDaoStats
+    fetchDaoStats,
+    castVote,
+    stakeLynx,
+    claimRewards
   };
 }

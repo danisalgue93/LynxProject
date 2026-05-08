@@ -3,6 +3,7 @@ import { Market, MarketStatus } from '@/src/types';
 import { formatSOL, formatNumber } from '@/src/lib/utils';
 import { TrendingUp, Users, Clock, ArrowRight } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useTranslation } from 'react-i18next';
 
 import { cn } from '@/src/lib/utils';
 
@@ -13,6 +14,7 @@ interface MarketCardProps {
 }
 
 export function MarketCard({ market, onClick }: MarketCardProps) {
+  const { t } = useTranslation();
   const isCutoff = market.status === MarketStatus.CUT_OFF;
   const isLynx = market.currency === 'LYNX';
   
@@ -42,7 +44,7 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
       <div className="p-3 md:p-6 flex-1 relative">
         {isLynx && (
           <div className="absolute top-0 right-0 px-2 md:px-3 py-0.5 md:py-1 bg-[#9945FF] text-white text-[7px] md:text-[9px] font-black uppercase tracking-widest rounded-bl">
-            Special
+            {t('marketCard.special', 'Special')}
           </div>
         )}
 
@@ -52,7 +54,7 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
           </span>
           <div className="flex items-center gap-1 text-[#52525B] text-[7px] md:text-[10px] font-bold uppercase tracking-wider">
             <Clock className="w-2.5 h-2.5 md:w-3 md:h-3" />
-            {isCutoff ? 'RESOLVED' : 'ACTIVE'}
+            {isCutoff ? t('marketCard.resolved', 'RESOLVED') : t('marketCard.active', 'ACTIVE')}
           </div>
         </div>
 
@@ -67,20 +69,20 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
             ))}
           </div>
           <div className="text-[7px] md:text-[10px] text-[#71717A] uppercase font-bold tracking-widest">
-            <span className="text-white">124</span> TRADERS
+            <span className="text-white">124</span> {t('marketCard.traders', 'TRADERS')}
           </div>
         </div>
 
         <div className="space-y-3 md:space-y-4 pt-3 md:pt-5 border-t border-[#1F1F23]">
           <div className="flex justify-between items-end">
             <div className="space-y-0.5 md:space-y-1">
-              <div className="text-[7px] md:text-[9px] uppercase font-bold text-[#52525B] tracking-widest">Liquidity</div>
+              <div className="text-[7px] md:text-[9px] uppercase font-bold text-[#52525B] tracking-widest">{t('marketCard.liquidity', 'Liquidity')}</div>
               <div className="text-sm md:text-lg font-mono font-bold text-white leading-none tracking-tighter">
                 {market.currency === 'LYNX' ? `${(market.poolAmount * 1).toLocaleString()}` : formatSOL(market.poolAmount)}
               </div>
             </div>
             <div className="text-right">
-              <div className="text-[7px] md:text-[9px] uppercase font-bold text-[#52525B] tracking-widest">Price</div>
+              <div className="text-[7px] md:text-[9px] uppercase font-bold text-[#52525B] tracking-widest">{t('marketCard.price', 'Price')}</div>
               <div className="text-sm md:text-lg font-mono font-bold text-[#00FFD1] leading-none tracking-tighter">
                 {(market.yesAmount / market.poolAmount * 100).toFixed(0)}¢
               </div>
@@ -95,14 +97,14 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
           </div>
           
           <div className="flex justify-between text-[8px] md:text-[10px] font-mono font-bold uppercase">
-            <span className={cn(isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>YES {(market.yesAmount / market.poolAmount * 100).toFixed(0)}%</span>
-            <span className="text-red-400/80">NO {(market.noAmount / market.poolAmount * 100).toFixed(0)}%</span>
+            <span className={cn(isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>{t('marketCard.yes', 'YES')} {(market.yesAmount / market.poolAmount * 100).toFixed(0)}%</span>
+            <span className="text-red-400/80">{t('marketCard.no', 'NO')} {(market.noAmount / market.poolAmount * 100).toFixed(0)}%</span>
           </div>
         </div>
       </div>
 
       <div className="p-3 md:p-4 bg-[#0A0A0B]/50 border-t border-[#1F1F23] flex items-center justify-between group-hover:bg-[#00FFD1]/5 transition-colors">
-        <span className="text-[8px] md:text-[10px] font-bold text-[#71717A] uppercase tracking-widest group-hover:text-[#00FFD1]">View Details</span>
+        <span className="text-[8px] md:text-[10px] font-bold text-[#71717A] uppercase tracking-widest group-hover:text-[#00FFD1]">{t('marketCard.viewDetails', 'View Details')}</span>
         <ArrowRight className="w-2.5 h-2.5 md:w-3 md:h-3 text-[#52525B] group-hover:text-[#00FFD1] group-hover:translate-x-1 transition-all" />
       </div>
     </motion.div>

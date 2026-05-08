@@ -1,6 +1,7 @@
 import React from 'react';
 import { LayoutGrid, Sword, BarChart3, Wallet, Vote, Info, Settings } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
+import { useTranslation } from 'react-i18next';
 
 interface SidebarProps {
   activeTab: string;
@@ -10,17 +11,19 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activeTab, setActiveTab, isOpen, onClose }: SidebarProps) {
+  const { t } = useTranslation();
+
   const menuItems = [
-    { id: 'markets', label: 'Markets', icon: LayoutGrid },
-    { id: 'duels', label: '1v1 Duels', icon: Sword },
-    { id: 'orderbook', label: 'Order Book', icon: BarChart3 },
-    { id: 'governance', label: 'DAO / GOV', icon: Vote },
-    { id: 'portfolio', label: 'Portfolio', icon: Wallet },
+    { id: 'markets', label: t('nav.markets', 'Markets'), icon: LayoutGrid },
+    { id: 'duels', label: t('nav.duels', '1v1 Duels'), icon: Sword },
+    { id: 'orderbook', label: t('nav.orderBook', 'Order Book'), icon: BarChart3 },
+    { id: 'governance', label: t('nav.dao', 'DAO / GOV'), icon: Vote },
+    { id: 'portfolio', label: t('nav.portfolio', 'Portfolio'), icon: Wallet },
   ];
 
   const secondaryItems = [
-    { id: 'docs', label: 'Docs', icon: Info },
-    { id: 'settings', label: 'Settings', icon: Settings },
+    { id: 'docs', label: t('nav.docs', 'Docs'), icon: Info },
+    { id: 'settings', label: t('nav.settings', 'Settings'), icon: Settings },
   ];
 
   return (
@@ -95,9 +98,9 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, onClose }: SidebarPro
           </div>
           
           <div className="mt-6 p-4 rounded bg-[#141417] border border-[#27272A]">
-            <div className="text-[10px] uppercase tracking-widest text-[#00FFD1] font-bold mb-1">Ecosystem Asset</div>
-            <div className="text-sm font-bold text-white mb-2">$LYNX Staking</div>
-            <p className="text-[11px] text-[#71717A] mb-0 leading-tight">Accrue protocol fees in SOL by holding $LYNX.</p>
+            <div className="text-[10px] uppercase tracking-widest text-[#00FFD1] font-bold mb-1">{t('sidebar.ecosystemAsset', 'Ecosystem Asset')}</div>
+            <div className="text-sm font-bold text-white mb-2">{t('sidebar.lynxStaking', '$LYNX Staking')}</div>
+            <p className="text-[11px] text-[#71717A] mb-0 leading-tight">{t('sidebar.stakingDesc', 'Accrue protocol fees in SOL by holding $LYNX.')}</p>
           </div>
         </div>
       </div>

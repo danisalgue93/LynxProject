@@ -20,13 +20,15 @@ import { ArrowUpRight, TrendingUp, ShieldCheck, Zap } from 'lucide-react';
 import { Market } from './types';
 import { cn } from './lib/utils';
 import { useProgram } from './hooks/useProgram';
+import { useTranslation } from 'react-i18next';
 
 export default function App() {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState('markets');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
   const [isCreateDuelOpen, setIsCreateDuelOpen] = useState(false);
-  const { fetchMarkets } = useProgram();
+  const { fetchMarkets, createDuel } = useProgram();
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
   const closeSidebar = () => setIsSidebarOpen(false);
@@ -68,20 +70,20 @@ export default function App() {
                     <div className="relative z-10 max-w-2xl">
                       <div className="flex items-center gap-2 mb-4 md:mb-6">
                         <span className="text-[9px] md:text-[10px] bg-[#18181B] text-[#A1A1AA] px-2 py-0.5 rounded border border-[#27272A] tracking-widest uppercase font-bold">
-                          MAINNET BETA
+                          {t('dashboard.mainnetBadge', 'MAINNET BETA')}
                         </span>
                         <span className="text-[#71717A] text-[9px] md:text-[10px] font-bold uppercase tracking-[0.2em]">
-                          DEX PROTOCOL DAO
+                          {t('dashboard.daoSubtitle', 'DEX PROTOCOL DAO')}
                         </span>
                       </div>
 
                       <h1 className="text-4xl md:text-6xl font-bold text-white mb-4 md:mb-6 leading-[1.05] tracking-tighter">
-                        Predict. Duel. <br/>
-                        <span className="text-gradient">Dominate.</span>
+                        {t('dashboard.heroTitle1', 'Predict. Duel.')} <br/>
+                        <span className="text-gradient">{t('dashboard.heroTitle2', 'Dominate.')}</span>
                       </h1>
 
                       <p className="text-sm md:text-base text-[#71717A] mb-6 md:mb-8 leading-relaxed max-w-lg">
-                        The definitive P2P prediction ecosystem on Solana. Trade real-world outcomes, duel with high leverage, and shape the protocol through our Dex Protocol DAO.
+                        {t('dashboard.heroDescription', 'The definitive P2P prediction ecosystem on Solana. Trade real-world outcomes, duel with high leverage, and shape the protocol through our Dex Protocol DAO.')}
                       </p>
 
                       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
@@ -89,28 +91,28 @@ export default function App() {
                           onClick={launchFirstMarket}
                           className="px-6 md:px-8 py-3 md:py-4 bg-[#00FFD1] text-black font-black text-xs md:text-sm rounded shadow-[0_0_20px_rgba(0,255,209,0.2)] uppercase tracking-tight hover:bg-[#00E5BC] transition-all flex items-center justify-center gap-2 group"
                         >
-                          Launch Markets
+                          {t('dashboard.launchMarkets', 'Launch Markets')}
                           <ArrowUpRight className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
                         </button>
                         <button 
                           onClick={() => setIsCreateDuelOpen(true)}
                           className="px-6 md:px-8 py-3 md:py-4 bg-[#18181B] text-white font-bold text-xs md:text-sm rounded border border-[#27272A] hover:bg-[#27272A] transition-all uppercase tracking-tight"
                         >
-                          Host Duelo 1v1
+                          {t('dashboard.hostDuel', 'Host 1v1 Duel')}
                         </button>
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 sm:gap-12 mt-8 md:mt-12 pt-8 md:pt-12 border-t border-[#1F1F23]">
                         <div className="space-y-0.5 sm:space-y-1">
-                          <div className="text-[9px] md:text-[10px] text-[#71717A] block uppercase font-bold tracking-widest">Total Volume</div>
+                          <div className="text-[9px] md:text-[10px] text-[#71717A] block uppercase font-bold tracking-widest">{t('dashboard.totalVolume', 'Total Volume')}</div>
                           <div className="text-xl md:text-2xl font-mono font-bold text-white tracking-tighter">$12.4M</div>
                         </div>
                         <div className="space-y-0.5 sm:space-y-1">
-                          <div className="text-[9px] md:text-[10px] text-[#71717A] block uppercase font-bold tracking-widest">On-Chain Vault</div>
+                          <div className="text-[9px] md:text-[10px] text-[#71717A] block uppercase font-bold tracking-widest">{t('dashboard.onChainVault', 'On-Chain Vault')}</div>
                           <div className="text-xl md:text-2xl font-mono font-bold text-[#00FFD1] tracking-tighter">100%</div>
                         </div>
                         <div className="space-y-0.5 sm:space-y-1">
-                          <div className="text-[9px] md:text-[10px] text-[#71717A] block uppercase font-bold tracking-widest">Trade Latency</div>
+                          <div className="text-[9px] md:text-[10px] text-[#71717A] block uppercase font-bold tracking-widest">{t('dashboard.tradeLatency', 'Trade Latency')}</div>
                           <div className="text-xl md:text-2xl font-mono font-bold text-[#9945FF] tracking-tighter">{"< 400ms"}</div>
                         </div>
                       </div>
@@ -192,15 +194,15 @@ export default function App() {
                   <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6">
                     <Zap className="w-8 h-8 text-[#00FFA3]" />
                   </div>
-                  <h3 className="text-2xl font-bold text-white mb-3">Syncing Program...</h3>
+                  <h3 className="text-2xl font-bold text-white mb-3">{t('common.syncing', 'Syncing Program...')}</h3>
                   <p className="text-slate-400 mb-6">
-                    The {activeTab} module is currently being optimized for high-speed P2P matching. Check back in a moment.
+                    {t('common.optimizingModule', 'The {{module}} module is currently being optimized for high-speed P2P matching. Check back in a moment.', { module: activeTab })}
                   </p>
                   <button 
                     onClick={() => setActiveTab('markets')}
                     className="text-sm font-bold text-[#00FFA3] hover:underline"
                   >
-                    Return to Markets
+                    {t('common.returnToMarkets', 'Return to Markets')}
                   </button>
                 </div>
               </motion.div>
@@ -211,13 +213,13 @@ export default function App() {
         <footer className="p-4 md:p-8 mt-auto border-t border-[#1F1F23]">
           <div className="flex flex-col md:flex-row items-center justify-between gap-6 md:gap-0">
             <div className="text-[9px] md:text-[10px] text-[#52525B] font-bold uppercase tracking-[0.2em] text-center md:text-left">
-              &copy; 2026 LYNX MARKET. <span className="text-[#00FFD1]">DEX PROTOCOL DAO.</span>
+              &copy; 2026 LYNX MARKET. <span className="text-[#00FFD1]">{t('footer.dao', 'DEX PROTOCOL DAO.')}</span>
             </div>
             <div className="grid grid-cols-2 sm:flex sm:flex-row gap-4 sm:gap-8 text-[9px] md:text-[10px] text-[#52525B] font-black uppercase tracking-widest text-center">
-              <a href="#" className="hover:text-white transition-colors">Privacy</a>
-              <a href="#" className="hover:text-white transition-colors">Terms</a>
-              <a href="#" className="hover:text-white transition-colors">Twitter (X)</a>
-              <a href="#" className="hover:text-white transition-colors">Discord</a>
+              <a href="#" className="hover:text-white transition-colors">{t('footer.privacy', 'Privacy')}</a>
+              <a href="#" className="hover:text-white transition-colors">{t('footer.terms', 'Terms')}</a>
+              <a href="#" className="hover:text-white transition-colors">{t('footer.twitter', 'Twitter (X)')}</a>
+              <a href="#" className="hover:text-white transition-colors">{t('footer.discord', 'Discord')}</a>
             </div>
           </div>
         </footer>
@@ -233,9 +235,13 @@ export default function App() {
         {isCreateDuelOpen && (
           <CreateDuelModal 
             onClose={() => setIsCreateDuelOpen(false)} 
-            onSubmit={(data) => {
-              console.log('Duel Created:', data);
-              setIsCreateDuelOpen(false);
+            onSubmit={async (data) => {
+              try {
+                await createDuel(data);
+                setIsCreateDuelOpen(false);
+              } catch (e) {
+                console.error(e);
+              }
             }} 
           />
         )}

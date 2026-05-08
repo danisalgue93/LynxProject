@@ -3,12 +3,14 @@ import { DuelCard } from './DuelCard';
 import { Duel } from '@/src/types';
 import { useProgram } from '@/src/hooks/useProgram';
 import { Sword, Plus, Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface DuelsGridProps {
   onCreateDuel?: () => void;
 }
 
 export function DuelsGrid({ onCreateDuel }: DuelsGridProps) {
+  const { t } = useTranslation();
   const { fetchDuels, isLoading, error } = useProgram();
   const [duels, setDuels] = useState<Duel[]>([]);
 
@@ -28,8 +30,8 @@ export function DuelsGrid({ onCreateDuel }: DuelsGridProps) {
             <Sword className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-3xl font-bold text-white mb-1 tracking-tight">1v1 Duels</h2>
-            <p className="text-[#71717A] text-[10px] font-bold uppercase tracking-widest">Dex Protocol Governance</p>
+            <h2 className="text-3xl font-bold text-white mb-1 tracking-tight">{t('duels.title', '1v1 Duels')}</h2>
+            <p className="text-[#71717A] text-[10px] font-bold uppercase tracking-widest">{t('duels.subtitle', 'Dex Protocol Governance')}</p>
           </div>
         </div>
         
@@ -38,14 +40,14 @@ export function DuelsGrid({ onCreateDuel }: DuelsGridProps) {
           className="px-6 py-3 bg-[#00FFD1] text-black font-black text-xs rounded hover:bg-[#00E5BC] transition-all flex items-center gap-2 shadow-[0_0_15px_rgba(0,255,209,0.2)] uppercase tracking-widest w-full md:w-auto justify-center"
         >
           <Plus className="w-4 h-4" />
-          Create New Duel
+          {t('duels.createNew', 'Create New Duel')}
         </button>
       </div>
 
       {isLoading ? (
         <div className="flex items-center justify-center min-h-[300px]">
           <Loader2 className="w-8 h-8 text-[#00FFD1] animate-spin" />
-          <span className="ml-4 font-mono text-[#71717A] text-sm uppercase tracking-widest">Syncing with blockchain...</span>
+          <span className="ml-4 font-mono text-[#71717A] text-sm uppercase tracking-widest">{t('common.syncingBlockchain', 'Syncing with blockchain...')}</span>
         </div>
       ) : error ? (
         <div className="flex items-center justify-center w-full min-h-[300px] bg-red-400/5 border border-red-400/20 rounded-xl p-8 text-center">
@@ -65,8 +67,8 @@ export function DuelsGrid({ onCreateDuel }: DuelsGridProps) {
             <div className="w-12 h-12 rounded bg-[#18181B] flex items-center justify-center mb-4 group-hover:scale-110 transition-transform border border-[#27272A]">
               <Plus className="w-5 h-5 text-[#52525B] group-hover:text-[#00FFD1]" />
             </div>
-            <h4 className="text-[11px] font-black text-white mb-2 uppercase tracking-widest">Host active Duel</h4>
-            <p className="text-[10px] text-[#71717A] max-w-[140px] uppercase font-bold tracking-tight">Challenge the pool to a fixed-odds outcome.</p>
+            <h4 className="text-[11px] font-black text-white mb-2 uppercase tracking-widest">{t('duels.hostActive', 'Host active Duel')}</h4>
+            <p className="text-[10px] text-[#71717A] max-w-[140px] uppercase font-bold tracking-tight">{t('duels.challengePool', 'Challenge the pool to a fixed-odds outcome.')}</p>
           </div>
         </div>
       )}

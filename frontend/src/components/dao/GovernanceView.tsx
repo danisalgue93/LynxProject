@@ -4,12 +4,15 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/src/lib/utils';
 import { useProgram } from '@/src/hooks/useProgram';
 import { Proposal } from '@/src/types';
+import { useTranslation } from 'react-i18next';
 
 export function GovernanceView() {
-  const { fetchProposals, fetchDaoStats, isLoading, error } = useProgram();
+  const { t } = useTranslation();
+  const { fetchProposals, fetchDaoStats, castVote, stakeLynx, isLoading, error } = useProgram();
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [activeCategory, setActiveCategory] = useState<string>('all');
+  const [isPendingAct, setIsPendingAct] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -23,15 +26,37 @@ export function GovernanceView() {
     loadData();
   }, [fetchProposals, fetchDaoStats]);
 
+  const handleVoteAction = async (proposalId: string) => {
+    setIsPendingAct(true);
+    try {
+      await castVote(proposalId, 'yes'); // Hardcoded to 'yes' for demo, expand later
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsPendingAct(false);
+    }
+  };
+
+  const handleStakeAction = async () => {
+    setIsPendingAct(true);
+    try {
+      await stakeLynx(100); // 100 LYNX for demo
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsPendingAct(false);
+    }
+  };
+
   const filteredProposals = activeCategory === 'all' 
     ? proposals 
     : proposals.filter(p => p.status === activeCategory);
 
-  if (isLoading || !stats) {
+  if (!stats) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[500px]">
         <Loader2 className="w-8 h-8 text-[#00FFD1] animate-spin mb-4" />
-        <span className="font-mono text-[#71717A] text-sm uppercase tracking-widest">Loading governance data...</span>
+        <span className="font-mono text-[#71717A] text-sm uppercase tracking-widest">{t('governance.loading', 'Loading governance data...')}</span>
       </div>
     );
   }
@@ -40,7 +65,7 @@ export function GovernanceView() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[500px]">
         <div className="text-red-400 font-mono text-sm border-dashed border border-red-400/20 bg-red-400/5 p-4 rounded-xl">
-          Error: {error}
+          {t('common.error', 'Error')}: {error}
         </div>
       </div>
     );
@@ -52,18 +77,18 @@ export function GovernanceView() {
         <div>
           <div className="flex items-center gap-2 mb-2">
             <span className="text-[10px] bg-[#9945FF]/10 text-[#9945FF] px-2 py-0.5 rounded border border-[#9945FF]/20 tracking-widest uppercase font-bold">
-              DAO GOVERNANCE
+              {t('governance.daoGovernance', 'DAO GOVERNANCE')}
             </span>
           </div>
-          <h2 className="text-3xl md:text-5xl font-bold text-white tracking-tighter mb-2">Community Hall</h2>
+          <h2 className="text-3xl md:text-5xl font-bold text-white tracking-tighter mb-2">{t('governance.communityHall', 'Community Hall')}</h2>
           <p className="text-[#71717A] text-sm md:text-base uppercase tracking-widest font-medium">
-            $LYNX stakers drive the evolution of Lynx Market.
+            {t('governance.subtitle', '$LYNX stakers drive the evolution of Lynx Market.')}
           </p>
         </div>
 
         <button className="flex items-center gap-2 px-6 py-3 bg-[#00FFD1] text-black font-black text-sm rounded uppercase tracking-tight hover:scale-[1.02] transition-all shadow-[0_0_20px_rgba(0,255,209,0.2)]">
           <PlusCircle className="w-4 h-4" />
-          Create Proposal
+          {t('governance.createProposal', 'Create Proposal')}
         </button>
       </div>
 
@@ -73,10 +98,10 @@ export function GovernanceView() {
             <div className="p-2 bg-[#9945FF]/10 rounded">
               <Users className="w-5 h-5 text-[#9945FF]" />
             </div>
-            <span className="text-[11px] font-bold text-[#71717A] uppercase tracking-widest">Active Voters</span>
+            <span className="text-[11px] font-bold text-[#71717A] uppercase tracking-widest">{t('governance.activeVoters', 'Active Voters')}</span>
           </div>
           <div className="text-3xl font-mono font-bold text-white tracking-tighter">{stats.activeVoters.toLocaleString()}</div>
-          <div className="text-[10px] text-[#00FFD1] mt-1 font-bold">+12% vs last week</div>
+          <div className="text-[10px] text-[#00FFD1] mt-1 font-bold">{t('governance.vsLastWeek', '+12% vs last week')}</div>
         </div>
         
         <div className="glass-card rounded-xl p-6 border border-[#1F1F23] bg-[#0D0D0E]">
@@ -84,10 +109,10 @@ export function GovernanceView() {
             <div className="p-2 bg-[#00FFD1]/10 rounded">
               <Vote className="w-5 h-5 text-[#00FFD1]" />
             </div>
-            <span className="text-[11px] font-bold text-[#71717A] uppercase tracking-widest">Total LYNX Staked</span>
+            <span className="text-[11px] font-bold text-[#71717A] uppercase tracking-widest">{t('governance.totalStaked', 'Total LYNX Staked')}</span>
           </div>
           <div className="text-3xl font-mono font-bold text-white tracking-tighter">{(stats.totalLynxStaked / 1000000).toFixed(1)}M</div>
-          <div className="text-[10px] text-[#71717A] mt-1 font-bold">62.4% of Supply</div>
+          <div className="text-[10px] text-[#71717A] mt-1 font-bold">{t('governance.ofSupply', '62.4% of Supply')}</div>
         </div>
 
         <div className="glass-card rounded-xl p-6 border border-[#1F1F23] bg-[#0D0D0E]">
@@ -95,10 +120,10 @@ export function GovernanceView() {
             <div className="p-2 bg-amber-400/10 rounded">
               <MessageSquare className="w-5 h-5 text-amber-400" />
             </div>
-            <span className="text-[11px] font-bold text-[#71717A] uppercase tracking-widest">Forum Activity</span>
+            <span className="text-[11px] font-bold text-[#71717A] uppercase tracking-widest">{t('governance.forumActivity', 'Forum Activity')}</span>
           </div>
-          <div className="text-3xl font-mono font-bold text-white tracking-tighter">High</div>
-          <div className="text-[10px] text-amber-400 mt-1 font-bold">{stats.activeDiscussions} active discussions</div>
+          <div className="text-3xl font-mono font-bold text-white tracking-tighter">{t('governance.high', 'High')}</div>
+          <div className="text-[10px] text-amber-400 mt-1 font-bold">{t('governance.activeDiscussions', '{{count}} active discussions', { count: stats.activeDiscussions })}</div>
         </div>
       </div>
 
@@ -113,7 +138,7 @@ export function GovernanceView() {
                 activeCategory === cat ? "text-[#00FFD1]" : "text-[#52525B] hover:text-[#A1A1AA]"
               )}
             >
-              {cat} Proposals
+              {t(`governance.${cat}Proposals`, `${cat} Proposals`)}
               {activeCategory === cat && (
                 <div className="absolute bottom-[-17px] left-0 right-0 h-0.5 bg-[#00FFD1]" />
               )}
@@ -130,7 +155,7 @@ export function GovernanceView() {
                  exit={{ opacity: 0 }}
                  className="text-center p-12 glass-card border border-dashed border-[#1F1F23] rounded-xl bg-[#0D0D0E]"
                >
-                 <p className="text-[#A1A1AA] text-sm font-mono uppercase tracking-widest">No proposals found</p>
+                 <p className="text-[#A1A1AA] text-sm font-mono uppercase tracking-widest">{t('governance.noProposals', 'No proposals found')}</p>
                </motion.div>
             ) : (
               filteredProposals.map((proposal) => (
@@ -160,14 +185,14 @@ export function GovernanceView() {
                     <p className="text-sm text-[#71717A] line-clamp-2 md:line-clamp-none max-w-3xl mb-4 leading-relaxed font-medium">
                       {proposal.description}
                     </p>
-                    <div className="flex items-center gap-4 text-[10px] text-[#52525B] font-bold uppercase tracking-widest">
+                     <div className="flex items-center gap-4 text-[10px] text-[#52525B] font-bold uppercase tracking-widest">
                        <div className="flex items-center gap-1.5">
                          <Clock className="w-3 h-3" />
                          {proposal.endTime}
                        </div>
                        <div className="flex items-center gap-1.5">
                          <CheckCircle2 className="w-3 h-3" />
-                         By {proposal.author}
+                         {t('governance.byAuthor', 'By {{author}}', { author: proposal.author })}
                        </div>
                     </div>
                   </div>
@@ -175,7 +200,7 @@ export function GovernanceView() {
                   <div className="w-full md:w-64 space-y-4">
                      <div className="space-y-2">
                         <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest">
-                           <span className="text-[#00FFD1]">Yes</span>
+                           <span className="text-[#00FFD1]">{t('governance.yes', 'Yes')}</span>
                            <span className="text-white">{(proposal.votesYes / (proposal.votesYes + proposal.votesNo) * 100).toFixed(1)}%</span>
                         </div>
                         <div className="h-1.5 w-full bg-[#1F1F23] rounded-full overflow-hidden">
@@ -187,7 +212,7 @@ export function GovernanceView() {
                      </div>
                      <div className="space-y-2">
                         <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest">
-                           <span className="text-[#52525B]">No</span>
+                           <span className="text-[#52525B]">{t('governance.no', 'No')}</span>
                            <span className="text-white">{(proposal.votesNo / (proposal.votesYes + proposal.votesNo) * 100).toFixed(1)}%</span>
                         </div>
                         <div className="h-1.5 w-full bg-[#1F1F23] rounded-full overflow-hidden">
@@ -197,13 +222,17 @@ export function GovernanceView() {
                            />
                         </div>
                      </div>
-                     <button className={cn(
+                     <button 
+                       onClick={() => proposal.status === 'active' && handleVoteAction(proposal.id)}
+                       disabled={proposal.status !== 'active' || isPendingAct}
+                       className={cn(
                        "w-full py-3 rounded text-[10px] font-black uppercase tracking-widest transition-all",
                        proposal.status === 'active' 
                         ? "bg-[#18181B] border border-[#27272A] text-white hover:bg-[#00FFD1] hover:text-black hover:border-transparent" 
-                        : "bg-[#18181B] border border-[#27272A] text-[#3F3F46] cursor-not-allowed"
+                        : "bg-[#18181B] border border-[#27272A] text-[#3F3F46] cursor-not-allowed",
+                       isPendingAct && "opacity-50 cursor-not-allowed"
                      )}>
-                       {proposal.status === 'active' ? 'Cast your Vote' : 'Voting Ended'}
+                       {proposal.status === 'active' ? t('governance.castVote', 'Cast your Vote') : t('governance.votingEnded', 'Voting Ended')}
                      </button>
                   </div>
                 </div>
@@ -217,13 +246,18 @@ export function GovernanceView() {
           <div className="absolute inset-0 opacity-5 bg-[radial-gradient(circle_at_50%_100%,_#00FFD1_0%,_transparent_70%)]"></div>
           <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
              <div>
-                <h3 className="text-2xl md:text-3xl font-bold text-white mb-2 tracking-tight">Need a Voice?</h3>
+                <h3 className="text-2xl md:text-3xl font-bold text-white mb-2 tracking-tight">{t('governance.needVoice', 'Need a Voice?')}</h3>
                 <p className="text-[#71717A] text-sm md:text-base max-w-xl font-medium tracking-wide">
-                  Stake your $LYNX tokens to participate in governance. Active voters earn a "Governance Multiplier" on their trading fee rebates.
+                  {t('governance.voiceDesc', 'Stake your $LYNX tokens to participate in governance. Active voters earn a "Governance Multiplier" on their trading fee rebates.')}
                 </p>
              </div>
-             <button className="px-8 py-4 bg-[#18181B] text-white border border-[#27272A] hover:bg-[#27272A] transition-all rounded font-black text-sm uppercase tracking-widest">
-                Stake $LYNX
+             <button 
+                onClick={handleStakeAction}
+                disabled={isPendingAct}
+                className={cn("px-8 py-4 bg-[#18181B] text-white border border-[#27272A] hover:bg-[#27272A] transition-all rounded font-black text-sm uppercase tracking-widest",
+                  isPendingAct && "opacity-50 cursor-not-allowed"
+                )}>
+                {t('governance.stakeLynx', 'Stake $LYNX')}
              </button>
           </div>
       </div>

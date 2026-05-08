@@ -5,6 +5,7 @@ import { Sword, User, Timer, ArrowRight, Shield } from 'lucide-react';
 import { motion } from 'motion/react';
 import { STATUS_COLORS } from '@/src/constants';
 import { useProgram } from '@/src/hooks/useProgram';
+import { useTranslation } from 'react-i18next';
 
 interface DuelCardProps {
   key?: string;
@@ -12,8 +13,10 @@ interface DuelCardProps {
 }
 
 export function DuelCard({ duel }: DuelCardProps) {
-  const { fetchMarkets } = useProgram();
+  const { t } = useTranslation();
+  const { fetchMarkets, acceptDuel } = useProgram();
   const [parentMarket, setParentMarket] = useState<Market | null>(null);
+  const [isAccepting, setIsAccepting] = useState(false);
 
   useEffect(() => {
     const loadMarket = async () => {
@@ -23,6 +26,18 @@ export function DuelCard({ duel }: DuelCardProps) {
     };
     loadMarket();
   }, [duel.parentMarketId, fetchMarkets]);
+
+  const handleAccept = async () => {
+    if (duel.status !== MarketStatus.OPEN) return;
+    setIsAccepting(true);
+    try {
+      await acceptDuel(duel.id);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsAccepting(false);
+    }
+  };
 
   const isOpen = duel.status === MarketStatus.OPEN;
   const isLynx = duel.currency === 'LYNX';
@@ -42,7 +57,7 @@ export function DuelCard({ duel }: DuelCardProps) {
     >
       {isLynx && (
         <div className="absolute top-0 right-0 px-2 md:px-3 py-0.5 md:py-1 bg-[#9945FF] text-white text-[7px] md:text-[9px] font-black uppercase tracking-widest rounded-bl">
-          LYNX DUEL
+          {t('duels.lynxDuel', 'LYNX DUEL')}
         </div>
       )}
       
@@ -56,7 +71,7 @@ export function DuelCard({ duel }: DuelCardProps) {
             "px-1.5 md:px-2 py-0.5 rounded text-[7px] md:text-[9px] font-bold uppercase tracking-widest border",
             STATUS_COLORS[duel.status]
           )}>
-            {duel.status}
+            {t(`status.${duel.status}`, duel.status)}
           </div>
           <div className={cn("text-base md:text-xl font-mono font-bold tracking-tighter", isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>
             {displayAmount}
@@ -64,9 +79,9 @@ export function DuelCard({ duel }: DuelCardProps) {
         </div>
 
         <div className="mb-4 md:mb-8">
-          <div className="text-[7px] md:text-[9px] uppercase text-[#52525B] font-bold mb-0.5 md:mb-1 tracking-widest">Target Market</div>
+          <div className="text-[7px] md:text-[9px] uppercase text-[#52525B] font-bold mb-0.5 md:mb-1 tracking-widest">{t('duels.targetMarket', 'Target Market')}</div>
           <h4 className="text-xs md:text-sm font-bold text-[#E4E4E7] line-clamp-1 group-hover:text-[#00FFD1] transition-colors tracking-tight">
-            {parentMarket?.title || "Unknown Market"}
+            {parentMarket?.title || t('duels.unknownMarket', 'Unknown Market')}
           </h4>
         </div>
 
@@ -81,11 +96,11 @@ export function DuelCard({ duel }: DuelCardProps) {
               <User className={cn("w-4 h-4 md:w-5 md:h-5", isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")} />
             </div>
             <div className="text-[7px] md:text-[9px] font-mono text-[#52525B] uppercase tracking-tight">{duel.creator}</div>
-            <div className={cn("text-[7px] md:text-[9px] font-black uppercase tracking-[0.2em]", isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>PLAYER A</div>
+            <div className={cn("text-[7px] md:text-[9px] font-black uppercase tracking-[0.2em]", isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>{t('duels.playerA', 'PLAYER A')}</div>
           </div>
 
           <div className="flex flex-col items-center px-1 md:px-2 py-0.5 md:py-1 bg-[#18181B] rounded border border-[#27272A]">
-            <div className="text-[8px] md:text-[10px] font-black text-[#3F3F46] italic uppercase">VS</div>
+            <div className="text-[8px] md:text-[10px] font-black text-[#3F3F46] italic uppercase">{t('duels.vs', 'VS')}</div>
           </div>
 
           <div className="flex flex-col items-center gap-1 md:gap-2 flex-1">
@@ -100,18 +115,22 @@ export function DuelCard({ duel }: DuelCardProps) {
             <div className={cn(
               "text-[7px] md:text-[9px] font-mono uppercase tracking-tight",
               duel.rival ? "text-[#52525B]" : "text-red-400 italic"
-            )}>{duel.rival || "Waiting..."}</div>
-            <div className="text-[7px] md:text-[9px] font-black text-red-400 uppercase tracking-[0.2em]">PLAYER B</div>
+            )}>{duel.rival || t('duels.waiting', 'Waiting...')}</div>
+            <div className="text-[7px] md:text-[9px] font-black text-red-400 uppercase tracking-[0.2em]">{t('duels.playerB', 'PLAYER B')}</div>
           </div>
         </div>
 
-        <button className={cn(
+        <button 
+          onClick={handleAccept}
+          disabled={isAccepting || (!isOpen && duel.status !== MarketStatus.OPEN)}
+          className={cn(
           "w-full py-2.5 md:py-3 rounded font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2",
           isOpen 
             ? "bg-[#00FFD1] text-black hover:bg-[#00E5BC] shadow-[0_0_15px_rgba(0,255,209,0.2)]" 
-            : "bg-[#18181B] text-[#71717A] border border-[#27272A] hover:text-white"
+            : "bg-[#18181B] text-[#71717A] border border-[#27272A] hover:text-white",
+          isAccepting && "opacity-50 cursor-not-allowed hover:bg-[#00FFD1]"
         )}>
-          {isOpen ? "Accept Duel" : "Match Progress"}
+          {isAccepting ? t('duels.accepting', "Accepting...") : (isOpen ? t('duels.acceptDuel', "Accept Duel") : t('duels.matchProgress', "Match Progress"))}
           <ArrowRight className="w-2.5 h-2.5 md:w-3 md:h-3" />
         </button>
       </div>

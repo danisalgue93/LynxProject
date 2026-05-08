@@ -1,7 +1,7 @@
 [package]
 name = "lynx_protocol"
 version = "0.1.0"
-description = "Created with Anchor"
+description = "Lynx Protocol prediction markets on Solana"
 edition = "2021"
 
 [lib]
@@ -21,7 +21,7 @@ custom-panic = []
 
 
 [dependencies]
-anchor-lang = "1.0.1"
+anchor-lang = { version = "1.0.1", features = ["init-if-needed"] }
 
 [dev-dependencies]
 litesvm = "0.10.0"
