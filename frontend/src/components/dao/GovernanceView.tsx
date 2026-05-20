@@ -100,8 +100,8 @@ export function GovernanceView() {
             </div>
             <span className="text-[11px] font-bold text-[#71717A] uppercase tracking-widest">{t('governance.activeVoters', 'Active Voters')}</span>
           </div>
-          <div className="text-3xl font-mono font-bold text-white tracking-tighter">{stats.activeVoters.toLocaleString()}</div>
-          <div className="text-[10px] text-[#00FFD1] mt-1 font-bold">{t('governance.vsLastWeek', '+12% vs last week')}</div>
+          <div className="text-3xl font-mono font-bold text-white tracking-tighter">{stats?.activeVoters?.toLocaleString() || '0'}</div>
+          <div className="text-[10px] text-[#00FFD1] mt-1 font-bold">{t('governance.vsLastWeek', '+0% vs last week')}</div>
         </div>
         
         <div className="glass-card rounded-xl p-6 border border-[#1F1F23] bg-[#0D0D0E]">
@@ -111,8 +111,12 @@ export function GovernanceView() {
             </div>
             <span className="text-[11px] font-bold text-[#71717A] uppercase tracking-widest">{t('governance.totalStaked', 'Total LYNX Staked')}</span>
           </div>
-          <div className="text-3xl font-mono font-bold text-white tracking-tighter">{(stats.totalLynxStaked / 1000000).toFixed(1)}M</div>
-          <div className="text-[10px] text-[#71717A] mt-1 font-bold">{t('governance.ofSupply', '62.4% of Supply')}</div>
+          <div className="text-3xl font-mono font-bold text-white tracking-tighter">
+            {stats?.totalLynxStaked >= 1000000 
+              ? `${(stats.totalLynxStaked / 1000000).toFixed(1)}M` 
+              : stats?.totalLynxStaked?.toLocaleString() || '0'}
+          </div>
+          <div className="text-[10px] text-[#71717A] mt-1 font-bold">{t('governance.ofSupply', '0% of Supply')}</div>
         </div>
 
         <div className="glass-card rounded-xl p-6 border border-[#1F1F23] bg-[#0D0D0E]">
@@ -122,8 +126,8 @@ export function GovernanceView() {
             </div>
             <span className="text-[11px] font-bold text-[#71717A] uppercase tracking-widest">{t('governance.forumActivity', 'Forum Activity')}</span>
           </div>
-          <div className="text-3xl font-mono font-bold text-white tracking-tighter">{t('governance.high', 'High')}</div>
-          <div className="text-[10px] text-amber-400 mt-1 font-bold">{t('governance.activeDiscussions', '{{count}} active discussions', { count: stats.activeDiscussions })}</div>
+          <div className="text-3xl font-mono font-bold text-white tracking-tighter">{stats?.activeDiscussions || '0'}</div>
+          <div className="text-[10px] text-amber-400 mt-1 font-bold">{t('governance.activeDiscussions', '{{count}} active discussions', { count: stats?.activeDiscussions || 0 })}</div>
         </div>
       </div>
 

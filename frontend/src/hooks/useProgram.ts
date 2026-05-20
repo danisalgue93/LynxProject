@@ -1,5 +1,7 @@
 import { useState, useCallback } from 'react';
-import { Market, Duel, Proposal } from '../types';
+import { Market, Duel, Proposal, Portfolio } from '../types';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { apiFetch } from '../lib/api';
 
 /**
  * Web3 Program Integration Hook Structure
@@ -16,17 +18,15 @@ import { Market, Duel, Proposal } from '../types';
 export function useProgram() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { publicKey } = useWallet();
+  const wallet = publicKey?.toBase58() || 'DEV_WALLET';
 
-  // Example: Fetch all active markets from the blockchain
+  // Fetch all active markets from the backend indexer
   const fetchMarkets = useCallback(async (): Promise<Market[]> => {
     setIsLoading(true);
     setError(null);
     try {
-      // TODO: Implement blockchain query
-      // const program = getProgram();
-      // const markets = await program.account.market.all();
-      // return markets.map(m => mapToMarketStruct(m));
-      return [];
+      return await apiFetch<Market[]>('/api/markets');
     } catch (err: any) {
       console.error('Error fetching markets:', err);
       setError(err.message || 'Failed to fetch markets');
@@ -37,32 +37,63 @@ export function useProgram() {
   }, []);
 
   // Example: Place a limit order or swap on a market
-  const executeTrade = useCallback(async (marketId: string, amount: number, isYes: boolean, tradeType: 'limit' | 'swap', limitPrice?: number) => {
+  const executeTrade = useCallback(async (
+    marketId: string,
+    amount: number,
+    side: boolean | string,
+    tradeType: 'limit' | 'swap' | 'market',
+    limitPrice?: number
+  ) => {
     setIsLoading(true);
     setError(null);
     try {
-      // TODO: Implement transaction building and sending
-      // const tx = new Transaction().add(
-      //   program.instruction.executeTrade(new BN(amount), isYes, tradeType, limitPrice, {
-      //     accounts: { ... }
-      //   })
-      // );
-      // await sendTransaction(tx, connection);
-      console.log('Sending transaction...', { marketId, amount, isYes, tradeType, limitPrice });
+      const position = typeof side === 'boolean' ? (side ? 'YES' : 'NO') : side;
+      return await apiFetch(`/api/markets/${marketId}/trades`, {
+        method: 'POST',
+        body: JSON.stringify({ wallet, amount, position, tradeType, limitPrice }),
+      });
     } catch (err: any) {
       setError(err.message || 'Failed to execute trade');
       throw err;
     } finally {
       setIsLoading(false);
     }
+  }, [wallet]);
+
+  const executeLynxOrder = useCallback(async (side: 'BUY' | 'SELL', amount: number, price: number) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      return await apiFetch('/api/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          wallet,
+          pair: 'LYNX/SOL',
+          side,
+          amount,
+          price,
+          currency: 'LYNX',
+        }),
+      });
+    } catch (err: any) {
+      setError(err.message || 'Failed to place LYNX order');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [wallet]);
+
+  const fetchOrderBook = useCallback(async (pair = 'LYNX/SOL', marketId?: string) => {
+    const params = new URLSearchParams({ pair });
+    if (marketId) params.set('marketId', marketId);
+    return await apiFetch<any>(`/api/orderbook?${params.toString()}`);
   }, []);
 
-  // Example: Fetch duels (1v1)
+  // Fetch duels from backend
   const fetchDuels = useCallback(async (): Promise<Duel[]> => {
     setIsLoading(true);
     try {
-      // TODO: Implement query for 1v1 duels from the contract
-      return [];
+      return await apiFetch<Duel[]>('/api/duels');
     } catch (err: any) {
       setError(err.message || 'Failed to fetch duels');
       return [];
@@ -75,29 +106,23 @@ export function useProgram() {
   const createDuel = useCallback(async (duelParams: any) => {
     setIsLoading(true);
     try {
-      // TODO: Program call to initialize duel
-      console.log('Creating duel...', duelParams);
+      return await apiFetch('/api/duels', {
+        method: 'POST',
+        body: JSON.stringify({ wallet, ...duelParams }),
+      });
     } catch (err: any) {
       setError(err.message || 'Failed to create duel');
       throw err;
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [wallet]);
 
-  // Example: Fetch user portfolio
-  const fetchPortfolio = useCallback(async (): Promise<any> => {
+  // Fetch user portfolio
+  const fetchPortfolio = useCallback(async (): Promise<Portfolio> => {
     setIsLoading(true);
     try {
-      // TODO: Implement query for user portfolio from the contract/RPC
-      return {
-        solBalance: 0,
-        lynxBalance: 0,
-        totalVolume: 0,
-        winRate: 0,
-        holdings: [],
-        history: []
-      };
+      return await apiFetch<Portfolio>(`/api/portfolio?wallet=${encodeURIComponent(wallet)}`);
     } catch (err: any) {
       setError(err.message || 'Failed to fetch portfolio');
       return {
@@ -111,14 +136,13 @@ export function useProgram() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [wallet]);
 
-  // Example: Fetch DAO proposals
+  // Fetch DAO proposals
   const fetchProposals = useCallback(async (): Promise<Proposal[]> => {
     setIsLoading(true);
     try {
-      // TODO: Implement query for DAO proposals from the contract
-      return [];
+      return await apiFetch<Proposal[]>('/api/proposals');
     } catch (err: any) {
       setError(err.message || 'Failed to fetch proposals');
       return [];
@@ -127,16 +151,11 @@ export function useProgram() {
     }
   }, []);
 
-  // Example: Fetch DAO Stats
+  // Fetch DAO Stats
   const fetchDaoStats = useCallback(async (): Promise<any> => {
     setIsLoading(true);
     try {
-       // TODO: Implement query for DAO stats
-       return {
-         activeVoters: 0,
-         totalLynxStaked: 0,
-         activeDiscussions: 0,
-       };
+       return await apiFetch('/api/daostats');
     } catch (err: any) {
        setError(err.message || 'Failed to fetch DAO stats');
        return null;
@@ -149,61 +168,89 @@ export function useProgram() {
   const castVote = useCallback(async (proposalId: string, voteType: 'yes' | 'no') => {
     setIsLoading(true);
     try {
-      // TODO: Implement voting contract call
-      console.log('Casting vote...', { proposalId, voteType });
+      return await apiFetch(`/api/proposals/${proposalId}/vote`, {
+        method: 'POST',
+        body: JSON.stringify({ wallet, voteType }),
+      });
     } catch (err: any) {
       setError(err.message || 'Failed to vote');
       throw err;
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [wallet]);
 
   // Example: Stake LYNX tokens
   const stakeLynx = useCallback(async (amount: number) => {
     setIsLoading(true);
     try {
-      // TODO: Implement staking contract call
-      console.log('Staking LYNX...', { amount });
+      return await apiFetch<Portfolio>('/api/staking/stake', {
+        method: 'POST',
+        body: JSON.stringify({ wallet, amount }),
+      });
     } catch (err: any) {
       setError(err.message || 'Failed to stake');
       throw err;
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [wallet]);
 
   // Example: Claim rewards
   const claimRewards = useCallback(async () => {
     setIsLoading(true);
     try {
-      console.log('Claiming rewards...');
+      return await apiFetch<{ claimed: number; portfolio: Portfolio }>('/api/staking/claim', {
+        method: 'POST',
+        body: JSON.stringify({ wallet }),
+      });
     } catch (err: any) {
       setError(err.message || 'Failed to claim rewards');
       throw err;
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [wallet]);
 
   // Example: Accept a duel
-  const acceptDuel = useCallback(async (duelId: string) => {
+  const acceptDuel = useCallback(async (duelId: string, position?: string) => {
     setIsLoading(true);
     try {
-      console.log('Accepting duel...', { duelId });
+      return await apiFetch(`/api/duels/${duelId}/accept`, {
+        method: 'POST',
+        body: JSON.stringify({ wallet, side: position }),
+      });
     } catch (err: any) {
       setError(err.message || 'Failed to accept duel');
       throw err;
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [wallet]);
+
+  // Example: Unstake LYNX tokens
+  const unstakeLynx = useCallback(async (amount: number) => {
+    setIsLoading(true);
+    try {
+      return await apiFetch<Portfolio>('/api/staking/unstake', {
+        method: 'POST',
+        body: JSON.stringify({ wallet, amount }),
+      });
+    } catch (err: any) {
+      setError(err.message || 'Failed to unstake');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [wallet]);
 
   return {
     isLoading,
     error,
     fetchMarkets,
     executeTrade,
+    executeLynxOrder,
+    fetchOrderBook,
     fetchDuels,
     createDuel,
     acceptDuel,
@@ -212,6 +259,7 @@ export function useProgram() {
     fetchDaoStats,
     castVote,
     stakeLynx,
+    unstakeLynx,
     claimRewards
   };
 }

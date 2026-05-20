@@ -4,12 +4,15 @@ import App from './App.tsx';
 import './index.css';
 import './i18n';
 import { initializeLanguage } from './i18n';
+import { SolanaProvider } from './providers/SolanaProvider.tsx';
 
 // Initialize location based language
 initializeLanguage();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <SolanaProvider>
+      <App />
+    </SolanaProvider>
   </StrictMode>,
 );

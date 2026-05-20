@@ -67,6 +67,16 @@ input[type=number] {
   background: #27272A;
 }
 
+@media (max-width: 768px) {
+  .mobile-no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .mobile-no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }

@@ -15,10 +15,10 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, onClose }: SidebarPro
 
   const menuItems = [
     { id: 'markets', label: t('nav.markets', 'Markets'), icon: LayoutGrid },
-    { id: 'duels', label: t('nav.duels', '1v1 Duels'), icon: Sword },
+    { id: 'duels', label: t('nav.duels', 'Duelos'), icon: Sword },
     { id: 'orderbook', label: t('nav.orderBook', 'Order Book'), icon: BarChart3 },
-    { id: 'governance', label: t('nav.dao', 'DAO / GOV'), icon: Vote },
     { id: 'portfolio', label: t('nav.portfolio', 'Portfolio'), icon: Wallet },
+    { id: 'governance', label: t('nav.dao', 'DAO / GOV'), icon: Vote },
   ];
 
   const secondaryItems = [
@@ -37,17 +37,23 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, onClose }: SidebarPro
       )}
 
       <div className={cn(
-        "fixed inset-y-0 left-0 w-64 border-r border-[#1F1F23] flex flex-col h-full bg-[#0A0A0B] z-[70] transition-transform duration-300 transform lg:relative lg:translate-x-0 outline-none",
+        "fixed inset-y-0 left-0 w-64 border-r border-[#1F1F23] flex flex-col h-full bg-[#0A0A0B] z-[70] transition-transform duration-300 transform lg:relative lg:translate-x-0 outline-none overflow-y-auto custom-scrollbar mobile-no-scrollbar",
         isOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="p-6">
           <div className="flex items-center gap-3 mb-10">
-            <div className="w-8 h-8 bg-gradient-to-br from-[#00FFD1] to-[#9945FF] rounded-sm rotate-45 flex items-center justify-center">
-              <span className="-rotate-45 font-black text-black text-[10px]">L</span>
-            </div>
-            <div className="flex flex-col -gap-1">
-              <span className="text-xl font-bold tracking-tighter text-white leading-none">LYNX <span className="text-[#00FFD1] font-medium tracking-normal">MARKET</span></span>
-              <span className="text-[8px] font-black uppercase tracking-[0.2em] text-[#52525B]">Dex Protocol Dao</span>
+            <img 
+              src="https://res.cloudinary.com/demeahktg/image/upload/v1778961729/logo_plataforma_sin_fondo_xlkpa9.png" 
+              alt="Lynx Logo" 
+              className="w-12 h-12 object-contain rounded-sm"
+            />
+            <div className="flex flex-col justify-center gap-0.5">
+              <span className="text-3xl font-black tracking-[0.1em] text-transparent bg-clip-text bg-gradient-to-r from-[#00FFD1] from-[25%] to-[#8219FF] to-[55%] drop-shadow-[0_0_10px_rgba(0,255,209,0.3)] leading-none">
+                LYNX
+              </span>
+              <span className="text-[9px] font-black uppercase tracking-[0.25em] text-transparent bg-clip-text bg-gradient-to-r from-[#00FFD1] from-[25%] to-[#8219FF] to-[55%] drop-shadow-[0_0_8px_rgba(130,25,255,0.3)] -mt-1 ml-0.5">
+                MARKET PROTOCOL
+              </span>
             </div>
           </div>
 

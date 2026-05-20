@@ -2,232 +2,294 @@ import {
   BookOpen, 
   ShieldCheck, 
   TrendingUp, 
-  Users, 
   Zap, 
   Globe, 
   Scale, 
-  Compass,
   ArrowRight,
   Wallet,
-  FileText,
-  Key,
-  Database
+  Coins,
+  Flame,
+  ArrowRightLeft,
+  CircleDollarSign,
+  BarChart4,
+  Layers,
+  FileText
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
+import { cn } from '@/src/lib/utils';
 
 export function DocsView() {
   const { t } = useTranslation();
-  const sections = [
+
+  const steps = [
     {
-      title: t('docs.introTitle', "Introduction to LYNX Market"),
+      id: "01",
+      title: t('docs.step1Title', "Prediction Events"),
       icon: <Globe className="w-5 h-5" />,
-      content: t('docs.introContent', "LYNX Market is a decentralized prediction ecosystem built on Solana. It enables users to trade positions on real-world outcomes using high-performance P2P infrastructure. Our mission is to facilitate a liquid market for collective insights and consensus."),
-      color: "#00FFD1"
+      content: t('docs.step1Content', "Users bet SOL on real-world Yes/No prediction events."),
+      color: "#00FFD1",
+      details: [
+        { label: "Example", value: "100 SOL Total Pool", highlight: true }
+      ]
     },
     {
-      title: t('docs.consensusTitle', "Consensus Modeling"),
-      icon: <TrendingUp className="w-5 h-5" />,
-      content: t('docs.consensusContent', "Positions are represented as tokens that fluctuate based on market demand and collective opinion. By participating, users provide data points that help aggregate the most accurate forecast of future events, from technology releases to macro-economic shifts."),
-      color: "#9945FF"
+      id: "02",
+      title: t('docs.step2Title', "Protocol Fees"),
+      icon: <Scale className="w-5 h-5" />,
+      content: t('docs.step2Content', "A 10% fee is applied to the total event volume for ecosystem growth and rewards."),
+      color: "#9945FF",
+      details: [
+        { label: "LYNX Stakers", value: "5% SOL Rewards", highlight: true },
+        { label: "Protocol Treasury", value: "5% SOL" }
+      ]
     },
     {
-      title: t('docs.securityTitle', "Institutional Security"),
-      icon: <ShieldCheck className="w-5 h-5" />,
-      content: t('docs.securityContent', "All transactions are executed through non-custodial smart contracts. Oracle integrity is maintained via high-fidelity data streams (Switchboard/Pyth), ensuring that market settlement is always based on verifiable, objective truths."),
-      color: "#14F195"
+      id: "03",
+      title: t('docs.step3Title', "LYNX Emission"),
+      icon: <Coins className="w-5 h-5" />,
+      content: t('docs.step3Content', "1 LYNX is emitted for every 1 SOL wagered in regular and 1v1 events. 20% of this emission is distributed among users holding the winning side tokens at the end of the event."),
+      color: "#14F195",
+      details: [
+        { label: "Winners", value: "20%" },
+        { label: "Treasury", value: "20%" },
+        { label: "Market Sale", value: "60%", highlight: true }
+      ]
     },
     {
-      title: t('docs.duelsTitle', "1v1 Forecasting Duels"),
+      id: "04",
+      title: t('docs.step4Title', "Initial & Secondary Market"),
+      icon: <BarChart4 className="w-5 h-5" />,
+      content: t('docs.step4Content', "60% of emitted LYNX is sold via Order Book. Price is 100% defined by free market supply and demand."),
+      color: "#F0E040",
+      details: [
+        { label: "Proceeds go to", value: "Treasury" },
+        { label: "Price determined by", value: "Market ONLY", highlight: true }
+      ]
+    },
+    {
+      id: "05",
+      title: t('docs.step5Title', "Platform Fees & Treasury"),
+      icon: <Wallet className="w-5 h-5" />,
+      content: t('docs.step5Content', "A 0.1% fee on all platform transactions funds the Treasury, powering buybacks, development, and system liquidity."),
+      color: "#FF4545",
+      details: [
+        { label: "Global TX Fee", value: "0.1%" },
+        { label: "Goes to", value: "Treasury", highlight: true }
+      ]
+    },
+    {
+      id: "06",
+      title: t('docs.step6Title', "Staking & Rewards"),
+      icon: <Layers className="w-5 h-5" />,
+      content: t('docs.step6Content', "Lock your freely-traded LYNX to capture protocol value in SOL. Stakers earn the 5% event volume fees proportionally."),
+      color: "#00FFD1",
+      details: [
+        { label: "Requirement", value: "Stake LYNX" },
+        { label: "Yield", value: "SOL Volume Fees", highlight: true }
+      ]
+    },
+    {
+      id: "07",
+      title: t('docs.step7Title', "1v1vP Mode"),
       icon: <Zap className="w-5 h-5" />,
-      content: t('docs.duelsContent', "A unique high-stakes environment where two participants can open direct peer-to-peer markets. These are permissionless markets created with custom parameters, enabling precise targeting of specific outcome variations with optimized capital efficiency."),
-      color: "#F0E040"
+      content: t('docs.step7Content', "In 1v1vP Duels, the protocol participates by emitting LYNX equal to the SOL wagered by users. If the protocol wins, the SOL goes to the Treasury. If it loses, the emitted LYNX is awarded to the players."),
+      color: "#9945FF",
+      details: [
+        { label: "Protocol Matches", value: "1:1 with LYNX", highlight: true },
+        { label: "If Protocol Loses", value: "+LYNX to Players" }
+      ]
+    },
+    {
+      id: "08",
+      title: t('docs.step8Title', "Deflationary Mechanics"),
+      icon: <Flame className="w-5 h-5" />,
+      content: t('docs.step8Content', "Participating in special LYNX-denominated tournaments permanently burns 15% of the total wagered LYNX. No new tokens are emitted during these events."),
+      color: "#FF4545",
+      details: [
+        { label: "Tournaments Burn", value: "15% of LYNX", highlight: true },
+        { label: "Emission", value: "0 LYNX" }
+      ]
     }
   ];
 
   const addresses = {
     contracts: [
-      { label: t('docs.marketCoreProg', "Market Core Program"), address: "LYNx8...w9A2", color: "#00FFD1" },
-      { label: t('docs.ammVault', "AMM Vault Router"), address: "LYNxV...kL41", color: "#9945FF" },
-      { label: t('docs.govDao', "Governance DAO"), address: "LYNxG...eR29", color: "#14F195" }
+      { label: t('docs.lynxToken', "$LYNX Token"), address: "LYNx8...w9A2", color: "#00FFD1" },
+      { label: t('docs.marketCoreProg', "Market Core Program"), address: "mRk7...vL41", color: "#9945FF" },
+      { label: t('docs.stakingProgram', "Staking Program"), address: "stAk...eR29", color: "#14F195" }
     ],
     wallets: [
-      { label: t('docs.foundationTreasury', "Foundation Treasury"), address: "LYNxT...xP88", color: "#F0E040" },
-      { label: t('docs.protocolRewards', "Protocol Rewards"), address: "LYNxR...mC55", color: "#00FFD1" },
-      { label: t('docs.insuranceReserve', "Insurance Reserve"), address: "LYNxI...vB12", color: "#FF4545" }
+      { label: t('docs.foundationTreasury', "Foundation Treasury"), address: "trEa...xP88", color: "#F0E040" },
+      { label: t('docs.protocolRewards', "Protocol Rewards Vault"), address: "rEwA...mC55", color: "#00FFD1" },
+      { label: t('docs.feeCollector', "Fee Collector (Hot)"), address: "fEeC...vB12", color: "#FF4545" }
     ]
   };
 
-  const faqs = [
-    {
-      q: t('docs.faq1Q', "What determines the value of a position?"),
-      a: t('docs.faq1A', "The value is a reflection of the market's perceived probability of an outcome. If the consensus shifts toward 'Yes', the Yes position value increases. This is a dynamic pricing model identical to an order-book based DEX.")
-    },
-    {
-      q: t('docs.faq2Q', "Is this a professional analytics tool?"),
-      a: t('docs.faq2A', "Yes. LYNX is a financial utility for information aggregation. It provides hedging mechanisms and serves as a 'Truth Machine', compensating those who provide accurate insights through successful forecasting.")
-    },
-    {
-      q: t('docs.faq3Q', "How does the DAO governance work?"),
-      a: t('docs.faq3A', "Protocol parameters, grant allocations, and new asset listings are decided by $LYNX holders. Staking $LYNX not only grants voting power but also distributes a portion of the protocol's execution fees.")
-    }
-  ];
-
   return (
-    <div className="p-4 md:p-8 max-w-5xl mx-auto">
+    <div className="p-4 md:p-8 max-w-5xl mx-auto mb-24">
       {/* Header */}
-      <div className="mb-12">
+      <div className="mb-16">
         <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 bg-[#00FFD1]/10 rounded border border-[#00FFD1]/20">
-            <BookOpen className="w-5 h-5 text-[#00FFD1]" />
+           <div className="w-12 h-12 bg-[#00FFD1]/10 rounded flex items-center justify-center text-[#00FFD1] border border-[#00FFD1]/20">
+            <BookOpen className="w-6 h-6" />
           </div>
-          <h2 className="text-3xl font-bold text-white tracking-tight">{t('docs.protocolDocs', 'Protocol Documentation')}</h2>
+          <div>
+            <h2 className="text-3xl lg:text-4xl font-bold text-white tracking-tight">{t('docs.systemLynx', 'LYNX System')}</h2>
+            <p className="text-[#71717A] text-[10px] uppercase tracking-widest font-black mt-1">
+              {t('docs.systemSubtitle', 'The Definitive On-Chain Prediction Economy')}
+            </p>
+          </div>
         </div>
-        <p className="text-[#71717A] text-sm uppercase tracking-widest font-black">{t('docs.institutionalGrade', 'Institutional Grade Insight Exchange')}</p>
+        
+        <div className="glass-card border border-[#00FFD1]/20 bg-[#00FFD1]/5 rounded-xl p-6 md:p-8 mt-8">
+          <h3 className="text-sm font-bold text-[#00FFD1] uppercase tracking-widest mb-4 flex items-center gap-2">
+            <Globe className="w-4 h-4" />
+            {t('docs.systemSummaryTitle', 'System Summary')}
+          </h3>
+          <p className="text-[#A1A1AA] text-sm md:text-base leading-relaxed">
+            <strong className="text-white">LYNX</strong> {t('docs.systemSummary1', 'is a freely tradable token that grants access to SOL rewards generated by a prediction market. The price of LYNX is 100% determined by the free market via order book. Its main utility is staking to capture continuous SOL yield from protocol volume.')}
+          </p>
+        </div>
       </div>
 
-      {/* Core Concept Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-16">
-        {sections.map((section, idx) => (
-          <motion.div 
-            key={idx}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: idx * 0.1 }}
-            className="p-8 rounded-2xl bg-[#0D0D0E] border border-[#1F1F23] relative group overflow-hidden"
-          >
-            <div 
-              className="absolute top-0 right-0 w-32 h-32 opacity-5 pointer-events-none group-hover:opacity-10 transition-opacity"
-              style={{ background: `radial-gradient(circle at 100% 0%, ${section.color}, transparent 70%)` }}
-            />
-            <div className="mb-6 p-3 w-fit rounded-lg bg-[#141417] border border-[#27272A]" style={{ color: section.color }}>
-              {section.icon}
-            </div>
-            <h3 className="text-lg font-bold text-white mb-3 tracking-tight">{section.title}</h3>
-            <p className="text-[#71717A] text-sm leading-relaxed font-medium">
-              {section.content}
-            </p>
-          </motion.div>
-        ))}
+      {/* Step by Step Flow */}
+      <div className="mb-16">
+        <h3 className="text-xs font-black text-[#52525B] uppercase tracking-[0.3em] mb-8 border-b border-[#1F1F23] pb-4 flex items-center gap-2">
+           <ArrowRightLeft className="w-4 h-4" />
+           {t('docs.operationalFlow', 'Operational Flow')}
+        </h3>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {steps.map((step, idx) => (
+            <motion.div 
+              key={step.id}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: idx * 0.1 }}
+              className="p-6 md:p-8 rounded-2xl bg-[#0A0A0B] border border-[#1F1F23] relative group overflow-hidden flex flex-col"
+            >
+              <div 
+                className="absolute top-0 right-0 w-32 h-32 opacity-5 pointer-events-none group-hover:opacity-10 transition-opacity"
+                style={{ background: `radial-gradient(circle at 100% 0%, ${step.color}, transparent 70%)` }}
+              />
+              
+              <div className="flex justify-between items-start mb-6">
+                <div className="p-3 rounded-lg bg-[#141417] border border-[#27272A]" style={{ color: step.color }}>
+                  {step.icon}
+                </div>
+                <div className="text-[10px] font-mono font-black text-[#3F3F46] tracking-widest bg-[#141417] px-2 py-1 rounded">
+                  STEP {step.id}
+                </div>
+              </div>
+
+              <h3 className="text-lg font-bold text-white mb-3 tracking-tight">{step.title}</h3>
+              <p className="text-[#71717A] text-sm leading-relaxed font-medium mb-6 flex-1">
+                {step.content}
+              </p>
+
+              <div className="space-y-2 mt-auto">
+                {step.details.map((detail, dIdx) => (
+                  <div key={dIdx} className={cn(
+                    "flex justify-between items-center text-[10px] uppercase font-bold p-2 rounded",
+                    detail.highlight ? "bg-white/5 border border-white/10" : "bg-[#0D0D0E]"
+                  )}>
+                    <span className="text-[#52525B]">{detail.label}</span>
+                    <span className={cn(
+                      "font-mono tracking-tighter",
+                      detail.highlight ? "text-white" : "text-[#71717A]"
+                    )}>{detail.value}</span>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+
+      {/* Trilemma / Breakdown Section */}
+      <div className="mb-16">
+        <h3 className="text-xs font-black text-[#52525B] uppercase tracking-[0.3em] mb-8 border-b border-[#1F1F23] pb-4">
+           {t('docs.systemEntities', 'System Entities')}
+        </h3>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="p-6 rounded-xl border border-[#00FFD1]/20 bg-[#00FFD1]/5 relative overflow-hidden">
+             <div className="absolute top-0 right-0 w-32 h-32 opacity-10 bg-[#00FFD1] blur-3xl pointer-events-none" />
+             <h4 className="text-[#00FFD1] font-bold uppercase tracking-widest text-xs mb-4">1. {t('docs.entityProtocol', 'Protocol (Treasury)')}</h4>
+             <p className="text-[#A1A1AA] text-[11px] leading-relaxed mb-4 font-medium">
+               {t('docs.entityProtocolDesc', 'Accumulates SOL from event fees, initial LYNX sales, 1v1vP events, and global activity fees. Can freely use these funds for buybacks, system liquidity, and development.')}
+             </p>
+          </div>
+          
+          <div className="p-6 rounded-xl border border-[#9945FF]/20 bg-[#9945FF]/5 relative overflow-hidden">
+             <div className="absolute top-0 right-0 w-32 h-32 opacity-10 bg-[#9945FF] blur-3xl pointer-events-none" />
+             <h4 className="text-[#9945FF] font-bold uppercase tracking-widest text-xs mb-4">2. {t('docs.entityUsers', 'Users (Staking)')}</h4>
+             <p className="text-[#A1A1AA] text-[11px] leading-relaxed mb-4 font-medium">
+               {t('docs.entityUsersDesc', 'Buy and sell LYNX, stake to receive SOL rewards, speculate on LYNX price, and participate in prediction events with SOL.')}
+             </p>
+          </div>
+
+          <div className="p-6 rounded-xl border border-[#F0E040]/20 bg-[#F0E040]/5 relative overflow-hidden">
+             <div className="absolute top-0 right-0 w-32 h-32 opacity-10 bg-[#F0E040] blur-3xl pointer-events-none" />
+             <h4 className="text-[#F0E040] font-bold uppercase tracking-widest text-xs mb-4">3. {t('docs.entityMarket', 'Free Market')}</h4>
+             <p className="text-[#A1A1AA] text-[11px] leading-relaxed mb-4 font-medium">
+               {t('docs.entityMarketDesc', 'Defines the price of LYNX via order book and provides liquidity. The protocol NEVER sets or fixes the price of LYNX.')}
+             </p>
+          </div>
+        </div>
       </div>
 
       {/* Protocol Directory Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-16">
-        <div className="lg:col-span-2 space-y-6">
-          <h3 className="text-xs font-black text-[#52525B] uppercase tracking-[0.3em] mb-4 border-b border-[#1F1F23] pb-4">{t('docs.protocolDir', 'Protocol Directory')}</h3>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Contracts */}
-            <div className="p-6 rounded-xl bg-[#0F0F12] border border-[#1F1F23] space-y-4">
-              <div className="flex items-center gap-2 text-white font-bold mb-2">
-                <FileText className="w-4 h-4 text-[#00FFD1]" />
-                <span className="text-sm">{t('docs.smartContracts', 'Smart Contracts')}</span>
-              </div>
+      <div className="mb-16">
+        <h3 className="text-xs font-black text-[#52525B] uppercase tracking-[0.3em] mb-8 border-b border-[#1F1F23] pb-4 flex items-center gap-2">
+           <FileText className="w-4 h-4" />
+           {t('docs.protocolDir', 'Protocol Directory')}
+        </h3>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Contracts */}
+          <div className="p-6 rounded-xl bg-[#0A0A0B] border border-[#1F1F23] space-y-6">
+            <div className="flex items-center gap-2 text-white font-bold mb-2">
+              <FileText className="w-5 h-5 text-[#00FFD1]" />
+              <span className="text-sm md:text-base tracking-tight">{t('docs.smartContracts', 'Smart Contracts')}</span>
+            </div>
+            <div className="space-y-4">
               {addresses.contracts.map((item, i) => (
-                <div key={i} className="flex justify-between items-center text-[10px]">
-                  <span className="text-[#71717A] font-bold uppercase">{item.label}</span>
-                  <span className="font-mono text-[#A1A1AA] bg-white/5 px-2 py-1 rounded border border-white/10">{item.address}</span>
+                <div key={i} className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 text-[10px] md:text-xs">
+                  <span className="text-[#A1A1AA] font-bold uppercase tracking-widest">{item.label}</span>
+                  <span className="font-mono text-[#00FFD1] bg-[#00FFD1]/10 px-2 py-1.5 rounded border border-[#00FFD1]/20 w-fit">{item.address}</span>
                 </div>
               ))}
             </div>
+          </div>
 
-            {/* Wallets */}
-            <div className="p-6 rounded-xl bg-[#0F0F12] border border-[#1F1F23] space-y-4">
-              <div className="flex items-center gap-2 text-white font-bold mb-2">
-                <Wallet className="w-4 h-4 text-[#9945FF]" />
-                <span className="text-sm">{t('docs.protocolTreasury', 'Protocol Treasury')}</span>
-              </div>
+          {/* Wallets */}
+          <div className="p-6 rounded-xl bg-[#0A0A0B] border border-[#1F1F23] space-y-6">
+            <div className="flex items-center gap-2 text-white font-bold mb-2">
+              <Wallet className="w-5 h-5 text-[#9945FF]" />
+              <span className="text-sm md:text-base tracking-tight">{t('docs.protocolTreasuryDir', 'Protocol Treasury & Vaults')}</span>
+            </div>
+            <div className="space-y-4">
               {addresses.wallets.map((item, i) => (
-                <div key={i} className="flex justify-between items-center text-[10px]">
-                  <span className="text-[#71717A] font-bold uppercase">{item.label}</span>
-                  <span className="font-mono text-[#A1A1AA] bg-white/5 px-2 py-1 rounded border border-white/10">{item.address}</span>
+                <div key={i} className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 text-[10px] md:text-xs">
+                  <span className="text-[#A1A1AA] font-bold uppercase tracking-widest">{item.label}</span>
+                  <span className="font-mono text-[#9945FF] bg-[#9945FF]/10 px-2 py-1.5 rounded border border-[#9945FF]/20 w-fit">{item.address}</span>
                 </div>
               ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="p-6 rounded-xl bg-gradient-to-br from-[#141417] to-[#0D0D0E] border border-[#1F1F23] self-start">
-          <div className="flex items-center gap-2 text-white font-bold mb-4">
-            <Database className="w-4 h-4 text-[#F0E040]" />
-            <span className="text-sm">{t('docs.ammInfra', 'AMM Infrastructure')}</span>
-          </div>
-          <p className="text-[11px] text-[#71717A] leading-relaxed mb-4">
-            {t('docs.ammDesc', 'The LYNX Automated Market Maker utilizes a customized')} <strong>LMSR (Logarithmic Market Scoring Rule)</strong> {t('docs.ammDesc2', 'algorithm specifically optimized for the high throughput of the Solana network.')}
-          </p>
-          <div className="space-y-3">
-            <div className="flex justify-between text-[9px] uppercase tracking-wider">
-              <span className="text-[#52525B]">{t('docs.swapFee', 'Swap Fee')}</span>
-              <span className="text-[#00FFD1] font-black">0.25%</span>
-            </div>
-            <div className="flex justify-between text-[9px] uppercase tracking-wider">
-              <span className="text-[#52525B]">{t('docs.ammEfficiency', 'AMM Efficiency')}</span>
-              <span className="text-[#00FFD1] font-black">99.8%</span>
-            </div>
-            <div className="flex justify-between text-[9px] uppercase tracking-wider">
-              <span className="text-[#52525B]">{t('docs.settlementDelay', 'Settlement Delay')}</span>
-              <span className="text-[#00FFD1] font-black">{t('docs.instant', 'Instant')}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* FAQ / Detailed Specs */}
-      <div className="space-y-12 mb-16">
-        <div>
-          <h3 className="text-xs font-black text-[#52525B] uppercase tracking-[0.3em] mb-8 border-b border-[#1F1F23] pb-4">{t('docs.consensusFaq', 'Consensus FAQ')}</h3>
-          <div className="space-y-8">
-            {faqs.map((faq, idx) => (
-              <div key={idx} className="max-w-3xl">
-                <h4 className="text-white font-bold mb-2 flex items-center gap-2">
-                  <div className="w-1 h-4 bg-[#00FFD1] rounded-full" />
-                  {faq.q}
-                </h4>
-                <p className="text-[#71717A] text-sm leading-relaxed pl-3 font-medium">
-                  {faq.a}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Technical Architecture */}
-        <div className="p-8 rounded-2xl bg-[#0F0F12] border border-[#1F1F23] relative">
-          <div className="flex items-center gap-4 mb-8">
-            <Compass className="w-5 h-5 text-[#9945FF]" />
-            <h3 className="text-lg font-bold text-white tracking-tight">{t('docs.techArch', 'Technical Architecture')}</h3>
-          </div>
-          
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-            <div className="space-y-2">
-              <span className="text-[10px] text-[#A1A1AA] font-black uppercase tracking-widest">{t('docs.executionTier', 'Execution Tier')}</span>
-              <p className="text-[11px] text-[#52525B] font-medium uppercase font-mono">Solana Virtual Machine (SVM)</p>
-            </div>
-            <div className="space-y-2">
-              <span className="text-[10px] text-[#A1A1AA] font-black uppercase tracking-widest">{t('docs.oracleMesh', 'Oracle Mesh')}</span>
-              <p className="text-[11px] text-[#52525B] font-medium uppercase font-mono">Switchboard v2 / Pyth Network</p>
-            </div>
-            <div className="space-y-2">
-              <span className="text-[10px] text-[#A1A1AA] font-black uppercase tracking-widest">{t('docs.settlementLayer', 'Settlement Layer')}</span>
-              <p className="text-[11px] text-[#52525B] font-medium uppercase font-mono">{t('docs.p2pEscrow', 'P2P Escrow Vaults')}</p>
             </div>
           </div>
         </div>
       </div>
 
       {/* Footer CTA */}
-      <div className="text-center p-12 border border-dashed border-[#1F1F23] rounded-2xl">
-        <Scale className="w-8 h-8 text-[#52525B] mx-auto mb-6" />
-        <h3 className="text-xl font-bold text-white mb-2">{t('docs.readyToContribute', 'Ready to contribute to the market?')}</h3>
-        <p className="text-[#71717A] text-sm mb-8">{t('docs.joinEcosystem', 'Join our ecosystem and start forecasting on-chain events today.')}</p>
-        <button className="px-10 py-5 bg-[#00FFD1] text-black font-black uppercase text-xs tracking-[0.2em] rounded shadow-[0_0_30px_rgba(0,255,209,0.15)] hover:bg-[#00E5BC] transition-all inline-flex items-center gap-3">
-          {t('docs.getStarted', 'Get Started')} <ArrowRight className="w-4 h-4" />
-        </button>
-      </div>
-
-      <div className="text-center mt-12 mb-8">
-        <span className="text-[9px] text-[#3F3F46] font-bold uppercase tracking-[0.4em]">{t('docs.footerCopyright', 'Lynx Insight Engine © 2026')}</span>
+      <div className="text-center p-8 md:p-12 border border-dashed border-[#1F1F23] rounded-2xl bg-[#0A0A0B]">
+        <CircleDollarSign className="w-8 h-8 text-[#52525B] mx-auto mb-6" />
+        <p className="text-[#71717A] text-sm md:text-base leading-relaxed max-w-2xl mx-auto font-medium">
+          "{t('docs.finalQuote', 'LYNX is a prediction ecosystem where the protocol captures SOL value through market activity, and redistributes part of that value to token holders via staking, while the token price remains 100% defined by supply and demand.')}"
+        </p>
       </div>
     </div>
   );
 }
+

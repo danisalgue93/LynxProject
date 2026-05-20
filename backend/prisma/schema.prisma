@@ -1,0 +1,244 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MarketStatus {
+  OPEN
+  ACTIVE
+  CUT_OFF
+  RESOLVED
+  EXPIRED
+}
+
+enum Position {
+  YES
+  NO
+  A
+  B
+  DRAW
+}
+
+enum Currency {
+  SOL
+  LYNX
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderStatus {
+  OPEN
+  PARTIAL_FILLED
+  FILLED
+  CANCELLED
+}
+
+enum DuelStatus {
+  OPEN
+  ACTIVE
+  RESOLVED
+  CANCELLED
+}
+
+enum ProposalStatus {
+  PENDING
+  ACTIVE
+  PASSED
+  REJECTED
+}
+
+enum ProposalCategory {
+  protocol
+  markets
+  fees
+  community
+}
+
+model Market {
+  id             String        @id
+  title          String
+  description    String
+  category       String
+  imageUrl       String?
+  status         MarketStatus  @default(OPEN)
+  poolAmount     Decimal       @default(0) @db.Decimal(28, 9)
+  yesAmount      Decimal       @default(0) @db.Decimal(28, 9)
+  noAmount       Decimal       @default(0) @db.Decimal(28, 9)
+  drawAmount     Decimal       @default(0) @db.Decimal(28, 9)
+  burnedAmount   Decimal       @default(0) @db.Decimal(28, 9)
+  isTernary      Boolean       @default(false)
+  currency       Currency      @default(SOL)
+  oracleId       String
+  oracleMode     String        @default("SWITCHBOARD")
+  onChainMarket  String?
+  createdAt      DateTime      @default(now())
+  cutoffAt       DateTime
+  resolveAt      DateTime?
+  oracleDeadline DateTime?
+  resolvedAt     DateTime?
+  result         Position?
+  positions      UserPosition[]
+  orders         Order[]
+  duels          Duel[]
+  candles        Candle[]
+
+  @@index([status])
+  @@index([currency])
+}
+
+model UserPosition {
+  id         String   @id
+  marketId   String
+  wallet     String
+  position   Position
+  amount     Decimal  @db.Decimal(28, 9)
+  entryPrice Decimal  @default(1) @db.Decimal(28, 9)
+  currency   Currency
+  claimed    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  market     Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@index([wallet])
+  @@index([marketId])
+}
+
+model WalletState {
+  wallet      String   @id
+  solBalance  Decimal  @default(100) @db.Decimal(28, 9)
+  lynxBalance Decimal  @default(10000) @db.Decimal(28, 9)
+  stakedLynx  Decimal  @default(0) @db.Decimal(28, 9)
+  rewardsSol  Decimal  @default(0) @db.Decimal(28, 9)
+  totalVolume Decimal  @default(0) @db.Decimal(28, 9)
+  wins        Int      @default(0)
+  losses      Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Order {
+  id        String      @id
+  marketId  String?
+  pair      String
+  owner     String
+  side      OrderSide
+  position  Position?
+  amount    Decimal     @db.Decimal(28, 9)
+  remaining Decimal     @db.Decimal(28, 9)
+  price     Decimal     @db.Decimal(28, 9)
+  currency  Currency
+  status    OrderStatus @default(OPEN)
+  createdAt DateTime    @default(now())
+  market    Market?     @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@index([pair, status])
+  @@index([marketId])
+  @@index([owner])
+}
+
+model Trade {
+  id        String   @id
+  marketId  String?
+  pair      String
+  maker     String?
+  taker     String
+  side      OrderSide
+  position  Position?
+  amount    Decimal  @db.Decimal(28, 9)
+  price     Decimal  @db.Decimal(28, 9)
+  feeAmount Decimal  @default(0) @db.Decimal(28, 9)
+  currency  Currency
+  createdAt DateTime @default(now())
+
+  @@index([pair])
+  @@index([marketId])
+}
+
+model Duel {
+  id             String     @id
+  parentMarketId String
+  creator        String
+  rival          String?
+  amount         Decimal    @db.Decimal(28, 9)
+  currency       Currency
+  status         DuelStatus @default(OPEN)
+  positionA      Position
+  positionB      Position?
+  type           String     @default("1v1")
+  isTernary      Boolean    @default(false)
+  protocolSide   Position?
+  createdAt      DateTime   @default(now())
+  acceptedAt     DateTime?
+  resolvedAt     DateTime?
+  winner         String?
+  market         Market     @relation(fields: [parentMarketId], references: [id], onDelete: Cascade)
+
+  @@index([parentMarketId])
+  @@index([status])
+}
+
+model Proposal {
+  id          String           @id
+  title       String
+  description String
+  status      ProposalStatus   @default(ACTIVE)
+  votesYes    Decimal          @default(0) @db.Decimal(28, 9)
+  votesNo     Decimal          @default(0) @db.Decimal(28, 9)
+  endTime     DateTime
+  category    ProposalCategory
+  author      String
+  votes       ProposalVote[]
+}
+
+model ProposalVote {
+  id         String   @id
+  proposalId String
+  wallet     String
+  voteType   String
+  weight     Decimal  @db.Decimal(28, 9)
+  createdAt  DateTime @default(now())
+  proposal   Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId, wallet])
+}
+
+model Notification {
+  id        String   @id
+  wallet    String
+  type      String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([wallet, read])
+}
+
+model Candle {
+  id        String   @id
+  symbol    String
+  interval  String
+  marketId  String?
+  time      DateTime
+  open      Decimal  @db.Decimal(28, 9)
+  high      Decimal  @db.Decimal(28, 9)
+  low       Decimal  @db.Decimal(28, 9)
+  close     Decimal  @db.Decimal(28, 9)
+  volume    Decimal  @db.Decimal(28, 9)
+  market    Market?  @relation(fields: [marketId], references: [id], onDelete: SetNull)
+
+  @@unique([symbol, interval, time])
+  @@index([symbol, interval])
+}
+
+model AppState {
+  id        String   @id
+  data      Json
+  updatedAt DateTime @updatedAt
+}

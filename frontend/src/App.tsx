@@ -49,7 +49,7 @@ export default function App() {
         onClose={closeSidebar}
       />
       
-      <main className="flex-1 flex flex-col overflow-y-auto relative">
+      <main className="flex-1 flex flex-col overflow-y-auto relative custom-scrollbar mobile-no-scrollbar">
         <Header onMenuToggle={toggleSidebar} isSidebarOpen={isSidebarOpen} />
 
         <div className="flex-1">
@@ -102,18 +102,18 @@ export default function App() {
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 sm:gap-12 mt-8 md:mt-12 pt-8 md:pt-12 border-t border-[#1F1F23]">
-                        <div className="space-y-0.5 sm:space-y-1">
-                          <div className="text-[9px] md:text-[10px] text-[#71717A] block uppercase font-bold tracking-widest">{t('dashboard.totalVolume', 'Total Volume')}</div>
-                          <div className="text-xl md:text-2xl font-mono font-bold text-white tracking-tighter">$12.4M</div>
+                      <div className="flex flex-row justify-between sm:grid sm:grid-cols-3 gap-2 sm:gap-12 mt-8 md:mt-12 pt-8 md:pt-12 border-t border-[#1F1F23]">
+                        <div className="space-y-0.5 sm:space-y-1 text-center sm:text-left flex-1 border-r border-[#1F1F23] sm:border-0 pr-2 sm:pr-0">
+                          <div className="text-[6px] min-[380px]:text-[8px] md:text-[10px] text-[#71717A] block uppercase font-bold tracking-widest whitespace-nowrap">{t('dashboard.totalVolume', 'Total Volume')}</div>
+                          <div className="text-sm min-[380px]:text-base md:text-2xl font-mono font-bold text-white tracking-tighter">$12.4M</div>
                         </div>
-                        <div className="space-y-0.5 sm:space-y-1">
-                          <div className="text-[9px] md:text-[10px] text-[#71717A] block uppercase font-bold tracking-widest">{t('dashboard.onChainVault', 'On-Chain Vault')}</div>
-                          <div className="text-xl md:text-2xl font-mono font-bold text-[#00FFD1] tracking-tighter">100%</div>
+                        <div className="space-y-0.5 sm:space-y-1 text-center sm:text-left flex-1 border-r border-[#1F1F23] sm:border-0 px-2 sm:px-0">
+                          <div className="text-[6px] min-[380px]:text-[8px] md:text-[10px] text-[#71717A] block uppercase font-bold tracking-widest whitespace-nowrap">{t('dashboard.onChainVault', 'On-Chain Vault')}</div>
+                          <div className="text-sm min-[380px]:text-base md:text-2xl font-mono font-bold text-[#00FFD1] tracking-tighter">100%</div>
                         </div>
-                        <div className="space-y-0.5 sm:space-y-1">
-                          <div className="text-[9px] md:text-[10px] text-[#71717A] block uppercase font-bold tracking-widest">{t('dashboard.tradeLatency', 'Trade Latency')}</div>
-                          <div className="text-xl md:text-2xl font-mono font-bold text-[#9945FF] tracking-tighter">{"< 400ms"}</div>
+                        <div className="space-y-0.5 sm:space-y-1 text-center sm:text-left flex-1 pl-2 sm:pl-0">
+                          <div className="text-[6px] min-[380px]:text-[8px] md:text-[10px] text-[#71717A] block uppercase font-bold tracking-widest whitespace-nowrap">{t('dashboard.tradeLatency', 'Trade Latency')}</div>
+                          <div className="text-sm min-[380px]:text-base md:text-2xl font-mono font-bold text-[#9945FF] tracking-tighter">{"< 400ms"}</div>
                         </div>
                       </div>
                     </div>

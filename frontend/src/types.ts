@@ -29,6 +29,8 @@ export interface Market {
   poolAmount: number;
   yesAmount: number;
   noAmount: number;
+  drawAmount?: number;
+  isTernary?: boolean;
   currency: 'SOL' | 'LYNX';
   oracleId: string;
   createdAt: number;
@@ -47,6 +49,7 @@ export interface Duel {
   status: MarketStatus;
   positionA: Position;
   positionB: Position;
+  isTernary?: boolean;
   createdAt: number;
   acceptedAt?: number;
   resolvedAt?: number;
@@ -74,6 +77,20 @@ export interface Proposal {
   endTime: string;
   category: 'protocol' | 'markets' | 'fees' | 'community';
   author: string;
+}
+
+export interface Portfolio {
+  walletAddress?: string;
+  solBalance: number;
+  lynxBalance: number;
+  stakedLynx?: number;
+  totalVolume?: number;
+  winRate?: number;
+  totalProfit?: number;
+  feeShare?: number;
+  payments?: Array<Record<string, unknown>>;
+  holdings?: Array<Record<string, unknown>>;
+  history?: Array<Record<string, unknown>>;
 }
 
 export interface UserWallet {

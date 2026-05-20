@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { MarketCard } from './MarketCard';
 import { Market } from '@/src/types';
 import { useProgram } from '@/src/hooks/useProgram';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 interface MarketsGridProps {
@@ -24,25 +24,37 @@ export function MarketsGrid({ onMarketSelect }: MarketsGridProps) {
 
   return (
     <div className="p-4 md:p-8">
-      <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 md:mb-10 gap-6">
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between mb-6 md:mb-10 gap-6">
         <div>
           <h2 className="text-2xl md:text-3xl font-bold text-white mb-1 md:mb-2 tracking-tight">{t('marketsGrid.title', 'Active Markets')}</h2>
           <p className="text-[#71717A] text-[10px] md:text-sm uppercase tracking-widest font-medium">{t('marketsGrid.subtitle', 'Trade on real-world outcomes with P2P precision.')}</p>
         </div>
         
-        <div className="flex items-center gap-2 md:gap-3 overflow-x-auto pb-2 md:pb-0 no-scrollbar">
-          <select className="bg-[#18181B] border border-[#27272A] rounded px-3 md:px-4 py-1.5 md:py-2 text-[10px] md:text-xs font-bold uppercase tracking-widest text-[#A1A1AA] focus:outline-none focus:border-[#00FFD1] min-w-[120px] md:min-w-[140px]">
-            <option>{t('marketsGrid.allCategories', 'All Categories')}</option>
-            <option>{t('marketsGrid.crypto', 'Crypto')}</option>
-            <option>{t('marketsGrid.ai', 'AI')}</option>
-            <option>{t('marketsGrid.sports', 'Sports')}</option>
-            <option>{t('marketsGrid.governance', 'Governance')}</option>
-          </select>
-          <select className="bg-[#18181B] border border-[#27272A] rounded px-3 md:px-4 py-1.5 md:py-2 text-[10px] md:text-xs font-bold uppercase tracking-widest text-[#A1A1AA] focus:outline-none focus:border-[#00FFD1] min-w-[140px] md:min-w-[160px]">
-            <option>{t('marketsGrid.volHighToLow', 'Volume (High to Low)')}</option>
-            <option>{t('marketsGrid.endingSoon', 'Ending Soon')}</option>
-            <option>{t('marketsGrid.newest', 'Newest')}</option>
-          </select>
+        <div className="flex flex-col sm:flex-row items-center gap-4">
+          <div className="relative w-full sm:w-64 group flex-shrink-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#52525B] group-focus-within:text-[#00FFD1] transition-colors" />
+            <input 
+              type="text" 
+              placeholder={t('common.search', 'Search markets...')}
+              className="w-full bg-[#18181B] border border-[#27272A] rounded px-4 py-2 pl-10 text-xs text-white placeholder:text-[#52525B] focus:outline-none focus:border-[#00FFD1] transition-all font-mono"
+              id="market-search"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 md:gap-3 overflow-x-auto pb-2 md:pb-0 no-scrollbar w-full sm:w-auto">
+            <select className="bg-[#18181B] border border-[#27272A] rounded px-3 md:px-4 py-1.5 md:py-2 text-[10px] md:text-xs font-bold uppercase tracking-widest text-[#A1A1AA] focus:outline-none focus:border-[#00FFD1] min-w-[120px] md:min-w-[140px]">
+              <option>{t('marketsGrid.allCategories', 'All Categories')}</option>
+              <option>{t('marketsGrid.crypto', 'Crypto')}</option>
+              <option>{t('marketsGrid.ai', 'AI')}</option>
+              <option>{t('marketsGrid.sports', 'Sports')}</option>
+              <option>{t('marketsGrid.governance', 'Governance')}</option>
+            </select>
+            <select className="bg-[#18181B] border border-[#27272A] rounded px-3 md:px-4 py-1.5 md:py-2 text-[10px] md:text-xs font-bold uppercase tracking-widest text-[#A1A1AA] focus:outline-none focus:border-[#00FFD1] min-w-[140px] md:min-w-[160px]">
+              <option>{t('marketsGrid.volHighToLow', 'Volume (High to Low)')}</option>
+              <option>{t('marketsGrid.endingSoon', 'Ending Soon')}</option>
+              <option>{t('marketsGrid.newest', 'Newest')}</option>
+            </select>
+          </div>
         </div>
       </div>
 

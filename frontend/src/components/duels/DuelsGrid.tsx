@@ -4,15 +4,19 @@ import { Duel } from '@/src/types';
 import { useProgram } from '@/src/hooks/useProgram';
 import { Sword, Plus, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { cn } from '@/src/lib/utils';
 
 interface DuelsGridProps {
   onCreateDuel?: () => void;
 }
 
+type FilterType = 'ALL' | '1v1' | '1v1vP';
+
 export function DuelsGrid({ onCreateDuel }: DuelsGridProps) {
   const { t } = useTranslation();
   const { fetchDuels, isLoading, error } = useProgram();
   const [duels, setDuels] = useState<Duel[]>([]);
+  const [filter, setFilter] = useState<FilterType>('ALL');
 
   useEffect(() => {
     const loadDuels = async () => {
@@ -22,6 +26,12 @@ export function DuelsGrid({ onCreateDuel }: DuelsGridProps) {
     loadDuels();
   }, [fetchDuels]);
 
+  const filteredDuels = duels.filter(duel => {
+    if (filter === '1v1') return !duel.isTernary;
+    if (filter === '1v1vP') return duel.isTernary;
+    return true; // ALL
+  });
+
   return (
     <div className="p-4 md:p-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-6">
@@ -30,18 +40,37 @@ export function DuelsGrid({ onCreateDuel }: DuelsGridProps) {
             <Sword className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-3xl font-bold text-white mb-1 tracking-tight">{t('duels.title', '1v1 Duels')}</h2>
+            <h2 className="text-3xl font-bold text-white mb-1 tracking-tight">{t('duels.title', '1v1 Duels')} & 1v1vP</h2>
             <p className="text-[#71717A] text-[10px] font-bold uppercase tracking-widest">{t('duels.subtitle', 'Dex Protocol Governance')}</p>
           </div>
         </div>
         
-        <button 
-          onClick={onCreateDuel}
-          className="px-6 py-3 bg-[#00FFD1] text-black font-black text-xs rounded hover:bg-[#00E5BC] transition-all flex items-center gap-2 shadow-[0_0_15px_rgba(0,255,209,0.2)] uppercase tracking-widest w-full md:w-auto justify-center"
-        >
-          <Plus className="w-4 h-4" />
-          {t('duels.createNew', 'Create New Duel')}
-        </button>
+        <div className="flex items-center gap-4 w-full md:w-auto">
+          <div className="flex items-center bg-[#18181B] rounded border border-[#27272A] p-1 flex-1 md:flex-none">
+            {(['ALL', '1v1', '1v1vP'] as const).map((type) => (
+              <button
+                key={type}
+                onClick={() => setFilter(type)}
+                className={cn(
+                  "px-3 md:px-4 py-1.5 md:py-2 text-[9px] md:text-[10px] font-black uppercase tracking-widest rounded transition-all flex-1 md:flex-none whitespace-nowrap",
+                  filter === type 
+                    ? "bg-[#27272A] text-white" 
+                    : "text-[#71717A] hover:bg-[#27272A]/50 hover:text-white"
+                )}
+              >
+                {type}
+              </button>
+            ))}
+          </div>
+
+          <button 
+            onClick={onCreateDuel}
+            className="px-6 py-3 bg-[#00FFD1] text-black font-black text-xs rounded hover:bg-[#00E5BC] transition-all flex items-center gap-2 shadow-[0_0_15px_rgba(0,255,209,0.2)] uppercase tracking-widest justify-center"
+          >
+            <Plus className="w-4 h-4" />
+            <span className="hidden md:inline">{t('duels.createNew', 'Create New Duel')}</span>
+          </button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -55,7 +84,7 @@ export function DuelsGrid({ onCreateDuel }: DuelsGridProps) {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-          {duels.map(duel => (
+          {filteredDuels.map(duel => (
             <DuelCard key={duel.id} duel={duel} />
           ))}
           
