@@ -21,6 +21,8 @@
     "helmet": "^8.1.0",
     "morgan": "^1.10.1",
     "socket.io": "^4.8.1",
+    "pino": "^8.17.0",
+    "pino-http": "^8.7.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -32,6 +34,7 @@
     "prisma": "^6.19.3",
     "supertest": "^7.1.1",
     "tsx": "^4.21.0",
+    "pino-pretty": "^10.1.0",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
   }

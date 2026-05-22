@@ -20,6 +20,7 @@ type StateSnapshot = {
   duels: [string, Duel][];
   proposals: [string, Proposal][];
   notifications: [string, Notification[]][];
+  transactions?: [string, { signature: string; wallet?: string; intent?: any; timestamp: number }][];
   treasury: LynxState['treasury'];
 };
 
@@ -41,6 +42,7 @@ function snapshot(store: LynxState): StateSnapshot {
     duels: [...store.duels.entries()],
     proposals: [...store.proposals.entries()],
     notifications: [...store.notifications.entries()],
+    transactions: [...(store.transactions ? store.transactions.entries() : [])],
     treasury: store.treasury
   })) as StateSnapshot;
 }
@@ -86,6 +88,11 @@ export function createPersistence(): Persistence {
       store.duels = restoreMap(data.duels);
       store.proposals = restoreMap(data.proposals);
       store.notifications = restoreMap(data.notifications);
+      if (data.transactions) {
+        // restore transactions as a Map keyed by signature
+        // @ts-ignore
+        store.transactions = restoreMap(data.transactions as any);
+      }
       store.treasury = data.treasury;
     },
     async save(store) {

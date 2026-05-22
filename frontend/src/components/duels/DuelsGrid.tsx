@@ -5,6 +5,7 @@ import { useProgram } from '@/src/hooks/useProgram';
 import { Sword, Plus, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/src/lib/utils';
+import { eventBus } from '@/src/lib/eventBus';
 
 interface DuelsGridProps {
   onCreateDuel?: () => void;
@@ -24,6 +25,13 @@ export function DuelsGrid({ onCreateDuel }: DuelsGridProps) {
       setDuels(data);
     };
     loadDuels();
+    const onUpdate = () => { loadDuels(); };
+    eventBus.addEventListener('duel:created', onUpdate as any);
+    eventBus.addEventListener('duel:accepted', onUpdate as any);
+    return () => {
+      eventBus.removeEventListener('duel:created', onUpdate as any);
+      eventBus.removeEventListener('duel:accepted', onUpdate as any);
+    };
   }, [fetchDuels]);
 
   const filteredDuels = duels.filter(duel => {

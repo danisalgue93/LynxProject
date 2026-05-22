@@ -151,6 +151,21 @@ export function useProgram() {
     }
   }, []);
 
+  const createProposal = useCallback(async (input: { title: string; description?: string; category?: string; author?: string }) => {
+    setIsLoading(true);
+    try {
+      return await apiFetch('/api/proposals', {
+        method: 'POST',
+        body: JSON.stringify(input)
+      });
+    } catch (err: any) {
+      setError(err.message || 'Failed to create proposal');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   // Fetch DAO Stats
   const fetchDaoStats = useCallback(async (): Promise<any> => {
     setIsLoading(true);
@@ -195,6 +210,15 @@ export function useProgram() {
       setIsLoading(false);
     }
   }, [wallet]);
+
+  const fetchTransactions = useCallback(async () => {
+    try {
+      return await apiFetch('/api/transactions');
+    } catch (err: any) {
+      console.error('Failed to fetch transactions', err);
+      return [];
+    }
+  }, []);
 
   // Example: Claim rewards
   const claimRewards = useCallback(async () => {
@@ -258,7 +282,9 @@ export function useProgram() {
     fetchProposals,
     fetchDaoStats,
     castVote,
+    createProposal,
     stakeLynx,
+    fetchTransactions,
     unstakeLynx,
     claimRewards
   };

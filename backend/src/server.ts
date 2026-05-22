@@ -32,7 +32,31 @@ const io = new Server(httpServer, {
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors({ origin: corsOrigins, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
-app.use(morgan('dev'));
+// lightweight structured logger (no external dependency)
+const logger = {
+  info: (obj: any, msg?: string) => console.log(JSON.stringify({ level: 'info', msg: msg || '', ...obj })),
+  error: (obj: any, msg?: string) => console.error(JSON.stringify({ level: 'error', msg: msg || '', ...obj }))
+};
+
+// attach logger to request for handlers
+app.use((req, _res, next) => {
+  (req as any).log = logger;
+  next();
+});
+
+// keep morgan for dev-friendly output if desired
+if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
+
+// attach a simple request logger for body/query
+app.use((req, _res, next) => {
+  try {
+    (req as any).log.info({ query: req.query, body: req.body }, 'request:received');
+  } catch (e) {
+    // fallback
+    logger.info({ method: req.method, path: req.path }, 'request:received');
+  }
+  next();
+});
 
 io.on('connection', (socket) => {
   socket.emit('lynx:hello', {
@@ -70,6 +94,7 @@ app.get('/api/health', (_req, res) => {
     programId: process.env.PROGRAM_ID || null
   });
 });
+
 
 app.get('/api/config', (_req, res) => {
   res.json({
@@ -270,6 +295,19 @@ app.get('/api/proposals', (_req, res) => {
   res.json(store.listProposals());
 });
 
+app.post('/api/proposals', asyncRoute(async (req, res) => {
+  const body = z.object({
+    title: z.string().min(4),
+    description: z.string().optional(),
+    category: z.string().optional(),
+    author: z.string().optional()
+  }).parse(req.body);
+  const proposal = store.createProposal({ title: body.title, description: body.description, category: body.category, author: body.author });
+  await persist();
+  emit('dao:proposal-created', proposal);
+  res.status(201).json(proposal);
+}));
+
 app.get('/api/daostats', (_req, res) => {
   res.json(store.getDaoStats());
 });
@@ -303,13 +341,36 @@ app.post('/api/notifications/read', asyncRoute(async (req, res) => {
   res.json(notifications);
 }));
 
-app.post('/api/transactions', (req, res) => {
+app.post('/api/transactions', asyncRoute(async (req, res) => {
+  const intent = req.body || {};
+  try { (req as any).log && (req as any).log.info({ intent }, 'tx:intent'); } catch (e) { logger.info({ intent }, 'tx:intent'); }
+  if (intent.signature) {
+    const link = `https://explorer.solana.com/tx/${intent.signature}?cluster=${process.env.SOLANA_CLUSTER || 'devnet'}`;
+    try { (req as any).log && (req as any).log.info({ signature: intent.signature, link }, 'tx:signature'); } catch (e) { logger.info({ signature: intent.signature, link }, 'tx:signature'); }
+    // persist signature in store and emit socket event
+    try {
+      store.addTransaction({ signature: intent.signature, wallet: typeof intent.wallet === 'string' ? intent.wallet : undefined, intent });
+      emit('crypto:tx', { signature: intent.signature, wallet: intent.wallet, link, timestamp: Date.now() });
+      await persist();
+    } catch (e) {
+      try { (req as any).log && (req as any).log.error({ err: e }, 'Failed to persist tx'); } catch (err2) { logger.error({ err: e }, 'Failed to persist tx'); }
+    }
+  }
   res.json({
     success: true,
     mode: 'registered-intent',
     message: 'Transaction intent registered in the Lynx backend indexer.',
-    intent: req.body
+    intent
   });
+}));
+
+app.get('/api/transactions', (req, res) => {
+  try {
+    const list = store.listTransactions();
+    res.json(list);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to list transactions' });
+  }
 });
 
 app.post('/api/dev/reset', asyncRoute(async (_req, res) => {

@@ -5,14 +5,18 @@ import { cn } from '@/src/lib/utils';
 import { useProgram } from '@/src/hooks/useProgram';
 import { Proposal } from '@/src/types';
 import { useTranslation } from 'react-i18next';
+import CreateProposalModal from './CreateProposalModal';
+import StakeModal from './StakeModal';
 
 export function GovernanceView() {
   const { t } = useTranslation();
-  const { fetchProposals, fetchDaoStats, castVote, stakeLynx, isLoading, error } = useProgram();
+  const { fetchProposals, fetchDaoStats, castVote, createProposal, stakeLynx, isLoading, error } = useProgram();
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [isPendingAct, setIsPendingAct] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showStakeModal, setShowStakeModal] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -26,10 +30,13 @@ export function GovernanceView() {
     loadData();
   }, [fetchProposals, fetchDaoStats]);
 
-  const handleVoteAction = async (proposalId: string) => {
+  const handleVoteAction = async (proposalId: string, voteType: 'yes' | 'no') => {
     setIsPendingAct(true);
     try {
-      await castVote(proposalId, 'yes'); // Hardcoded to 'yes' for demo, expand later
+      await castVote(proposalId, voteType);
+      const [proposalsData, statsData] = await Promise.all([fetchProposals(), fetchDaoStats()]);
+      setProposals(proposalsData);
+      setStats(statsData);
     } catch (e) {
       console.error(e);
     } finally {
@@ -37,10 +44,36 @@ export function GovernanceView() {
     }
   };
 
-  const handleStakeAction = async () => {
+  const handleStakeAction = async (amount?: number) => {
+    if (typeof amount === 'undefined') {
+      setShowStakeModal(true);
+      return;
+    }
+    if (!amount || amount <= 0) return;
     setIsPendingAct(true);
     try {
-      await stakeLynx(100); // 100 LYNX for demo
+      await stakeLynx(amount);
+      const statsData = await fetchDaoStats();
+      setStats(statsData);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsPendingAct(false);
+    }
+  };
+
+  const handleCreateProposal = async (input?: { title: string; description?: string; category?: string }) => {
+    if (!input) {
+      setShowCreateModal(true);
+      return;
+    }
+    setIsPendingAct(true);
+    try {
+      await createProposal(input);
+      const [proposalsData, statsData] = await Promise.all([fetchProposals(), fetchDaoStats()]);
+      setProposals(proposalsData);
+      setStats(statsData);
+      setShowCreateModal(false);
     } catch (e) {
       console.error(e);
     } finally {
@@ -86,7 +119,7 @@ export function GovernanceView() {
           </p>
         </div>
 
-        <button className="flex items-center gap-2 px-6 py-3 bg-[#00FFD1] text-black font-black text-sm rounded uppercase tracking-tight hover:scale-[1.02] transition-all shadow-[0_0_20px_rgba(0,255,209,0.2)]">
+        <button onClick={() => handleCreateProposal()} className="flex items-center gap-2 px-6 py-3 bg-[#00FFD1] text-black font-black text-sm rounded uppercase tracking-tight hover:scale-[1.02] transition-all shadow-[0_0_20px_rgba(0,255,209,0.2)]">
           <PlusCircle className="w-4 h-4" />
           {t('governance.createProposal', 'Create Proposal')}
         </button>
@@ -226,18 +259,30 @@ export function GovernanceView() {
                            />
                         </div>
                      </div>
-                     <button 
-                       onClick={() => proposal.status === 'active' && handleVoteAction(proposal.id)}
-                       disabled={proposal.status !== 'active' || isPendingAct}
-                       className={cn(
-                       "w-full py-3 rounded text-[10px] font-black uppercase tracking-widest transition-all",
-                       proposal.status === 'active' 
-                        ? "bg-[#18181B] border border-[#27272A] text-white hover:bg-[#00FFD1] hover:text-black hover:border-transparent" 
-                        : "bg-[#18181B] border border-[#27272A] text-[#3F3F46] cursor-not-allowed",
-                       isPendingAct && "opacity-50 cursor-not-allowed"
-                     )}>
-                       {proposal.status === 'active' ? t('governance.castVote', 'Cast your Vote') : t('governance.votingEnded', 'Voting Ended')}
-                     </button>
+                     <div className="space-y-2">
+                       {proposal.status === 'active' ? (
+                         <>
+                           <button
+                             onClick={() => handleVoteAction(proposal.id, 'yes')}
+                             disabled={isPendingAct}
+                             className={cn("w-full py-2 rounded text-[10px] font-black uppercase tracking-widest transition-all bg-[#00FFD1] text-black")}
+                           >
+                             {t('governance.voteYes', 'Vote YES')}
+                           </button>
+                           <button
+                             onClick={() => handleVoteAction(proposal.id, 'no')}
+                             disabled={isPendingAct}
+                             className={cn("w-full py-2 rounded text-[10px] font-black uppercase tracking-widest transition-all bg-[#18181B] text-white border border-[#27272A] hover:bg-[#52525B]")}
+                           >
+                             {t('governance.voteNo', 'Vote NO')}
+                           </button>
+                         </>
+                       ) : (
+                         <button disabled className="w-full py-3 rounded text-[10px] font-black uppercase tracking-widest bg-[#18181B] border border-[#27272A] text-[#3F3F46] cursor-not-allowed">
+                           {t('governance.votingEnded', 'Voting Ended')}
+                         </button>
+                       )}
+                     </div>
                   </div>
                 </div>
               </motion.div>
@@ -256,7 +301,7 @@ export function GovernanceView() {
                 </p>
              </div>
              <button 
-                onClick={handleStakeAction}
+                onClick={() => handleStakeAction()}
                 disabled={isPendingAct}
                 className={cn("px-8 py-4 bg-[#18181B] text-white border border-[#27272A] hover:bg-[#27272A] transition-all rounded font-black text-sm uppercase tracking-widest",
                   isPendingAct && "opacity-50 cursor-not-allowed"
@@ -265,6 +310,12 @@ export function GovernanceView() {
              </button>
           </div>
       </div>
+      {showCreateModal && (
+        <CreateProposalModal onClose={() => setShowCreateModal(false)} onSubmit={(input) => handleCreateProposal(input)} />
+      )}
+      {showStakeModal && (
+        <StakeModal onClose={() => setShowStakeModal(false)} onSubmit={(amt) => handleStakeAction(amt)} defaultAmount={1} />
+      )}
     </div>
   );
 }

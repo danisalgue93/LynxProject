@@ -1,4 +1,4 @@
-// File: /mnt/c/Users/danisalgue/Desktop/LynxProject/cripto/admin-panel/app/api/auth/request-otp/route.ts
+// File: C:\Users\danisalgue\Desktop\LynxProject\cripto\admin-panel\app\api\auth\request-otp\route.ts
 import * as entry from '../../../../../../app/api/auth/request-otp/route.js'
 import type { NextRequest } from 'next/server.js'
 

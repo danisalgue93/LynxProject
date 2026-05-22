@@ -20,6 +20,9 @@ import { ArrowUpRight, TrendingUp, ShieldCheck, Zap } from 'lucide-react';
 import { Market } from './types';
 import { cn } from './lib/utils';
 import { useProgram } from './hooks/useProgram';
+import { eventBus } from './lib/eventBus';
+import { API_BASE_URL } from './lib/api';
+import { io } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
 
 export default function App() {
@@ -29,6 +32,42 @@ export default function App() {
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
   const [isCreateDuelOpen, setIsCreateDuelOpen] = useState(false);
   const { fetchMarkets, createDuel } = useProgram();
+
+  useEffect(() => {
+    try {
+      const socket = io(API_BASE_URL, { transports: ['websocket'] });
+      socket.on('connect', () => console.log('[socket] connected', socket.id));
+      const events = ['market:created','market:updated','duel:created','duel:accepted','orderbook:updated','portfolio:updated','dao:proposal-created','dao:proposal-updated','dev:reset','crypto:tx'];
+      for (const ev of events) {
+        socket.on(ev, (payload: any) => {
+          eventBus.dispatchEvent(new CustomEvent(ev, { detail: payload }));
+        });
+      }
+      return () => {
+        socket.disconnect();
+      };
+    } catch (err) {
+      console.error('Socket init failed', err);
+    }
+  }, []);
+
+  // Toasts for transactions: show explorer links when backend emits crypto:tx
+  const [txToasts, setTxToasts] = useState<Array<{ id: string; signature: string; link: string; wallet?: string }>>([]);
+
+  useEffect(() => {
+    const onTx = (e: Event) => {
+      // payload forwarded from socket in eventBus
+      // @ts-ignore
+      const d = (e as CustomEvent).detail as { signature: string; link: string; wallet?: string };
+      if (!d || !d.signature) return;
+      const id = `tx-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+      setTxToasts((s) => [{ id, signature: d.signature, link: d.link, wallet: d.wallet }, ...s]);
+      // auto-remove after 12s
+      setTimeout(() => setTxToasts((s) => s.filter(t => t.id !== id)), 12000);
+    };
+    eventBus.addEventListener('crypto:tx', onTx as any);
+    return () => eventBus.removeEventListener('crypto:tx', onTx as any);
+  }, []);
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
   const closeSidebar = () => setIsSidebarOpen(false);
@@ -246,6 +285,22 @@ export default function App() {
           />
         )}
       </AnimatePresence>
+
+      {/* Transaction toasts */}
+      <div className="fixed right-6 top-20 z-[200] flex flex-col gap-3">
+        {txToasts.map((t) => (
+          <div key={t.id} className="bg-[#0D0D0E] border border-[#27272A] rounded p-3 shadow-lg min-w-[260px]">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1">
+                <div className="text-sm font-bold text-white">Transacción registrada</div>
+                <a href={t.link} target="_blank" rel="noreferrer" className="text-xs text-[#00FFD1] font-mono break-all">{t.signature}</a>
+                {t.wallet && <div className="text-[10px] text-[#71717A] mt-1">{t.wallet}</div>}
+              </div>
+              <button onClick={() => setTxToasts((s) => s.filter(x => x.id !== t.id))} className="text-[#71717A] text-xs">Cerrar</button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

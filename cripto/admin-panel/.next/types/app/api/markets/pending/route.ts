@@ -1,4 +1,4 @@
-// File: /mnt/c/Users/danisalgue/Desktop/LynxProject/cripto/admin-panel/app/api/markets/pending/route.ts
+// File: C:\Users\danisalgue\Desktop\LynxProject\cripto\admin-panel\app\api\markets\pending\route.ts
 import * as entry from '../../../../../../app/api/markets/pending/route.js'
 import type { NextRequest } from 'next/server.js'
 

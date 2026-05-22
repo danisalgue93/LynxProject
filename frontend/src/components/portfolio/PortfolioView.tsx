@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Wallet, PieChart, TrendingUp, History, Coins, CheckCircle2, Trophy as RewardIcon, CreditCard, Link as LinkIcon } from 'lucide-react';
 import { formatSOL, formatNumber, cn } from '@/src/lib/utils';
 import { useProgram } from '@/src/hooks/useProgram';
+import { eventBus } from '@/src/lib/eventBus';
 import { Market, Portfolio } from '@/src/types';
 import { useTranslation } from 'react-i18next';
 
@@ -26,6 +27,13 @@ export function PortfolioView() {
       setPortfolio(portfolioData);
     };
     loadData();
+    const onUpdate = () => { loadData(); };
+    eventBus.addEventListener('portfolio:updated', onUpdate as any);
+    eventBus.addEventListener('dev:reset', onUpdate as any);
+    return () => {
+      eventBus.removeEventListener('portfolio:updated', onUpdate as any);
+      eventBus.removeEventListener('dev:reset', onUpdate as any);
+    };
   }, [fetchMarkets, fetchPortfolio]);
 
   const handleClaim = async () => {

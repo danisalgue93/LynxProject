@@ -28,6 +28,35 @@ export function SettingsView() {
     system: false
   });
 
+  // Load saved settings from localStorage
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem('lynx.settings');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed.slippage) setSlippage(String(parsed.slippage));
+        if (parsed.priorityFee) setPriorityFee(parsed.priorityFee);
+        if (typeof parsed.notifications === 'object') setNotifications(parsed.notifications);
+      }
+    } catch (err) {
+      console.error('Failed to load settings', err);
+    }
+  }, []);
+
+  const saveSettings = () => {
+    const obj = { slippage, priorityFee, notifications };
+    localStorage.setItem('lynx.settings', JSON.stringify(obj));
+    console.log('[settings] saved', obj);
+  };
+
+  const resetSettings = () => {
+    localStorage.removeItem('lynx.settings');
+    setSlippage('0.5');
+    setPriorityFee('fast');
+    setNotifications({ trades: true, gov: true, system: false });
+    console.log('[settings] reset to defaults');
+  };
+
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto">
       <div className="mb-12">
@@ -193,13 +222,13 @@ export function SettingsView() {
         {/* Action Bar */}
         <div className="pt-4 flex flex-col md:flex-row gap-4">
           <button 
-            onClick={() => alert("Settings saved to local storage (mock).")}
+            onClick={saveSettings}
             className="flex-1 py-4 bg-[#00FFD1] text-black font-black uppercase text-xs tracking-widest rounded shadow-[0_0_20px_rgba(0,255,209,0.2)] hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2">
             <Save className="w-4 h-4" />
             {t('settings.synchronizeConfig', 'Synchronize Config')}
           </button>
           <button 
-            onClick={() => alert("Settings reset to factory defaults (mock).")}
+            onClick={resetSettings}
             className="px-8 py-4 bg-[#18181B] border border-[#27272A] text-[#71717A] font-bold uppercase text-xs tracking-widest rounded hover:text-white transition-all">
             {t('settings.factoryReset', 'Factory Reset')}
           </button>

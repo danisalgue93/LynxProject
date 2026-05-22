@@ -4,6 +4,7 @@ import { Market } from '@/src/types';
 import { useProgram } from '@/src/hooks/useProgram';
 import { Loader2, Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { eventBus } from '@/src/lib/eventBus';
 
 interface MarketsGridProps {
   onMarketSelect: (market: Market) => void;
@@ -20,6 +21,13 @@ export function MarketsGrid({ onMarketSelect }: MarketsGridProps) {
       setMarkets(data);
     };
     loadMarkets();
+    const onUpdate = () => { loadMarkets(); };
+    eventBus.addEventListener('market:created', onUpdate as any);
+    eventBus.addEventListener('market:updated', onUpdate as any);
+    return () => {
+      eventBus.removeEventListener('market:created', onUpdate as any);
+      eventBus.removeEventListener('market:updated', onUpdate as any);
+    };
   }, [fetchMarkets]);
 
   return (

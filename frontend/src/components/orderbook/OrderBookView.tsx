@@ -4,6 +4,7 @@ import { BarChart3, TrendingUp, ArrowUpDown, History, Loader2, Coins, Maximize2,
 import { cn } from '@/src/lib/utils';
 import { useTranslation } from 'react-i18next';
 import { useProgram } from '@/src/hooks/useProgram';
+import { eventBus } from '@/src/lib/eventBus';
 import { Market, Position } from '@/src/types';
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Line, LineChart } from 'recharts';
 import { apiUrl } from '@/src/lib/api';
@@ -242,6 +243,13 @@ export function OrderBookView() {
       setMarkets(data);
     };
     loadMarkets();
+    const onUpdateMarkets = () => { loadMarkets(); };
+    eventBus.addEventListener('market:created', onUpdateMarkets as any);
+    eventBus.addEventListener('market:updated', onUpdateMarkets as any);
+    return () => {
+      eventBus.removeEventListener('market:created', onUpdateMarkets as any);
+      eventBus.removeEventListener('market:updated', onUpdateMarkets as any);
+    };
   }, [fetchMarkets]);
 
   useEffect(() => {
@@ -254,8 +262,10 @@ export function OrderBookView() {
       }
     };
     loadOrderBook();
+    const onOrderbook = () => { loadOrderBook(); };
+    eventBus.addEventListener('orderbook:updated', onOrderbook as any);
     const interval = window.setInterval(loadOrderBook, 5000);
-    return () => window.clearInterval(interval);
+    return () => { window.clearInterval(interval); eventBus.removeEventListener('orderbook:updated', onOrderbook as any); };
   }, [fetchOrderBook]);
 
   const handleLynxTrade = async () => {

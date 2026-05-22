@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Bell, Trophy, Coins, Info, CheckCircle, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/src/lib/utils';
+import { apiFetch } from '@/src/lib/api';
 
 export type NotificationType = 'tournament_entry' | 'tournament_ended' | 'claimable' | 'system_info' | 'trade' | 'market_resolved';
 
@@ -31,12 +32,28 @@ export function NotificationsPopover({ isOpen, onClose, notifications, setNotifi
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
-  const handleMarkAllRead = () => {
-    setNotifications(notifications.map(n => ({ ...n, read: true })));
+  const handleMarkAllRead = async () => {
+    try {
+      const data = await apiFetch<Notification[]>('/api/notifications/read', {
+        method: 'POST',
+        body: JSON.stringify({ wallet: undefined })
+      });
+      setNotifications(data.map(n => ({ ...n, timestamp: new Date(n.timestamp || Date.now()) })));
+    } catch (err) {
+      console.error('Failed to mark notifications read', err);
+    }
   };
 
-  const handleMarkRead = (id: string) => {
-    setNotifications(notifications.map(n => n.id === id ? { ...n, read: true } : n));
+  const handleMarkRead = async (id: string) => {
+    try {
+      const data = await apiFetch<Notification[]>('/api/notifications/read', {
+        method: 'POST',
+        body: JSON.stringify({ wallet: undefined, id })
+      });
+      setNotifications(data.map(n => ({ ...n, timestamp: new Date(n.timestamp || Date.now()) })));
+    } catch (err) {
+      console.error('Failed to mark notification read', err);
+    }
   };
 
   const getIconForType = (type: NotificationType) => {

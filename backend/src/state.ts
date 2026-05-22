@@ -62,6 +62,7 @@ export class LynxState {
   duels = new Map<string, Duel>();
   proposals = new Map<string, Proposal>();
   notifications = new Map<string, Notification[]>();
+  transactions = new Map<string, { signature: string; wallet?: string; intent?: any; timestamp: number }>();
   treasury = {
     sol: 0,
     lynx: 0,
@@ -489,6 +490,23 @@ export class LynxState {
     return proposal;
   }
 
+  createProposal(input: { title: string; description?: string; category?: string; author?: string }) {
+    const now = nowMs();
+    const proposal = {
+      id: `LDAO-${Date.now().toString(36)}`,
+      title: input.title,
+      description: input.description || '',
+      status: 'active' as const,
+      votesYes: 0,
+      votesNo: 0,
+      endTime: new Date(now + 1000 * 60 * 60 * 24 * 7).toISOString(),
+      category: input.category || 'general',
+      author: input.author || 'Anonymous'
+    };
+    this.proposals.set(proposal.id, proposal as Proposal);
+    return proposal;
+  }
+
   getOrderBook(pair = 'LYNX/SOL', marketId?: string) {
     const open = [...this.orders.values()].filter((order) =>
       order.status !== 'FILLED' &&
@@ -559,6 +577,15 @@ export class LynxState {
 
   listNotifications(walletAddress: string) {
     return this.notifications.get(walletAddress) ?? [];
+  }
+
+  listTransactions() {
+    return [...this.transactions.values()].sort((a, b) => b.timestamp - a.timestamp);
+  }
+
+  addTransaction(tx: { signature: string; wallet?: string; intent?: any }) {
+    const ts = Date.now();
+    this.transactions.set(tx.signature, { signature: tx.signature, wallet: tx.wallet, intent: tx.intent, timestamp: ts });
   }
 
   markNotificationsRead(walletAddress: string) {
