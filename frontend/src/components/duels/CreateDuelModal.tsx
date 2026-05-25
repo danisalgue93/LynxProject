@@ -32,9 +32,12 @@ export function CreateDuelModal({ onClose, onSubmit }: CreateDuelModalProps) {
 
   const [duelType, setDuelType] = useState<"1v1" | "1v1vP">("1v1");
   const filteredMarkets = useMemo(() => {
-    return markets.filter((m) =>
-      duelType === "1v1" ? !m.isTernary : m.isTernary,
-    );
+    return markets.filter((m) => {
+      const isOpen = m.status === "OPEN" || m.status === "ACTIVE";
+      const isSupportedCurrency = m.currency === "SOL";
+      const matchesType = duelType === "1v1" ? !m.isTernary : m.isTernary;
+      return isOpen && isSupportedCurrency && matchesType;
+    });
   }, [markets, duelType]);
 
   const currency = selectedMarket?.currency || "SOL";
@@ -380,7 +383,7 @@ export function CreateDuelModal({ onClose, onSubmit }: CreateDuelModalProps) {
                         {t("createDuel.potentialReturn", "Potential Return")}
                       </span>
                       <span className="text-lg font-mono font-bold text-white tracking-tighter">
-                        {(amount * 1.95).toFixed(amount === 0.25 ? 2 : 1)}{" "}
+                        {(amount * 1.998).toFixed(amount === 0.25 ? 2 : 1)}{" "}
                         {currency}
                       </span>
                     </div>

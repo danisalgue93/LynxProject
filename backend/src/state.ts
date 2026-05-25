@@ -39,18 +39,32 @@ function nowMs() {
 }
 
 function normalizePosition(position: Position, ternary?: boolean): Position {
+  if (ternary && position === 'YES') return 'A';
+  if (ternary && position === 'NO') return 'B';
   if (!ternary && position === 'A') return 'YES';
   if (!ternary && position === 'B') return 'NO';
   return position;
 }
 
+function assertPositionAllowed(position: Position, ternary?: boolean) {
+  if (!ternary && position === 'DRAW') {
+    throw new Error('DRAW is only available for ternary markets');
+  }
+}
+
+function assertMarketAcceptsEntries(market: Market) {
+  if (market.status !== 'OPEN' && market.status !== 'ACTIVE') throw new Error('Market is not open');
+  if (Date.now() >= market.cutoffAt) throw new Error('Market cutoff has passed');
+}
+
 function opposingPosition(position: Position, ternary?: boolean): Position {
+  const normalized = normalizePosition(position, ternary);
   if (ternary) {
-    if (position === 'A' || position === 'YES') return 'B';
-    if (position === 'B' || position === 'NO') return 'A';
+    if (normalized === 'A') return 'B';
+    if (normalized === 'B') return 'A';
     return 'YES';
   }
-  return position === 'YES' || position === 'A' ? 'NO' : 'YES';
+  return normalized === 'YES' ? 'NO' : 'YES';
 }
 
 export class LynxState {
@@ -84,6 +98,7 @@ export class LynxState {
     this.duels.clear();
     this.proposals.clear();
     this.notifications.clear();
+    this.transactions.clear();
     this.treasury = { sol: 0, lynx: 0, lynxForInitialSale: 0, lynxBurned: 0, protocolDuelSol: 0 };
 
     const now = nowMs();
@@ -159,7 +174,8 @@ export class LynxState {
       votesNo: 0,
       endTime: new Date(now + 1000 * 60 * 60 * 24 * 7).toISOString(),
       category: 'protocol',
-      author: 'LYNX Core'
+      author: 'LYNX Core',
+      voters: {}
     });
 
     this.seedLynxBook();
@@ -270,13 +286,12 @@ export class LynxState {
     const market = this.getMarket(input.marketId);
     const wallet = this.getWallet(input.wallet);
     const position = normalizePosition(input.position, market.isTernary);
-
-    if (market.status !== 'OPEN' && market.status !== 'ACTIVE') throw new Error('Market is not open');
-    if (Date.now() >= market.cutoffAt) throw new Error('Market cutoff has passed');
+    assertPositionAllowed(position, market.isTernary);
+    assertMarketAcceptsEntries(market);
 
     if (input.tradeType === 'limit') {
       return this.placeOrder({
-        wallet: input.wallet,
+        wallet: wallet.wallet,
         marketId: market.id,
         pair: market.id,
         side: position === 'NO' || position === 'B' ? 'SELL' : 'BUY',
@@ -294,7 +309,7 @@ export class LynxState {
       this.treasury.lynxBurned = roundAmount(this.treasury.lynxBurned + burn);
     }
 
-    const creditedToPool = input.amount;
+    const creditedToPool = roundAmount(input.amount - burn);
     market.status = 'ACTIVE';
     market.poolAmount = roundAmount(market.poolAmount + creditedToPool);
     if (position === 'YES' || position === 'A') market.yesAmount = roundAmount(market.yesAmount + creditedToPool);
@@ -308,7 +323,7 @@ export class LynxState {
       marketId: market.id,
       wallet: wallet.wallet,
       position,
-      amount: input.amount,
+      amount: creditedToPool,
       entryPrice: this.estimatePositionPrice(market.id, position),
       currency: market.currency,
       claimed: false,
@@ -348,12 +363,34 @@ export class LynxState {
     assertPositiveAmount(input.price);
 
     const wallet = this.getWallet(input.wallet);
-    const notional = roundAmount(input.amount * input.price);
-    const fee = roundAmount(notional * GLOBAL_TRADE_FEE);
+    const market = input.marketId ? this.getMarket(input.marketId) : undefined;
+    const isLynxSolPair = input.pair === 'LYNX/SOL';
+    let position = input.position;
+    let lockedCurrency: Currency | undefined;
+    let lockedAmount: number | undefined;
 
-    if (input.pair === 'LYNX/SOL') {
-      if (input.side === 'BUY') this.debit(wallet, 'SOL', roundAmount(notional + fee));
-      else this.debit(wallet, 'LYNX', input.amount);
+    if (isLynxSolPair) {
+      const notional = roundAmount(input.amount * input.price);
+      const fee = roundAmount(notional * GLOBAL_TRADE_FEE);
+      if (input.side === 'BUY') {
+        lockedCurrency = 'SOL';
+        lockedAmount = roundAmount(notional + fee);
+      } else {
+        lockedCurrency = 'LYNX';
+        lockedAmount = input.amount;
+      }
+      this.debit(wallet, lockedCurrency, lockedAmount);
+    } else {
+      if (!market) throw new Error('Market is required for prediction orders');
+      if (input.pair !== market.id) throw new Error('Order pair must match market');
+      if (input.currency !== market.currency) throw new Error('Invalid currency for market');
+      if (!position) throw new Error('Position is required for prediction orders');
+      position = normalizePosition(position, market.isTernary);
+      assertPositionAllowed(position, market.isTernary);
+      assertMarketAcceptsEntries(market);
+      lockedCurrency = market.currency;
+      lockedAmount = input.amount;
+      this.debit(wallet, lockedCurrency, lockedAmount);
     }
 
     const order: Order = {
@@ -362,19 +399,21 @@ export class LynxState {
       pair: input.pair,
       owner: wallet.wallet,
       side: input.side,
-      position: input.position,
+      position,
       amount: input.amount,
       remaining: input.amount,
       price: input.price,
       currency: input.currency,
       status: 'OPEN',
-      createdAt: nowMs()
+      createdAt: nowMs(),
+      lockedCurrency,
+      lockedAmount,
+      spentAmount: 0
     };
     this.orders.set(order.id, order);
 
     if (input.pair === 'LYNX/SOL') {
       this.matchLynxOrder(order);
-      this.treasury.sol = roundAmount(this.treasury.sol + fee);
     }
 
     return { order, orderbook: this.getOrderBook(input.pair, input.marketId) };
@@ -391,13 +430,24 @@ export class LynxState {
     const market = this.getMarket(input.marketId);
     const wallet = this.getWallet(input.wallet);
     const positionA = normalizePosition(input.side, market.isTernary);
+    assertPositionAllowed(positionA, market.isTernary);
+    assertMarketAcceptsEntries(market);
 
     if (market.currency === 'LYNX') {
       throw new Error('1v1vP and duels are SOL-only in the current Lynx economy');
     }
 
-    this.debit(wallet, 'SOL', input.amount);
     const type = input.type ?? (market.isTernary ? '1v1vP' : '1v1');
+    if (type === '1v1' && market.isTernary) throw new Error('1v1 duels require a binary market');
+    if (type === '1v1vP' && !market.isTernary) throw new Error('1v1vP duels require a ternary market');
+    const protocolWallet = type === '1v1vP' ? this.getWallet(TREASURY_WALLET) : undefined;
+    if (wallet.solBalance < input.amount) throw new Error('Insufficient SOL balance');
+    if (protocolWallet && protocolWallet.solBalance < input.amount) throw new Error('Insufficient protocol SOL balance');
+
+    this.debit(wallet, 'SOL', input.amount);
+    if (type === '1v1vP') {
+      this.debit(protocolWallet!, 'SOL', input.amount);
+    }
     const duel: Duel = {
       id: id('duel'),
       parentMarketId: market.id,
@@ -423,10 +473,15 @@ export class LynxState {
     if (!duel) throw new Error('Duel not found');
     if (duel.status !== 'OPEN') throw new Error('Duel is not open');
     const wallet = this.getWallet(input.wallet);
+    if (wallet.wallet === duel.creator) throw new Error('Creator cannot accept their own duel');
+    const market = this.getMarket(duel.parentMarketId);
+    assertMarketAcceptsEntries(market);
+    const positionB = normalizePosition(input.side ?? opposingPosition(duel.positionA, duel.isTernary), duel.isTernary);
+    assertPositionAllowed(positionB, duel.isTernary);
+    if (positionB === duel.positionA) throw new Error('Rival must choose a different side');
     this.debit(wallet, duel.currency, duel.amount);
     duel.rival = wallet.wallet;
-    duel.positionB = normalizePosition(input.side ?? opposingPosition(duel.positionA, duel.isTernary), duel.isTernary);
-    if (duel.positionB === duel.positionA) throw new Error('Rival must choose a different side');
+    duel.positionB = positionB;
     duel.status = 'ACTIVE';
     duel.acceptedAt = nowMs();
     return duel;
@@ -436,6 +491,7 @@ export class LynxState {
     const market = this.getMarket(input.marketId);
     if (market.status === 'RESOLVED') throw new Error('Market already resolved');
     const result = normalizePosition(input.result, market.isTernary);
+    assertPositionAllowed(result, market.isTernary);
     market.status = 'RESOLVED';
     market.result = result;
     market.resolvedAt = nowMs();
@@ -484,9 +540,12 @@ export class LynxState {
     if (!proposal) throw new Error('Proposal not found');
     if (proposal.status !== 'active') throw new Error('Proposal is not active');
     const wallet = this.getWallet(input.wallet);
+    proposal.voters ??= {};
+    if (proposal.voters[wallet.wallet]) throw new Error('Wallet already voted on this proposal');
     const weight = Math.max(wallet.stakedLynx, 1);
     if (input.voteType === 'yes') proposal.votesYes = roundAmount(proposal.votesYes + weight);
     else proposal.votesNo = roundAmount(proposal.votesNo + weight);
+    proposal.voters[wallet.wallet] = input.voteType;
     return proposal;
   }
 
@@ -501,7 +560,8 @@ export class LynxState {
       votesNo: 0,
       endTime: new Date(now + 1000 * 60 * 60 * 24 * 7).toISOString(),
       category: input.category || 'general',
-      author: input.author || 'Anonymous'
+      author: input.author || 'Anonymous',
+      voters: {}
     };
     this.proposals.set(proposal.id, proposal as Proposal);
     return proposal;
@@ -588,8 +648,11 @@ export class LynxState {
     this.transactions.set(tx.signature, { signature: tx.signature, wallet: tx.wallet, intent: tx.intent, timestamp: ts });
   }
 
-  markNotificationsRead(walletAddress: string) {
-    const notifications = this.listNotifications(walletAddress).map((notification) => ({ ...notification, read: true }));
+  markNotificationsRead(walletAddress: string, notificationId?: string) {
+    const notifications = this.listNotifications(walletAddress).map((notification) => ({
+      ...notification,
+      read: notificationId ? notification.read || notification.id === notificationId : true
+    }));
     this.notifications.set(walletAddress, notifications);
     return notifications;
   }
@@ -607,6 +670,23 @@ export class LynxState {
   private credit(wallet: WalletState, currency: Currency, amount: number) {
     if (currency === 'SOL') wallet.solBalance = roundAmount(wallet.solBalance + amount);
     else wallet.lynxBalance = roundAmount(wallet.lynxBalance + amount);
+  }
+
+  private consumeLockedAmount(order: Order, amount: number) {
+    if (order.lockedAmount === undefined) return;
+    order.spentAmount = roundAmount((order.spentAmount ?? 0) + amount);
+    if (order.spentAmount > roundAmount(order.lockedAmount + 0.000000001)) {
+      throw new Error('Order locked amount exceeded');
+    }
+  }
+
+  private releaseUnusedLock(order: Order) {
+    if (order.lockedAmount === undefined || !order.lockedCurrency) return;
+    const refund = roundAmount(order.lockedAmount - (order.spentAmount ?? 0));
+    if (refund > 0) {
+      this.credit(this.getWallet(order.owner), order.lockedCurrency, refund);
+    }
+    order.lockedAmount = order.spentAmount ?? order.lockedAmount;
   }
 
   private matchLynxOrder(order: Order) {
@@ -627,14 +707,22 @@ export class LynxState {
       const amount = Math.min(order.remaining, maker.remaining);
       const price = maker.price;
       const notional = roundAmount(amount * price);
-      const buyer = this.getWallet(order.side === 'BUY' ? order.owner : maker.owner);
-      const seller = this.getWallet(order.side === 'SELL' ? order.owner : maker.owner);
+      const fee = roundAmount(notional * GLOBAL_TRADE_FEE);
+      const buyerOrder = order.side === 'BUY' ? order : maker;
+      const sellerOrder = order.side === 'SELL' ? order : maker;
+      const buyer = this.getWallet(buyerOrder.owner);
+      const seller = this.getWallet(sellerOrder.owner);
       this.credit(buyer, 'LYNX', amount);
       this.credit(seller, 'SOL', notional);
+      this.consumeLockedAmount(buyerOrder, roundAmount(notional + fee));
+      this.consumeLockedAmount(sellerOrder, amount);
+      this.treasury.sol = roundAmount(this.treasury.sol + fee);
       order.remaining = roundAmount(order.remaining - amount);
       maker.remaining = roundAmount(maker.remaining - amount);
       order.status = order.remaining === 0 ? 'FILLED' : 'PARTIAL_FILLED';
       maker.status = maker.remaining === 0 ? 'FILLED' : 'PARTIAL_FILLED';
+      if (order.status === 'FILLED') this.releaseUnusedLock(order);
+      if (maker.status === 'FILLED') this.releaseUnusedLock(maker);
       const tradeId = id('trade');
       this.trades.set(tradeId, {
         id: tradeId,
@@ -644,7 +732,7 @@ export class LynxState {
         side: order.side,
         amount,
         price,
-        feeAmount: roundAmount(notional * GLOBAL_TRADE_FEE),
+        feeAmount: fee,
         currency: 'SOL',
         createdAt: nowMs()
       });
@@ -729,27 +817,38 @@ export class LynxState {
       const rivalWins = result === duel.positionB || (result === 'YES' && duel.positionB === 'A') || (result === 'NO' && duel.positionB === 'B');
 
       if (duel.type === '1v1vP') {
+        const total = roundAmount(duel.amount * 2);
         if (creatorWins) {
+          const fee = roundAmount(total * GLOBAL_TRADE_FEE);
+          const payout = roundAmount(total - fee);
           const wallet = this.getWallet(duel.creator);
-          this.credit(wallet, 'SOL', roundAmount(duel.amount * 1.95));
+          this.credit(wallet, 'SOL', payout);
+          this.treasury.sol = roundAmount(this.treasury.sol + fee);
           duel.winner = duel.creator;
         } else {
-          this.treasury.protocolDuelSol = roundAmount(this.treasury.protocolDuelSol + duel.amount);
+          const protocolWallet = this.getWallet(TREASURY_WALLET);
+          this.credit(protocolWallet, 'SOL', total);
+          this.treasury.protocolDuelSol = roundAmount(this.treasury.protocolDuelSol + total);
           duel.winner = TREASURY_WALLET;
         }
         continue;
       }
 
+      const total = roundAmount(duel.amount * 2);
+      const fee = roundAmount(total * GLOBAL_TRADE_FEE);
+      const payout = roundAmount(total - fee);
       if (creatorWins && !rivalWins) {
         const wallet = this.getWallet(duel.creator);
-        this.credit(wallet, duel.currency, roundAmount(duel.amount * 1.95));
+        this.credit(wallet, duel.currency, payout);
+        this.treasury.sol = roundAmount(this.treasury.sol + fee);
         duel.winner = duel.creator;
       } else if (rivalWins && duel.rival) {
         const wallet = this.getWallet(duel.rival);
-        this.credit(wallet, duel.currency, roundAmount(duel.amount * 1.95));
+        this.credit(wallet, duel.currency, payout);
+        this.treasury.sol = roundAmount(this.treasury.sol + fee);
         duel.winner = duel.rival;
       } else {
-        this.treasury.sol = roundAmount(this.treasury.sol + duel.amount * 2);
+        this.treasury.sol = roundAmount(this.treasury.sol + total);
         duel.winner = TREASURY_WALLET;
       }
     }
@@ -803,6 +902,83 @@ export class LynxState {
         createdAt: nowMs()
       });
     }
+  }
+
+  // Claim winning position payout.
+  claimPosition(walletAddress: string, positionId: string) {
+    const position = this.positions.get(positionId);
+    if (!position) throw new Error('Position not found');
+    if (position.wallet !== walletAddress) throw new Error('Position does not belong to this wallet');
+    if (position.claimed) throw new Error('Position already claimed');
+
+    const market = this.markets.get(position.marketId);
+    if (!market) throw new Error('Market not found');
+    if (market.status !== 'RESOLVED') throw new Error('Market is not resolved yet');
+    if (!market.result) throw new Error('Market has no result');
+
+    const normalizedResult = normalizePosition(market.result, market.isTernary);
+    const normalizedPosition = normalizePosition(position.position, market.isTernary);
+    if (normalizedPosition !== normalizedResult) throw new Error('Position did not win');
+
+    // Payout = (user_amount / winning_side_pool) * (total_pool - protocol_fees)
+    const winningPool =
+      normalizedResult === 'YES' || normalizedResult === 'A'
+        ? market.yesAmount
+        : normalizedResult === 'NO' || normalizedResult === 'B'
+        ? market.noAmount
+        : (market.drawAmount ?? 0);
+
+    if (winningPool <= 0) throw new Error('Winning pool is empty');
+
+    const totalFeeRate = STAKER_REWARD_FEE + TREASURY_EVENT_FEE;
+    const netPool = roundAmount(market.poolAmount * (1 - totalFeeRate));
+    const userShare = position.amount / winningPool;
+    const payout = roundAmount(netPool * userShare);
+
+    position.claimed = true;
+    const wallet = this.getWallet(walletAddress);
+    this.credit(wallet, market.currency, payout);
+    wallet.wins = (wallet.wins || 0) + 1;
+
+    this.pushNotification(walletAddress, {
+      type: 'claimable',
+      title: 'Payout claimed!',
+      message: `You claimed ${payout} ${market.currency} from "${market.title}".`
+    });
+
+    return { payout, currency: market.currency, portfolio: this.getPortfolio(walletAddress) };
+  }
+
+  // Cancel open order and refund.
+  cancelOrder(walletAddress: string, orderId: string) {
+    const order = this.orders.get(orderId);
+    if (!order) throw new Error('Order not found');
+    if (order.owner !== walletAddress) throw new Error('Order does not belong to this wallet');
+    if (order.status === 'FILLED') throw new Error('Order is already filled');
+    if (order.status === 'CANCELLED') throw new Error('Order is already cancelled');
+
+    order.status = 'CANCELLED';
+
+    const wallet = this.getWallet(walletAddress);
+    if (order.lockedAmount !== undefined && order.lockedCurrency) {
+      const refund = roundAmount(order.lockedAmount - (order.spentAmount ?? 0));
+      if (refund > 0) this.credit(wallet, order.lockedCurrency, refund);
+      order.lockedAmount = order.spentAmount ?? order.lockedAmount;
+    } else if (order.pair === 'LYNX/SOL' && order.side === 'BUY') {
+      const refund = roundAmount(order.remaining * order.price);
+      wallet.solBalance = roundAmount(wallet.solBalance + refund);
+    } else if (order.pair === 'LYNX/SOL') {
+      wallet.lynxBalance = roundAmount(wallet.lynxBalance + order.remaining);
+    } else {
+      this.credit(wallet, order.currency, order.remaining);
+    }
+
+    return { cancelled: orderId, portfolio: this.getPortfolio(walletAddress) };
+  }
+
+  // List positions for a wallet
+  listPositions(walletAddress: string) {
+    return [...this.positions.values()].filter((p) => p.wallet === walletAddress);
   }
 
   private syntheticCandles(symbol: string, ms: number, limit: number): Candle[] {

@@ -67,6 +67,9 @@ export interface Order {
   currency: Currency;
   status: OrderStatus;
   createdAt: number;
+  lockedCurrency?: Currency;
+  lockedAmount?: number;
+  spentAmount?: number;
 }
 
 export interface Trade {
@@ -113,6 +116,7 @@ export interface Proposal {
   endTime: string;
   category: 'protocol' | 'markets' | 'fees' | 'community';
   author: string;
+  voters?: Record<string, 'yes' | 'no'>;
 }
 
 export interface Notification {

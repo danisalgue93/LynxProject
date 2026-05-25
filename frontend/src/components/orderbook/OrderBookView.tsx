@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { BarChart3, TrendingUp, ArrowUpDown, History, Loader2, Coins, Maximize2, Minimize2, ChevronUp, ChevronDown } from 'lucide-react';
+import { BarChart3, TrendingUp, ArrowUpDown, History, Loader2, Coins, Maximize2, Minimize2, ChevronUp, ChevronDown, X as XIcon } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { useTranslation } from 'react-i18next';
 import { useProgram } from '@/src/hooks/useProgram';
+import { useWallet } from '@solana/wallet-adapter-react';
 import { eventBus } from '@/src/lib/eventBus';
 import { Market, Position } from '@/src/types';
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Line, LineChart } from 'recharts';
 import { apiUrl } from '@/src/lib/api';
+import { getManagedWalletAddress, useManagedAuthSession } from '@/src/lib/auth';
 
 function MarketChart({ isLynxSol, market, chartType = 'line', chartRange = '1M', chartInterval = '1D', chartSize }: { isLynxSol: boolean; market: Market | null; chartType?: 'line' | 'candle'; chartRange?: string; chartInterval?: string; chartSize?: 'minimized' | 'normal' | 'expanded' }) {
   const [tokenData, setTokenData] = useState<any[]>([]);
@@ -210,9 +212,13 @@ function MarketChart({ isLynxSol, market, chartType = 'line', chartRange = '1M',
 
 export function OrderBookView() {
   const { t } = useTranslation();
-  const { fetchMarkets, executeTrade, executeLynxOrder, fetchOrderBook, isLoading, error } = useProgram();
+  const { publicKey } = useWallet();
+  const managedSession = useManagedAuthSession();
+  const myWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || 'DEV_WALLET';
+  const { fetchMarkets, executeTrade, executeLynxOrder, fetchOrderBook, cancelOrder, isLoading, error } = useProgram();
   const [markets, setMarkets] = useState<Market[]>([]);
   const [lynxOrderBook, setLynxOrderBook] = useState<any>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
   
   // 'lynx-sol' is the special native token market
   const [selectedMarketId, setSelectedMarketId] = useState<string>('lynx-sol');
@@ -312,6 +318,22 @@ export function OrderBookView() {
   const midPrice = ((bestAsk + bestBid) / 2).toFixed(5);
   const spread = Math.max(0, bestAsk - bestBid).toFixed(5);
 
+  // My open orders (filter both bids and asks by wallet)
+  const allOpenOrders = [...(lynxOrderBook?.bids || []), ...(lynxOrderBook?.asks || [])]
+    .filter((o: any) => o.owner === myWallet && o.status !== 'FILLED' && o.status !== 'CANCELLED');
+
+  const handleCancelOrder = async (orderId: string) => {
+    setCancellingId(orderId);
+    try {
+      await cancelOrder(orderId);
+      // Orderbook will refresh via socket event
+    } catch (err) {
+      console.error('Cancel order failed', err);
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
   return (
     <div className="p-2 sm:p-4 lg:p-8 max-w-[1600px] mx-auto">
       <div className="flex items-center gap-3 mb-4 lg:mb-8">
@@ -363,7 +385,7 @@ export function OrderBookView() {
                      <div className="w-1.5 h-1.5 rounded-full bg-[#00FFD1]" />
                      <span className="text-[8px] font-mono font-bold text-white uppercase">SOL</span>
                    </div>
-                   <span className="text-[8px] font-bold text-[#52525B]">↔</span>
+                   <span className="text-[8px] font-bold text-[#52525B]"><-></span>
                    <div className="flex items-center gap-1">
                      <div className="w-1.5 h-1.5 rounded-full bg-[#9945FF]" />
                      <span className="text-[8px] font-mono font-bold text-white uppercase">LYNX</span>
@@ -803,6 +825,62 @@ export function OrderBookView() {
             </div>
           </div>
         </div>
+
+        {/* My Open Orders */}
+        {isLynxSol && allOpenOrders.length > 0 && (
+          <div className="mt-4 lg:mt-6 bg-[#0D0D0E] border border-[#1F1F23] rounded-xl overflow-hidden">
+            <div className="px-4 lg:px-6 py-3 border-b border-[#1F1F23] flex items-center justify-between">
+              <span className="text-[10px] lg:text-xs font-black text-white uppercase tracking-widest">
+                My Open Orders
+              </span>
+              <span className="text-[10px] text-[#52525B] font-bold">{allOpenOrders.length} active</span>
+            </div>
+            <div className="divide-y divide-[#1F1F23]">
+              {allOpenOrders.map((order: any) => {
+                const isBuy = order.side === 'BUY';
+                const isPartial = order.status === 'PARTIAL_FILLED';
+                return (
+                  <div key={order.id} className="flex items-center justify-between px-4 lg:px-6 py-3 hover:bg-[#141417] transition-colors group">
+                    <div className="flex items-center gap-3 lg:gap-4 flex-1 min-w-0">
+                      <span className={cn(
+                        "text-[9px] lg:text-[11px] font-black uppercase px-2 py-0.5 rounded",
+                        isBuy ? "bg-[#9945FF]/10 text-[#9945FF]" : "bg-red-400/10 text-red-400"
+                      )}>
+                        {order.side}
+                      </span>
+                      <span className="font-mono text-[10px] lg:text-xs text-white font-bold">
+                        {Number(order.remaining).toLocaleString()} LYNX
+                      </span>
+                      <span className="text-[10px] lg:text-xs text-[#52525B] font-mono">
+                        @ {Number(order.price).toFixed(5)} SOL
+                      </span>
+                      {isPartial && (
+                        <span className="text-[9px] text-amber-400 font-bold uppercase">Partial</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 lg:gap-3 shrink-0">
+                      <span className="hidden lg:block text-[10px] text-[#52525B] font-mono">
+                        ~ {(Number(order.remaining) * Number(order.price)).toFixed(4)} SOL
+                      </span>
+                      <button
+                        onClick={() => handleCancelOrder(order.id)}
+                        disabled={cancellingId === order.id}
+                        className="flex items-center gap-1 px-2 lg:px-3 py-1 rounded bg-red-400/10 hover:bg-red-400/20 text-red-400 text-[9px] lg:text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50"
+                      >
+                        {cancellingId === order.id ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <XIcon className="w-3 h-3" />
+                        )}
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

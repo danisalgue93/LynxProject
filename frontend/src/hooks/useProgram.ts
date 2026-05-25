@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { Market, Duel, Proposal, Portfolio } from '../types';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { apiFetch } from '../lib/api';
+import { getManagedWalletAddress, useManagedAuthSession } from '../lib/auth';
 
 /**
  * Web3 Program Integration Hook Structure
@@ -19,7 +20,8 @@ export function useProgram() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { publicKey } = useWallet();
-  const wallet = publicKey?.toBase58() || 'DEV_WALLET';
+  const managedSession = useManagedAuthSession();
+  const wallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || 'DEV_WALLET';
 
   // Fetch all active markets from the backend indexer
   const fetchMarkets = useCallback(async (): Promise<Market[]> => {
@@ -268,6 +270,48 @@ export function useProgram() {
     }
   }, [wallet]);
 
+  // Fetch positions for the current wallet
+  const fetchPositions = useCallback(async () => {
+    try {
+      return await apiFetch<any[]>(`/api/positions?wallet=${encodeURIComponent(wallet)}`);
+    } catch (err: any) {
+      console.error('Failed to fetch positions', err);
+      return [];
+    }
+  }, [wallet]);
+
+  // Claim a winning position payout
+  const claimPosition = useCallback(async (positionId: string) => {
+    setIsLoading(true);
+    try {
+      return await apiFetch<{ payout: number; currency: string; portfolio: Portfolio }>(
+        `/api/positions/${positionId}/claim`,
+        { method: 'POST', body: JSON.stringify({ wallet }) }
+      );
+    } catch (err: any) {
+      setError(err.message || 'Failed to claim position');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [wallet]);
+
+  // Cancel an open order and get refunded
+  const cancelOrder = useCallback(async (orderId: string) => {
+    setIsLoading(true);
+    try {
+      return await apiFetch<{ cancelled: string; portfolio: Portfolio }>(
+        `/api/orders/${orderId}?wallet=${encodeURIComponent(wallet)}`,
+        { method: 'DELETE' }
+      );
+    } catch (err: any) {
+      setError(err.message || 'Failed to cancel order');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [wallet]);
+
   return {
     isLoading,
     error,
@@ -279,6 +323,7 @@ export function useProgram() {
     createDuel,
     acceptDuel,
     fetchPortfolio,
+    fetchPositions,
     fetchProposals,
     fetchDaoStats,
     castVote,
@@ -286,6 +331,8 @@ export function useProgram() {
     stakeLynx,
     fetchTransactions,
     unstakeLynx,
-    claimRewards
+    claimRewards,
+    claimPosition,
+    cancelOrder,
   };
 }

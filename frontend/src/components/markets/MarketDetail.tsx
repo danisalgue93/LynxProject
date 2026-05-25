@@ -60,17 +60,37 @@ function MiniMarketChart({ isLynx, market }: { isLynx: boolean; market: Market }
 
 export function MarketDetail({ market, onClose }: MarketDetailProps) {
   const { t } = useTranslation();
-  const { fetchDuels, executeTrade } = useProgram();
+  const { fetchDuels, executeTrade, fetchPositions, claimPosition } = useProgram();
   const [marketDuels, setMarketDuels] = useState<Duel[]>([]);
 
   const [betAmount, setBetAmount] = useState("5.0");
   const [selectedSide, setSelectedSide] = useState<Position>(Position.YES);
   const [isPending, setIsPending] = useState(false);
+  const [claimablePosId, setClaimablePosId] = useState<string | null>(null);
+  const [isClaiming, setIsClaiming] = useState(false);
+  const [claimResult, setClaimResult] = useState<{ payout: number; currency: string } | null>(null);
 
   const [activeMode, setActiveMode] = useState<"quick" | "book" | "duels">(
     "quick",
   );
   const [showMobileTrade, setShowMobileTrade] = useState(false);
+
+  // Load claimable position for this market if resolved
+  useEffect(() => {
+    if (market.status === 'RESOLVED' && market.result) {
+      fetchPositions().then((positions) => {
+        const winPos = positions.find(
+          (p: any) =>
+            p.marketId === market.id &&
+            !p.claimed &&
+            (p.position === market.result ||
+              (market.result === 'YES' && p.position === 'A') ||
+              (market.result === 'NO' && p.position === 'B'))
+        );
+        setClaimablePosId(winPos?.id ?? null);
+      });
+    }
+  }, [market.id, market.status, market.result, fetchPositions]);
 
   useEffect(() => {
     if (activeMode === "duels") {
@@ -96,6 +116,22 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
       console.error("Quick bet failed", err);
     } finally {
       setIsPending(false);
+    }
+  };
+
+  const handleClaim = async () => {
+    if (!claimablePosId) return;
+    setIsClaiming(true);
+    try {
+      const result = await claimPosition(claimablePosId);
+      if (result) {
+        setClaimResult({ payout: result.payout, currency: result.currency });
+        setClaimablePosId(null);
+      }
+    } catch (err) {
+      console.error("Claim failed", err);
+    } finally {
+      setIsClaiming(false);
     }
   };
 
@@ -159,7 +195,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                 )}
               >
                 {market.category} Market #{market.id}{" "}
-                {isLynx && `• ${t("marketDetail.special", "SPECIAL")}`}
+                {isLynx && `- ${t("marketDetail.special", "SPECIAL")}`}
               </span>
               <span className="text-[8px] md:text-[9px] text-[#52525B] font-mono font-bold">
                 {t("marketDetail.oracle", "ORACLE: SWITCHBOARD")}
@@ -729,7 +765,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
 
                   <button
                     onClick={handleQuickBet}
-                    disabled={isPending}
+                    disabled={isPending || market.status === 'RESOLVED'}
                     className={cn(
                       "w-full text-black font-black py-3 md:py-4 rounded uppercase tracking-tighter text-[10px] md:text-sm transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:scale-100 flex items-center justify-center gap-2 md:gap-3",
                       isLynx
@@ -746,6 +782,37 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                       t("marketDetail.confirmTrade", "Confirm Trade")
                     )}
                   </button>
+
+                  {/* Claim payout banner for resolved markets */}
+                  {market.status === 'RESOLVED' && (
+                    <div className="mt-3 p-4 bg-[#00FFD1]/5 border border-[#00FFD1]/20 rounded-xl">
+                      {claimResult ? (
+                        <div className="text-center">
+                          <div className="text-[#00FFD1] font-black text-lg mb-1">✓ Claimed!</div>
+                          <div className="text-white text-sm font-bold">{claimResult.payout} {claimResult.currency} added to your balance</div>
+                        </div>
+                      ) : claimablePosId ? (
+                        <>
+                          <p className="text-[10px] text-[#00FFD1] uppercase font-black tracking-widest mb-3 text-center">
+                            🏆 You won this market!
+                          </p>
+                          <button
+                            onClick={handleClaim}
+                            disabled={isClaiming}
+                            className="w-full py-3 bg-[#00FFD1] text-black font-black text-[10px] uppercase tracking-widest rounded flex items-center justify-center gap-2 hover:bg-[#00E5BC] transition-all disabled:opacity-60"
+                          >
+                            {isClaiming ? (
+                              <><div className="w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" /> Claiming…</>
+                            ) : 'Claim Payout'}
+                          </button>
+                        </>
+                      ) : (
+                        <p className="text-[10px] text-[#52525B] uppercase font-bold tracking-widest text-center">
+                          Market resolved · {market.result} won
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </motion.div>
               ) : (
                 <motion.div

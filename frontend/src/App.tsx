@@ -56,9 +56,7 @@ export default function App() {
 
   useEffect(() => {
     const onTx = (e: Event) => {
-      // payload forwarded from socket in eventBus
-      // @ts-ignore
-      const d = (e as CustomEvent).detail as { signature: string; link: string; wallet?: string };
+      const d = (e as CustomEvent<{ signature: string; link: string; wallet?: string }>).detail;
       if (!d || !d.signature) return;
       const id = `tx-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
       setTxToasts((s) => [{ id, signature: d.signature, link: d.link, wallet: d.wallet }, ...s]);
@@ -292,7 +290,7 @@ export default function App() {
           <div key={t.id} className="bg-[#0D0D0E] border border-[#27272A] rounded p-3 shadow-lg min-w-[260px]">
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1">
-                <div className="text-sm font-bold text-white">Transacción registrada</div>
+                <div className="text-sm font-bold text-white">Transaccion registrada</div>
                 <a href={t.link} target="_blank" rel="noreferrer" className="text-xs text-[#00FFD1] font-mono break-all">{t.signature}</a>
                 {t.wallet && <div className="text-[10px] text-[#71717A] mt-1">{t.wallet}</div>}
               </div>
@@ -304,4 +302,3 @@ export default function App() {
     </div>
   );
 }
-

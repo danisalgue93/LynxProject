@@ -89,9 +89,7 @@ export function createPersistence(): Persistence {
       store.proposals = restoreMap(data.proposals);
       store.notifications = restoreMap(data.notifications);
       if (data.transactions) {
-        // restore transactions as a Map keyed by signature
-        // @ts-ignore
-        store.transactions = restoreMap(data.transactions as any);
+        store.transactions = restoreMap(data.transactions);
       }
       store.treasury = data.treasury;
     },

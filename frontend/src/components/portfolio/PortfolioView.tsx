@@ -1,13 +1,29 @@
 import React, { useEffect, useState } from 'react';
-import { Wallet, PieChart, TrendingUp, History, Coins, CheckCircle2, Trophy as RewardIcon, CreditCard, Link as LinkIcon } from 'lucide-react';
+import { Wallet, PieChart, TrendingUp, CheckCircle2, Trophy as RewardIcon, CreditCard } from 'lucide-react';
 import { formatSOL, formatNumber, cn } from '@/src/lib/utils';
 import { useProgram } from '@/src/hooks/useProgram';
 import { eventBus } from '@/src/lib/eventBus';
 import { Market, Portfolio } from '@/src/types';
 import { useTranslation } from 'react-i18next';
+import { useWallet } from '@solana/wallet-adapter-react';
+
+async function openSignedMoonPay(walletAddress?: string) {
+  const params = new URLSearchParams({ currencyCode: 'sol' });
+  if (walletAddress && walletAddress !== 'DEV_WALLET') params.set('walletAddress', walletAddress);
+
+  const response = await fetch(`/integrations/moonpay/onramp-url?${params.toString()}`);
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.url) {
+    throw new Error(data?.error || 'MoonPay is not configured');
+  }
+
+  window.open(data.url, '_blank', 'width=500,height=700,noopener');
+}
 
 export function PortfolioView() {
   const { t } = useTranslation();
+  const { publicKey } = useWallet();
+  const walletAddress = publicKey?.toBase58();
   const { fetchMarkets, fetchPortfolio, claimRewards, stakeLynx, unstakeLynx, isLoading, error } = useProgram();
   const [markets, setMarkets] = useState<Market[]>([]);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
@@ -16,6 +32,7 @@ export function PortfolioView() {
   const [stakeMode, setStakeMode] = useState<'stake'|'unstake'>('stake');
   const [stakeAmount, setStakeAmount] = useState('');
   const [activeTab, setActiveTab] = useState<'wallet' | 'portfolio' | 'staking'>('wallet');
+  const [moonPayError, setMoonPayError] = useState<string | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -165,7 +182,22 @@ export function PortfolioView() {
                   <p className="text-[10px] text-[#A1A1AA] mb-4 leading-relaxed max-w-[200px]">
                     Instantly purchase crypto using your credit card, debit card, or bank account via MoonPay.
                   </p>
-                  <button className="w-full py-3 bg-[#7D00FF] hover:bg-[#6000C8] text-white font-black text-[10px] uppercase tracking-widest rounded flex items-center justify-center gap-2 transition-all shadow-[0_0_15px_rgba(125,0,255,0.3)]">
+                  {moonPayError && (
+                    <div className="mb-3 text-[10px] text-red-400 bg-red-950/20 border border-red-500/20 rounded px-3 py-2">
+                      {moonPayError}
+                    </div>
+                  )}
+                  <button
+                    className="w-full py-3 bg-[#7D00FF] hover:bg-[#6000C8] text-white font-black text-[10px] uppercase tracking-widest rounded flex items-center justify-center gap-2 transition-all shadow-[0_0_15px_rgba(125,0,255,0.3)]"
+                    onClick={async () => {
+                      setMoonPayError(null);
+                      try {
+                        await openSignedMoonPay(walletAddress);
+                      } catch (err: any) {
+                        setMoonPayError(err.message || 'MoonPay is not available');
+                      }
+                    }}
+                  >
                     <CreditCard className="w-4 h-4" />
                     {t('portfolio.buyCrypto', 'Buy Crypto with MoonPay')}
                   </button>

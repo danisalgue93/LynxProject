@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Duel, MarketStatus, Market, Position } from '@/src/types';
+import { Duel, DuelStatus, Market, Position } from '@/src/types';
 import { formatSOL, cn } from '@/src/lib/utils';
 import { Sword, User, Timer, ArrowRight, Shield } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -28,7 +28,7 @@ export function DuelCard({ duel }: DuelCardProps) {
   }, [duel.parentMarketId, fetchMarkets]);
 
   const handleAccept = async (position?: Position) => {
-    if (duel.status !== MarketStatus.OPEN) return;
+    if (duel.status !== DuelStatus.OPEN) return;
     setIsAccepting(true);
     try {
       await acceptDuel(duel.id, position);
@@ -39,7 +39,7 @@ export function DuelCard({ duel }: DuelCardProps) {
     }
   };
 
-  const isOpen = duel.status === MarketStatus.OPEN;
+  const isOpen = duel.status === DuelStatus.OPEN;
   const isLynx = duel.currency === 'LYNX';
 
   const displayAmount = duel.currency === 'LYNX' ? `${(duel.amount * 1).toLocaleString()} $LYNX` : formatSOL(duel.amount);
@@ -149,7 +149,7 @@ export function DuelCard({ duel }: DuelCardProps) {
           <div className="space-y-0.5 md:space-y-1">
              <div className="text-[7px] md:text-[8px] uppercase font-bold text-[#71717A] tracking-widest">{t('duels.winnerGets', 'Winner Gets')}</div>
              <div className="text-xs md:text-sm font-mono font-bold text-white tracking-tighter">
-                {duel.currency === 'LYNX' ? `${((duel.amount * 2) * 0.9).toLocaleString()} $LYNX` : formatSOL((duel.amount * 2) * 0.9)}
+                {duel.currency === 'LYNX' ? `${((duel.amount * 2) * 0.999).toLocaleString()} $LYNX` : formatSOL((duel.amount * 2) * 0.999)}
              </div>
           </div>
           <div className="text-right flex flex-col justify-center items-end hidden sm:flex">
@@ -224,7 +224,7 @@ export function DuelCard({ duel }: DuelCardProps) {
             <div className="h-10 md:h-12">
               <button 
                 onClick={() => handleAccept()}
-                 disabled={isAccepting || (!isOpen && duel.status !== MarketStatus.OPEN)}
+                 disabled={isAccepting || (!isOpen && duel.status !== DuelStatus.OPEN)}
                  className={cn(
                  "w-full h-full rounded font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 whitespace-nowrap",
                  isOpen 

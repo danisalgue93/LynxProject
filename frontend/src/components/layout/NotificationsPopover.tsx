@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Bell, Trophy, Coins, Info, CheckCircle, X } from 'lucide-react';
+import React from 'react';
+import { Trophy, Coins, Info } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/src/lib/utils';
 import { apiFetch } from '@/src/lib/api';
@@ -15,17 +15,15 @@ export interface Notification {
   read: boolean;
 }
 
-// Demo data for notifications
-const DEMO_NOTIFICATIONS: Notification[] = [];
-
 interface NotificationsPopoverProps {
   isOpen: boolean;
   onClose: () => void;
+  wallet: string;
   notifications: Notification[];
   setNotifications: (notifications: Notification[]) => void;
 }
 
-export function NotificationsPopover({ isOpen, onClose, notifications, setNotifications }: NotificationsPopoverProps) {
+export function NotificationsPopover({ isOpen, onClose, wallet, notifications, setNotifications }: NotificationsPopoverProps) {
   const { t } = useTranslation();
 
   if (!isOpen) return null;
@@ -36,7 +34,7 @@ export function NotificationsPopover({ isOpen, onClose, notifications, setNotifi
     try {
       const data = await apiFetch<Notification[]>('/api/notifications/read', {
         method: 'POST',
-        body: JSON.stringify({ wallet: undefined })
+        body: JSON.stringify({ wallet })
       });
       setNotifications(data.map(n => ({ ...n, timestamp: new Date(n.timestamp || Date.now()) })));
     } catch (err) {
@@ -48,7 +46,7 @@ export function NotificationsPopover({ isOpen, onClose, notifications, setNotifi
     try {
       const data = await apiFetch<Notification[]>('/api/notifications/read', {
         method: 'POST',
-        body: JSON.stringify({ wallet: undefined, id })
+        body: JSON.stringify({ wallet, id })
       });
       setNotifications(data.map(n => ({ ...n, timestamp: new Date(n.timestamp || Date.now()) })));
     } catch (err) {

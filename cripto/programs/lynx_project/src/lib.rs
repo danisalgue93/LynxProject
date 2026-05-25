@@ -141,6 +141,20 @@ pub mod lynx_project {
                 burn_amount,
             )?;
         }
+        let net_amount = amount.checked_sub(burn_amount).ok_or(LynxError::MathOverflow)?;
+        if net_amount > 0 {
+            token::transfer(
+                CpiContext::new(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.user_lynx_account.to_account_info(),
+                        to: ctx.accounts.market_lynx_vault.to_account_info(),
+                        authority: ctx.accounts.buyer.to_account_info(),
+                    },
+                ),
+                net_amount,
+            )?;
+        }
 
         market.burned_lynx = market.burned_lynx.checked_add(burn_amount).ok_or(LynxError::MathOverflow)?;
         ctx.accounts.config.total_lynx_burned = ctx
@@ -150,13 +164,13 @@ pub mod lynx_project {
             .checked_add(burn_amount)
             .ok_or(LynxError::MathOverflow)?;
 
-        add_market_amounts(market, outcome, amount)?;
+        add_market_amounts(market, outcome, net_amount)?;
         write_position(
             &mut ctx.accounts.position,
             market.key(),
             ctx.accounts.buyer.key(),
             outcome,
-            amount,
+            net_amount,
             ctx.bumps.position,
         )?;
         Ok(())
@@ -336,7 +350,15 @@ pub mod lynx_project {
         require!(amount > 0, LynxError::InvalidAmount);
         require!(outcome_is_tradeable(creator_outcome, ctx.accounts.parent_market.is_ternary), LynxError::InvalidOutcome);
         require!(ctx.accounts.parent_market.currency == Currency::SOL, LynxError::InvalidCurrency);
-        require!(Clock::get()?.unix_timestamp < expires_ts, LynxError::DuelExpired);
+        require!(ctx.accounts.parent_market.status == MarketStatus::Open || ctx.accounts.parent_market.status == MarketStatus::Active, LynxError::MarketClosed);
+        let now = Clock::get()?.unix_timestamp;
+        require!(now < ctx.accounts.parent_market.cutoff_ts, LynxError::MarketClosed);
+        require!(now < expires_ts && expires_ts <= ctx.accounts.parent_market.cutoff_ts, LynxError::DuelExpired);
+        require!(
+            (duel_type == DuelType::OneVOne && !ctx.accounts.parent_market.is_ternary) ||
+            (duel_type == DuelType::OneVOneVProtocol && ctx.accounts.parent_market.is_ternary),
+            LynxError::InvalidDuelType
+        );
 
         invoke(
             &system_instruction::transfer(&ctx.accounts.creator.key(), &ctx.accounts.duel_vault.key(), amount),
@@ -374,7 +396,12 @@ pub mod lynx_project {
         let duel = &mut ctx.accounts.duel;
         require!(duel.duel_type == DuelType::OneVOne, LynxError::InvalidDuelType);
         require!(duel.status == DuelStatus::Open, LynxError::InvalidStatus);
-        require!(Clock::get()?.unix_timestamp < duel.expires_ts, LynxError::DuelExpired);
+        require!(ctx.accounts.parent_market.status == MarketStatus::Open || ctx.accounts.parent_market.status == MarketStatus::Active, LynxError::MarketClosed);
+        let now = Clock::get()?.unix_timestamp;
+        require!(now < ctx.accounts.parent_market.cutoff_ts, LynxError::MarketClosed);
+        require!(now < duel.expires_ts, LynxError::DuelExpired);
+        require!(outcome_is_tradeable(rival_outcome, ctx.accounts.parent_market.is_ternary), LynxError::InvalidOutcome);
+        require!(ctx.accounts.rival.key() != duel.creator, LynxError::Unauthorized);
         require!(rival_outcome != duel.creator_outcome, LynxError::SameDuelOutcome);
 
         invoke(
@@ -544,6 +571,12 @@ pub struct BuyPositionLynxWithBurn<'info> {
     pub lynx_mint: Account<'info, Mint>,
     #[account(mut)]
     pub user_lynx_account: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        constraint = market_lynx_vault.mint == config.lynx_mint @ LynxError::InvalidCurrency,
+        constraint = market_lynx_vault.owner == config.key() @ LynxError::Unauthorized
+    )]
+    pub market_lynx_vault: Account<'info, TokenAccount>,
     #[account(mut)]
     pub buyer: Signer<'info>,
     pub token_program: Program<'info, Token>,
@@ -694,6 +727,8 @@ pub struct CreateDuel<'info> {
 pub struct AcceptDuel<'info> {
     #[account(mut, seeds = [b"duel", duel.parent_market.as_ref(), duel.creator.as_ref(), duel.id.to_le_bytes().as_ref()], bump = duel.bump)]
     pub duel: Account<'info, Duel>,
+    #[account(seeds = [b"market", parent_market.id.to_le_bytes().as_ref()], bump = parent_market.bump, constraint = parent_market.key() == duel.parent_market @ LynxError::InvalidStatus)]
+    pub parent_market: Account<'info, Market>,
     #[account(mut, seeds = [b"duel_vault", duel.key().as_ref()], bump = duel_vault.bump)]
     pub duel_vault: Account<'info, DuelVault>,
     #[account(mut)]

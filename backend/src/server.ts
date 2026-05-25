@@ -5,7 +5,7 @@ import helmet from 'helmet';
 import http from 'http';
 import morgan from 'morgan';
 import { Server } from 'socket.io';
-import { z } from 'zod';
+import { z, ZodError } from 'zod';
 import { DEV_WALLET } from './economy.js';
 import { createPersistence } from './persistence.js';
 import { LynxState } from './state.js';
@@ -77,6 +77,26 @@ function walletFromQuery(value: unknown) {
   return typeof value === 'string' && value.trim() ? value.trim() : DEV_WALLET;
 }
 
+function requireAdminApiToken(req: express.Request, res: express.Response) {
+  const configuredToken = process.env.ADMIN_API_TOKEN;
+  if (!configuredToken) {
+    if (process.env.NODE_ENV === 'production') {
+      res.status(403).json({ error: 'ADMIN_API_TOKEN is required in production' });
+      return false;
+    }
+    return true;
+  }
+
+  const auth = req.headers.authorization;
+  const bearerToken = auth?.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : undefined;
+  const headerToken = typeof req.headers['x-admin-api-token'] === 'string' ? req.headers['x-admin-api-token'] : undefined;
+  if (bearerToken !== configuredToken && headerToken !== configuredToken) {
+    res.status(401).json({ error: 'Unauthorized admin request' });
+    return false;
+  }
+  return true;
+}
+
 function asyncRoute(handler: express.RequestHandler): express.RequestHandler {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 }
@@ -114,6 +134,8 @@ app.get('/api/markets/:id', (req, res) => {
 });
 
 app.post('/api/markets', asyncRoute(async (req, res) => {
+  if (!requireAdminApiToken(req, res)) return;
+
   const body = z.object({
     id: z.string().optional(),
     title: z.string().min(4),
@@ -127,6 +149,17 @@ app.post('/api/markets', asyncRoute(async (req, res) => {
   }).parse(req.body);
 
   const now = Date.now();
+  const cutoffAt = body.cutoffAt || now + 1000 * 60 * 60 * 24;
+  const resolveAt = body.resolveAt || now + 1000 * 60 * 60 * 30;
+  if (cutoffAt <= now) {
+    res.status(400).json({ error: 'Market cutoff must be in the future' });
+    return;
+  }
+  if (resolveAt <= cutoffAt) {
+    res.status(400).json({ error: 'Market resolve time must be after cutoff' });
+    return;
+  }
+
   const market = {
     id: body.id || `market-${Date.now()}`,
     title: body.title,
@@ -143,9 +176,9 @@ app.post('/api/markets', asyncRoute(async (req, res) => {
     oracleId: body.oracleId,
     oracleMode: 'MANUAL_DEV',
     createdAt: now,
-    cutoffAt: body.cutoffAt || now + 1000 * 60 * 60 * 24,
-    resolveAt: body.resolveAt || now + 1000 * 60 * 60 * 30,
-    oracleDeadline: (body.resolveAt || now + 1000 * 60 * 60 * 30) + 1000 * 60 * 60
+    cutoffAt,
+    resolveAt,
+    oracleDeadline: resolveAt + 1000 * 60 * 60
   };
   store.addMarket(market);
   await persist();
@@ -176,6 +209,8 @@ app.post('/api/markets/:id/trades', asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/admin/markets/:id/resolve', asyncRoute(async (req, res) => {
+  if (!requireAdminApiToken(req, res)) return;
+
   const body = z.object({
     result: positionSchema,
     source: z.enum(['oracle', 'manual']).default('manual'),
@@ -267,6 +302,28 @@ app.get('/api/portfolio', (req, res) => {
   res.json(store.getPortfolio(walletFromQuery(req.query.wallet)));
 });
 
+app.get('/api/positions', (req, res) => {
+  res.json(store.listPositions(walletFromQuery(req.query.wallet)));
+});
+
+app.post('/api/positions/:id/claim', asyncRoute(async (req, res) => {
+  const body = z.object({ wallet: z.string().optional() }).parse(req.body);
+  const wallet = body.wallet || DEV_WALLET;
+  const result = store.claimPosition(wallet, req.params.id);
+  await persist();
+  emit('portfolio:updated', { wallet, portfolio: result.portfolio });
+  res.json(result);
+}));
+
+app.delete('/api/orders/:id', asyncRoute(async (req, res) => {
+  const wallet = walletFromQuery(req.query.wallet);
+  const result = store.cancelOrder(wallet, req.params.id);
+  await persist();
+  emit('orderbook:updated', store.getOrderBook('LYNX/SOL'));
+  emit('portfolio:updated', { wallet, portfolio: result.portfolio });
+  res.json(result);
+}));
+
 app.post('/api/staking/stake', asyncRoute(async (req, res) => {
   const body = z.object({ wallet: z.string().optional(), amount: z.number().positive() }).parse(req.body);
   const portfolio = store.stake(body.wallet || DEV_WALLET, body.amount);
@@ -336,7 +393,8 @@ app.get('/api/notifications', (req, res) => {
 
 app.post('/api/notifications/read', asyncRoute(async (req, res) => {
   const wallet = typeof req.body.wallet === 'string' ? req.body.wallet : DEV_WALLET;
-  const notifications = store.markNotificationsRead(wallet);
+  const id = typeof req.body.id === 'string' ? req.body.id : undefined;
+  const notifications = store.markNotificationsRead(wallet, id);
   await persist();
   res.json(notifications);
 }));
@@ -374,6 +432,10 @@ app.get('/api/transactions', (req, res) => {
 });
 
 app.post('/api/dev/reset', asyncRoute(async (_req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    res.status(403).json({ error: 'Development reset is disabled in production' });
+    return;
+  }
   store.seed();
   await persist();
   emit('dev:reset', { ok: true });
@@ -382,7 +444,27 @@ app.post('/api/dev/reset', asyncRoute(async (_req, res) => {
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const message = error instanceof Error ? error.message : 'Internal Server Error';
-  const status = message.includes('not found') ? 404 : message.includes('Insufficient') || message.includes('closed') ? 400 : 500;
+  const normalizedMessage = message.toLowerCase();
+  const status = error instanceof ZodError
+    ? 400
+    : normalizedMessage.includes('not found')
+      ? 404
+      : normalizedMessage.includes('insufficient') ||
+          normalizedMessage.includes('closed') ||
+          normalizedMessage.includes('not open') ||
+          normalizedMessage.includes('cutoff') ||
+          normalizedMessage.includes('only available') ||
+          normalizedMessage.includes('must choose') ||
+          normalizedMessage.includes('already') ||
+          normalizedMessage.includes('does not belong') ||
+          normalizedMessage.includes('did not win') ||
+          normalizedMessage.includes('required') ||
+          normalizedMessage.includes('invalid currency') ||
+          normalizedMessage.includes('requires a') ||
+          normalizedMessage.includes('cannot') ||
+          normalizedMessage.includes('expired')
+        ? 400
+        : 500;
   res.status(status).json({ error: message });
 });
 

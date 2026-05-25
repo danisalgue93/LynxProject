@@ -6,8 +6,16 @@ export type AdminSession = {
   loginAt?: number;
 };
 
+function sessionPassword() {
+  const value = process.env.SESSION_SECRET;
+  if (process.env.NODE_ENV === 'production' && !value) {
+    throw new Error('Missing env var: SESSION_SECRET');
+  }
+  return value ?? 'development-secret-must-be-replaced-32-chars';
+}
+
 export const sessionOptions: SessionOptions = {
-  password: process.env.SESSION_SECRET ?? 'development-secret-must-be-replaced-32-chars',
+  password: sessionPassword(),
   cookieName: 'lynx_admin_session',
   cookieOptions: {
     httpOnly: true,

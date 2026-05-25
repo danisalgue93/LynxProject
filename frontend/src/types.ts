@@ -11,6 +11,13 @@ export enum MarketStatus {
   EXPIRED = 'EXPIRED',
 }
 
+export enum DuelStatus {
+  OPEN = 'OPEN',
+  ACTIVE = 'ACTIVE',
+  RESOLVED = 'RESOLVED',
+  CANCELLED = 'CANCELLED',
+}
+
 export enum Position {
   YES = 'YES',
   NO = 'NO',
@@ -46,7 +53,7 @@ export interface Duel {
   rival?: string;
   amount: number;
   currency: 'SOL' | 'LYNX';
-  status: MarketStatus;
+  status: DuelStatus;
   positionA: Position;
   positionB: Position;
   isTernary?: boolean;

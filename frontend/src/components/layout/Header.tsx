@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from "react";
-import { Search, Bell, Menu, X, Globe, User, LogOut } from "lucide-react";
+﻿import React, { useState, useEffect } from "react";
+import { Bell, Menu, X, Globe, User } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { setUserLanguage } from "@/src/i18n";
 import { AuthModal } from "@/src/components/auth/AuthModal";
 import { NotificationsPopover, Notification } from "@/src/components/layout/NotificationsPopover";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { apiFetch } from "@/src/lib/api";
+import { clearManagedAuthSession, getManagedWalletAddress, useManagedAuthSession } from "@/src/lib/auth";
 
 interface HeaderProps {
   onMenuToggle: () => void;
@@ -21,15 +22,14 @@ export function Header({ onMenuToggle, isSidebarOpen }: HeaderProps) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const { connected, disconnect, publicKey } = useWallet();
-  const wallet = publicKey?.toBase58() || "DEV_WALLET";
+  const managedSession = useManagedAuthSession();
+  const wallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || "DEV_WALLET";
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
   useEffect(() => {
-    if (connected) {
-      setIsLoggedIn(true);
-    }
-  }, [connected]);
+    setIsLoggedIn(connected || Boolean(managedSession));
+  }, [connected, managedSession]);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,6 +56,7 @@ export function Header({ onMenuToggle, isSidebarOpen }: HeaderProps) {
 
   const handleLogout = () => {
     disconnect();
+    clearManagedAuthSession();
     setIsLoggedIn(false);
   };
 
@@ -115,14 +116,14 @@ export function Header({ onMenuToggle, isSidebarOpen }: HeaderProps) {
                   className={`w-full flex justify-between items-center px-4 py-2 text-xs hover:bg-[#27272A] transition-colors ${i18n.language.startsWith("en") ? "text-[#00FFD1]" : "text-white"}`}
                 >
                   <span>English</span>
-                  <span className="text-base">🇺🇸</span>
+                  <span className="text-base">US</span>
                 </button>
                 <button
                   onClick={() => changeLanguage("es")}
                   className={`w-full flex justify-between items-center px-4 py-2 text-xs hover:bg-[#27272A] transition-colors ${i18n.language.startsWith("es") ? "text-[#00FFD1]" : "text-white"}`}
                 >
                   <span>Español</span>
-                  <span className="text-base">🇪🇸</span>
+                  <span className="text-base">ES</span>
                 </button>
               </div>
             )}
@@ -140,6 +141,7 @@ export function Header({ onMenuToggle, isSidebarOpen }: HeaderProps) {
             <NotificationsPopover
               isOpen={showNotifications}
               onClose={() => setShowNotifications(false)}
+              wallet={wallet}
               notifications={notifications}
               setNotifications={setNotifications}
             />

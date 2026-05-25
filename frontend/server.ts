@@ -1,6 +1,8 @@
 import express from 'express';
+import 'dotenv/config';
 import path from 'path';
 import cors from 'cors';
+import { createHmac } from 'crypto';
 import { createServer as createViteServer } from 'vite';
 
 async function startServer() {
@@ -10,6 +12,33 @@ async function startServer() {
 
   app.use(cors());
   app.use(express.json());
+
+  app.get('/integrations/moonpay/onramp-url', (req, res) => {
+    const apiKey = process.env.MOONPAY_API_KEY || process.env.VITE_MOONPAY_API_KEY;
+    const secretKey = process.env.MOONPAY_SECRET_KEY;
+
+    if (!apiKey) {
+      res.status(500).json({ error: 'MoonPay API key is not configured' });
+      return;
+    }
+
+    const walletAddress = typeof req.query.walletAddress === 'string' ? req.query.walletAddress.trim() : '';
+    const currencyCode = typeof req.query.currencyCode === 'string' ? req.query.currencyCode.trim().toLowerCase() : 'sol';
+    const baseUrl = process.env.MOONPAY_WIDGET_URL || 'https://buy.moonpay.com';
+    const url = new URL(baseUrl);
+    url.searchParams.set('apiKey', apiKey);
+    url.searchParams.set('currencyCode', currencyCode);
+    if (walletAddress) url.searchParams.set('walletAddress', walletAddress);
+
+    if (secretKey) {
+      const signature = createHmac('sha256', secretKey)
+        .update(`${url.pathname}${url.search}`)
+        .digest('base64');
+      url.searchParams.set('signature', signature);
+    }
+
+    res.json({ url: url.toString(), signed: Boolean(secretKey) });
+  });
 
   app.use('/api', async (req, res) => {
     try {
