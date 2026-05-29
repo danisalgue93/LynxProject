@@ -2,6 +2,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import type { LynxState } from './state.js';
 import type {
   Duel,
+  LedgerEntry,
   Market,
   Notification,
   Order,
@@ -21,6 +22,7 @@ type StateSnapshot = {
   proposals: [string, Proposal][];
   notifications: [string, Notification[]][];
   transactions?: [string, { signature: string; wallet?: string; intent?: any; timestamp: number }][];
+  ledger?: [string, LedgerEntry][];
   treasury: LynxState['treasury'];
 };
 
@@ -43,6 +45,7 @@ function snapshot(store: LynxState): StateSnapshot {
     proposals: [...store.proposals.entries()],
     notifications: [...store.notifications.entries()],
     transactions: [...(store.transactions ? store.transactions.entries() : [])],
+    ledger: [...(store.ledger ? store.ledger.entries() : [])],
     treasury: store.treasury
   })) as StateSnapshot;
 }
@@ -90,6 +93,9 @@ export function createPersistence(): Persistence {
       store.notifications = restoreMap(data.notifications);
       if (data.transactions) {
         store.transactions = restoreMap(data.transactions);
+      }
+      if (data.ledger) {
+        store.ledger = restoreMap(data.ledger);
       }
       store.treasury = data.treasury;
     },

@@ -2,15 +2,18 @@ import React, { useEffect, useState } from 'react';
 import { MarketCard } from './MarketCard';
 import { Market } from '@/src/types';
 import { useProgram } from '@/src/hooks/useProgram';
-import { Loader2, Search } from 'lucide-react';
+import { Loader2, Search, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { eventBus } from '@/src/lib/eventBus';
 
 interface MarketsGridProps {
   onMarketSelect: (market: Market) => void;
+  readOnly?: boolean;
+  canCreateMarket?: boolean;
+  onCreateMarket?: () => void;
 }
 
-export function MarketsGrid({ onMarketSelect }: MarketsGridProps) {
+export function MarketsGrid({ onMarketSelect, canCreateMarket = false, onCreateMarket }: MarketsGridProps) {
   const { t } = useTranslation();
   const { fetchMarkets, isLoading, error } = useProgram();
   const [markets, setMarkets] = useState<Market[]>([]);
@@ -39,6 +42,15 @@ export function MarketsGrid({ onMarketSelect }: MarketsGridProps) {
         </div>
         
         <div className="flex flex-col sm:flex-row items-center gap-4">
+          {canCreateMarket && (
+            <button
+              onClick={onCreateMarket}
+              className="w-full sm:w-auto px-4 py-2 bg-[#00FFD1] text-black rounded text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-[#00E5BC] transition-all"
+            >
+              <Plus className="w-4 h-4" />
+              Crear mercado
+            </button>
+          )}
           <div className="relative w-full sm:w-64 group flex-shrink-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#52525B] group-focus-within:text-[#00FFD1] transition-colors" />
             <input 
@@ -78,7 +90,7 @@ export function MarketsGrid({ onMarketSelect }: MarketsGridProps) {
       ) : markets.length === 0 ? (
          <div className="flex flex-col items-center justify-center w-full min-h-[300px] border border-dashed border-[#27272A] rounded-xl p-8 text-center bg-[#0D0D0E]/50">
            <p className="text-[#A1A1AA] text-sm font-bold uppercase tracking-widest mb-2">{t('marketsGrid.noActiveMarkets', 'No Active Markets')}</p>
-           <p className="text-[#52525B] text-[10px] uppercase tracking-wider font-mono">{t('marketsGrid.noMarketsDesc', 'Connect wallet to load contracts or deploy initial data.')}</p>
+           <p className="text-[#52525B] text-[10px] uppercase tracking-wider font-mono">{canCreateMarket ? 'Crea el primer mercado desde el panel admin.' : t('marketsGrid.noMarketsDesc', 'No markets have been created yet.')}</p>
          </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-8">

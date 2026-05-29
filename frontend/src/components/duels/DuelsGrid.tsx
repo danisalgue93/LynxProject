@@ -9,11 +9,12 @@ import { eventBus } from '@/src/lib/eventBus';
 
 interface DuelsGridProps {
   onCreateDuel?: () => void;
+  readOnly?: boolean;
 }
 
 type FilterType = 'ALL' | '1v1' | '1v1vP';
 
-export function DuelsGrid({ onCreateDuel }: DuelsGridProps) {
+export function DuelsGrid({ onCreateDuel, readOnly = false }: DuelsGridProps) {
   const { t } = useTranslation();
   const { fetchDuels, isLoading, error } = useProgram();
   const [duels, setDuels] = useState<Duel[]>([]);
@@ -73,7 +74,8 @@ export function DuelsGrid({ onCreateDuel }: DuelsGridProps) {
 
           <button 
             onClick={onCreateDuel}
-            className="px-6 py-3 bg-[#00FFD1] text-black font-black text-xs rounded hover:bg-[#00E5BC] transition-all flex items-center gap-2 shadow-[0_0_15px_rgba(0,255,209,0.2)] uppercase tracking-widest justify-center"
+            disabled={readOnly && !onCreateDuel}
+            className="px-6 py-3 bg-[#00FFD1] text-black font-black text-xs rounded hover:bg-[#00E5BC] transition-all flex items-center gap-2 shadow-[0_0_15px_rgba(0,255,209,0.2)] uppercase tracking-widest justify-center disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="w-4 h-4" />
             <span className="hidden md:inline">{t('duels.createNew', 'Create New Duel')}</span>

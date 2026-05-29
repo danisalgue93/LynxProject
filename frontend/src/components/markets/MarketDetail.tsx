@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import { Market, Position, Duel } from "@/src/types";
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, Tooltip as RechartsTooltip, CartesianGrid, Line, LineChart } from 'recharts';
 import {
@@ -20,26 +20,27 @@ import { useTranslation } from "react-i18next";
 interface MarketDetailProps {
   market: Market;
   onClose: () => void;
+  readOnly?: boolean;
+  onAuthRequired?: (action: string) => void;
 }
 
 function MiniMarketChart({ isLynx, market }: { isLynx: boolean; market: Market }) {
-  const mockPolymarketData = useMemo(() => {
-    return Array.from({ length: 30 }).map((_, i) => {
-      const yesProb = 40 + Math.sin(i / 3) * 20 + Math.random() * 10;
-      const noProb = 100 - yesProb;
-      return {
-        time: i,
-        YES: yesProb,
-        NO: noProb,
-        DRAW: market?.isTernary ? Math.random() * 10 : 0
-      };
-    });
-  }, [market?.isTernary]);
+  const total = (market.yesAmount || 0) + (market.noAmount || 0) + (market.drawAmount || 0);
+  if (total <= 0) {
+    return <div className="w-full h-full flex items-center justify-center text-[10px] text-[#71717A] uppercase font-bold tracking-widest">Sin trades aun</div>;
+  }
+  const yesProb = ((market.yesAmount || 0) / total) * 100;
+  const noProb = ((market.noAmount || 0) / total) * 100;
+  const drawProb = market.isTernary ? ((market.drawAmount || 0) / total) * 100 : 0;
+  const marketData = [
+    { time: 0, YES: yesProb, NO: noProb, DRAW: drawProb },
+    { time: 1, YES: yesProb, NO: noProb, DRAW: drawProb }
+  ];
 
   return (
     <div className="w-full h-full">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={mockPolymarketData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
+        <AreaChart data={marketData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#27272A" vertical={false} />
           <XAxis dataKey="time" hide />
           <YAxis domain={[0, 100]} stroke="#52525B" fontSize={10} tickFormatter={(val) => `${val}%`} />
@@ -58,7 +59,7 @@ function MiniMarketChart({ isLynx, market }: { isLynx: boolean; market: Market }
   );
 }
 
-export function MarketDetail({ market, onClose }: MarketDetailProps) {
+export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired }: MarketDetailProps) {
   const { t } = useTranslation();
   const { fetchDuels, executeTrade, fetchPositions, claimPosition } = useProgram();
   const [marketDuels, setMarketDuels] = useState<Duel[]>([]);
@@ -103,6 +104,10 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
   }, [fetchDuels, activeMode, market.id]);
 
   const handleQuickBet = async () => {
+    if (readOnly) {
+      onAuthRequired?.('comprar o vender en mercados');
+      return;
+    }
     setIsPending(true);
     try {
       await executeTrade(
@@ -120,6 +125,10 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
   };
 
   const handleClaim = async () => {
+    if (readOnly) {
+      onAuthRequired?.('reclamar payout');
+      return;
+    }
     if (!claimablePosId) return;
     setIsClaiming(true);
     try {
@@ -163,7 +172,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
   const estimatedReward = shareOfPool * netOppositePool;
   const totalPayout = parsedAmount + estimatedReward;
 
-  const lynxDrop = parsedAmount * 0.2; // 20% of user investment matched as LYNX drops
+  const lynxDrop = parsedAmount * 0.3;
   // ----------------------------------
 
   return (
@@ -248,7 +257,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                     },
                     {
                       label: isLynx ? t("marketDetail.deflation", "Deflation") : t("marketDetail.lynxYield", "$LYNX Yield"),
-                      value: isLynx ? "15% Burn" : "+20% Pool",
+                      value: isLynx ? "15% Burn" : "+30% Pool",
                       color: isLynx ? "text-red-400" : "text-[#9945FF]",
                     },
                     {
@@ -735,7 +744,7 @@ export function MarketDetail({ market, onClose }: MarketDetailProps) {
                              +{lynxDrop.toFixed(2)}
                            </span>
                            <span className="text-[6px] md:text-[7px] text-[#9945FF]/70 uppercase tracking-widest">
-                             20% Emission Share
+                             30% User Emission Share
                            </span>
                         </div>
                       </div>

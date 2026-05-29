@@ -5,8 +5,8 @@ export const GLOBAL_TRADE_FEE = 0.001;
 export const LYNX_EVENT_BURN = 0.15;
 
 export const LYNX_EMISSION_PER_SOL = 1;
-export const LYNX_PARTICIPANT_SHARE = 0.2;
-export const LYNX_TREASURY_SHARE = 0.2;
+export const LYNX_PARTICIPANT_SHARE = 0.3;
+export const LYNX_TREASURY_SHARE = 0.1;
 export const LYNX_INITIAL_SALE_SHARE = 0.6;
 
 export const DEV_WALLET = 'DEV_WALLET';

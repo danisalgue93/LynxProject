@@ -556,9 +556,9 @@ pub struct BuyPositionSol<'info> {
 #[instruction(outcome: Outcome)]
 pub struct BuyPositionLynxWithBurn<'info> {
     #[account(mut, seeds = [b"config"], bump = config.bump)]
-    pub config: Account<'info, ProtocolConfig>,
+    pub config: Box<Account<'info, ProtocolConfig>>,
     #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
-    pub market: Account<'info, Market>,
+    pub market: Box<Account<'info, Market>>,
     #[account(
         init_if_needed,
         payer = buyer,
@@ -566,17 +566,17 @@ pub struct BuyPositionLynxWithBurn<'info> {
         seeds = [b"position", market.key().as_ref(), buyer.key().as_ref(), &[outcome.as_seed()]],
         bump
     )]
-    pub position: Account<'info, UserPosition>,
+    pub position: Box<Account<'info, UserPosition>>,
     #[account(mut, address = config.lynx_mint)]
-    pub lynx_mint: Account<'info, Mint>,
+    pub lynx_mint: Box<Account<'info, Mint>>,
     #[account(mut)]
-    pub user_lynx_account: Account<'info, TokenAccount>,
+    pub user_lynx_account: Box<Account<'info, TokenAccount>>,
     #[account(
         mut,
         constraint = market_lynx_vault.mint == config.lynx_mint @ LynxError::InvalidCurrency,
         constraint = market_lynx_vault.owner == config.key() @ LynxError::Unauthorized
     )]
-    pub market_lynx_vault: Account<'info, TokenAccount>,
+    pub market_lynx_vault: Box<Account<'info, TokenAccount>>,
     #[account(mut)]
     pub buyer: Signer<'info>,
     pub token_program: Program<'info, Token>,

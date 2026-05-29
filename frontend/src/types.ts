@@ -40,6 +40,8 @@ export interface Market {
   isTernary?: boolean;
   currency: 'SOL' | 'LYNX';
   oracleId: string;
+  onChainMarket?: string;
+  onChainSignature?: string;
   createdAt: number;
   cutoffAt: number;
   resolvedAt?: number;
@@ -98,6 +100,8 @@ export interface Portfolio {
   payments?: Array<Record<string, unknown>>;
   holdings?: Array<Record<string, unknown>>;
   history?: Array<Record<string, unknown>>;
+  approvedAt?: number;
+  connectedWallets?: string[];
 }
 
 export interface UserWallet {

@@ -167,8 +167,8 @@ export function DuelCard({ duel }: DuelCardProps) {
                   </>
                 ) : (
                   <>
-                    <span className="whitespace-nowrap">+{(duel.amount * 2) * 0.2} LYNX</span>
-                    <span className="opacity-70 text-[6px] md:text-[7px] whitespace-nowrap">({t('duels.lynxEmission20', '+ 20% LYNX EMISSION')})</span>
+                    <span className="whitespace-nowrap">P2P</span>
+                    <span className="opacity-70 text-[6px] md:text-[7px] whitespace-nowrap">(NO AUTO EMISSION)</span>
                   </>
                 )}
              </div>
@@ -186,7 +186,7 @@ export function DuelCard({ duel }: DuelCardProps) {
                   </>
                 ) : (
                   <>
-                    <span className="whitespace-nowrap leading-none">+{(duel.amount * 2) * 0.2} LYNX</span>
+                    <span className="whitespace-nowrap leading-none">P2P</span>
                   </>
                 )}
              </div>

@@ -27,14 +27,14 @@ CiKuW8r71WnTLkGAKvFyYhtV2UhuJ4j8swDPDc8PEXvu
 6. `resolve_market_oracle`: resuelve con la signer de oraculo configurada.
 7. `resolve_market_admin`: fallback del admin tras `oracle_deadline`.
 8. `claim_market_sol`: paga a ganadores el 90% neto del pool SOL.
-9. `mint_lynx_distribution`: emite LYNX tras eventos SOL: 20% participantes, 20% treasury, 60% venta inicial.
+9. `mint_lynx_distribution`: emite LYNX tras eventos SOL: 30% participantes, 10% treasury, 60% venta inicial.
 10. `stake_lynx`, `unstake_lynx`, `claim_staking_rewards`: staking LYNX con rewards SOL acumuladas por fee de eventos.
 11. `create_duel`, `accept_duel`, `resolve_duel_sol`: duelos 1v1 SOL.
 12. `resolve_protocol_duel`: flujo 1v1vP; si gana el protocolo, el SOL va a treasury; si gana el usuario, recupera stake y recibe LYNX emitido.
 
 ## Backend vs on-chain
 
-El order book completo queda off-chain en `backend`, estilo Polymarket. El contrato mantiene las piezas que deben vivir on-chain: vaults, resolucion, emision/burn de LYNX, staking y duelos base.
+El order book completo y los 1v1 LYNX quedan off-chain en `backend`, estilo Polymarket, usando ledger interno y burn contable. El contrato mantiene las piezas que deben vivir on-chain: vaults, resolucion, emision/burn de LYNX, staking y duelos SOL/1v1vP base.
 
 ## Deploy Devnet
 

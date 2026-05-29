@@ -10,6 +10,8 @@ import { DEV_WALLET } from './economy.js';
 import { createPersistence } from './persistence.js';
 import { LynxState } from './state.js';
 import type { Currency, OrderSide, Position } from './types.js';
+import { generateToken, verifyToken, hashPassword, hashPasswordSync, verifyPassword, extractToken } from './auth.js';
+import { calculateSettlement, validateSettlement } from './settlement.js';
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -97,6 +99,95 @@ function requireAdminApiToken(req: express.Request, res: express.Response) {
   return true;
 }
 
+// ==================== AUTH UTILITIES ====================
+
+// In-memory user store (replace with Prisma DB later)
+interface AuthUser {
+  id: string;
+  email: string;
+  passwordHash: string;
+  displayName?: string;
+  role: 'admin' | 'user';
+}
+
+const users = new Map<string, AuthUser>();
+
+// Add default admin user for testing
+const adminUser: AuthUser = {
+  id: 'admin-1',
+  email: 'admin@lynx.local',
+  passwordHash: hashPasswordSync(process.env.DEV_ADMIN_PASSWORD || 'admin123'),
+  displayName: 'Admin',
+  role: 'admin'
+};
+users.set(adminUser.id, adminUser);
+
+// Extract JWT from request
+app.use((req: any, _res, next) => {
+  const token = extractToken(req.headers.authorization);
+  if (token) {
+    const auth = verifyToken(token);
+    if (auth) {
+      req.user = auth;
+    }
+  }
+  next();
+});
+
+function requireAuth(req: any, res: express.Response) {
+  if (!req.user) {
+    res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
+    return false;
+  }
+  return true;
+}
+
+function currentUser(req: any) {
+  return req.user ? users.get(req.user.userId) : undefined;
+}
+
+function requireAdmin(req: any, res: express.Response) {
+  const configuredToken = process.env.ADMIN_API_TOKEN;
+  const auth = req.headers.authorization;
+  const bearerToken = auth?.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : undefined;
+  const headerToken = typeof req.headers['x-admin-api-token'] === 'string' ? req.headers['x-admin-api-token'] : undefined;
+  if (configuredToken && (bearerToken === configuredToken || headerToken === configuredToken)) {
+    return true;
+  }
+  if (!requireAuth(req, res)) return false;
+  if (currentUser(req)?.role !== 'admin') {
+    res.status(403).json({ error: 'Admin role required' });
+    return false;
+  }
+  return true;
+}
+
+function requireWalletBody(req: express.Request, res: express.Response, wallet?: string) {
+  const normalized = typeof wallet === 'string' ? wallet.trim() : '';
+  if (!normalized || normalized === DEV_WALLET) {
+    res.status(400).json({ error: 'A real wallet or managed wallet id is required' });
+    return null;
+  }
+  return normalized;
+}
+
+function requireSignedIntent(req: express.Request, res: express.Response) {
+  const signature = typeof req.body?.signature === 'string' ? req.body.signature.trim() : '';
+  if (!signature) {
+    res.status(400).json({ error: 'A wallet signature or on-chain transaction signature is required' });
+    return false;
+  }
+  return true;
+}
+
+function requireApprovedWallet(res: express.Response, wallet: string) {
+  if (!store.isWalletApproved(wallet)) {
+    res.status(400).json({ error: 'Wallet must complete initial approve before trading' });
+    return false;
+  }
+  return true;
+}
+
 function asyncRoute(handler: express.RequestHandler): express.RequestHandler {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 }
@@ -104,6 +195,90 @@ function asyncRoute(handler: express.RequestHandler): express.RequestHandler {
 const positionSchema = z.enum(['YES', 'NO', 'A', 'B', 'DRAW']);
 const currencySchema = z.enum(['SOL', 'LYNX']);
 const sideSchema = z.enum(['BUY', 'SELL']);
+
+// ==================== AUTH ENDPOINTS ====================
+
+app.post('/auth/register', asyncRoute(async (req, res) => {
+  const body = z.object({
+    email: z.string().email(),
+    password: z.string().min(6),
+    displayName: z.string().optional()
+  }).parse(req.body);
+
+  // Check if user already exists
+  const exists = [...users.values()].some(u => u.email === body.email);
+  if (exists) {
+    return res.status(400).json({ error: 'User already exists' });
+  }
+
+  // Hash password
+  const passwordHash = await hashPassword(body.password);
+
+  // Create user
+  const userId = `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const user: AuthUser = {
+    id: userId,
+    email: body.email,
+    passwordHash,
+    displayName: body.displayName || body.email.split('@')[0],
+    role: 'user'
+  };
+
+  users.set(userId, user);
+
+  // Generate token
+  const token = generateToken({ userId, email: user.email, role: user.role });
+
+  res.status(201).json({
+    user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role },
+    token
+  });
+}));
+
+app.post('/auth/login', asyncRoute(async (req, res) => {
+  const body = z.object({
+    email: z.string().email(),
+    password: z.string()
+  }).parse(req.body);
+
+  // Find user by email
+  const user = [...users.values()].find(u => u.email === body.email);
+  if (!user) {
+    return res.status(401).json({ error: 'Invalid email or password' });
+  }
+
+  // Verify password
+  const isValid = await verifyPassword(body.password, user.passwordHash);
+  if (!isValid) {
+    return res.status(401).json({ error: 'Invalid email or password' });
+  }
+
+  // Generate token
+  const token = generateToken({ userId: user.id, email: user.email, role: user.role });
+
+  res.json({
+    user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role },
+    token
+  });
+}));
+
+app.get('/auth/me', (req: any, res) => {
+  if (!requireAuth(req, res)) return;
+
+  const user = users.get(req.user.userId);
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  res.json({
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    role: user.role
+  });
+});
+
+// ==================== API ENDPOINTS ====================
 
 app.get('/api/health', (_req, res) => {
   res.json({
@@ -134,7 +309,7 @@ app.get('/api/markets/:id', (req, res) => {
 });
 
 app.post('/api/markets', asyncRoute(async (req, res) => {
-  if (!requireAdminApiToken(req, res)) return;
+  if (!requireAdmin(req, res)) return;
 
   const body = z.object({
     id: z.string().optional(),
@@ -145,8 +320,12 @@ app.post('/api/markets', asyncRoute(async (req, res) => {
     isTernary: z.boolean().default(false),
     oracleId: z.string().default('manual:dev'),
     cutoffAt: z.number().optional(),
-    resolveAt: z.number().optional()
+    resolveAt: z.number().optional(),
+    signature: z.string().min(8),
+    onChainMarket: z.string().optional()
   }).parse(req.body);
+
+  if (!requireSignedIntent(req, res)) return;
 
   const now = Date.now();
   const cutoffAt = body.cutoffAt || now + 1000 * 60 * 60 * 24;
@@ -175,6 +354,9 @@ app.post('/api/markets', asyncRoute(async (req, res) => {
     currency: body.currency,
     oracleId: body.oracleId,
     oracleMode: 'MANUAL_DEV',
+    onChainMarket: body.onChainMarket || body.signature,
+    onChainSignature: body.signature,
+    createdBy: currentUser(req)?.id || 'admin-api-token',
     createdAt: now,
     cutoffAt,
     resolveAt,
@@ -187,16 +369,19 @@ app.post('/api/markets', asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/markets/:id/trades', asyncRoute(async (req, res) => {
+  if (!requireAuth(req, res)) return;
   const body = z.object({
-    wallet: z.string().optional(),
+    wallet: z.string(),
     amount: z.number().positive(),
     position: positionSchema,
     tradeType: z.enum(['limit', 'swap', 'market']).default('swap'),
     limitPrice: z.number().positive().optional()
   }).parse(req.body);
+  const wallet = requireWalletBody(req, res, body.wallet);
+  if (!wallet || !requireApprovedWallet(res, wallet)) return;
 
   const result = store.executePredictionTrade({
-    wallet: body.wallet || DEV_WALLET,
+    wallet,
     marketId: req.params.id,
     amount: body.amount,
     position: body.position,
@@ -209,7 +394,7 @@ app.post('/api/markets/:id/trades', asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/admin/markets/:id/resolve', asyncRoute(async (req, res) => {
-  if (!requireAdminApiToken(req, res)) return;
+  if (!requireAdmin(req, res)) return;
 
   const body = z.object({
     result: positionSchema,
@@ -228,22 +413,37 @@ app.post('/api/admin/markets/:id/resolve', asyncRoute(async (req, res) => {
   res.json({ ok: true, market });
 }));
 
+app.post('/api/admin/markets/:id/cutoff', asyncRoute(async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const body = z.object({
+    force: z.boolean().default(false),
+    signature: z.string().optional()
+  }).parse(req.body);
+  const market = store.cutOffMarket(req.params.id, body.force);
+  await persist();
+  emit('market:updated', market);
+  res.json({ ok: true, market });
+}));
+
 app.get('/api/duels', (req, res) => {
   const parentMarketId = typeof req.query.marketId === 'string' ? req.query.marketId : undefined;
   res.json(store.listDuels(parentMarketId));
 });
 
 app.post('/api/duels', asyncRoute(async (req, res) => {
+  if (!requireAuth(req, res)) return;
   const body = z.object({
-    wallet: z.string().optional(),
+    wallet: z.string(),
     marketId: z.string(),
     side: positionSchema,
     amount: z.number().positive(),
     type: z.enum(['1v1', '1v1vP']).optional()
   }).parse(req.body);
+  const wallet = requireWalletBody(req, res, body.wallet);
+  if (!wallet || !requireApprovedWallet(res, wallet)) return;
 
   const duel = store.createDuel({
-    wallet: body.wallet || DEV_WALLET,
+    wallet,
     marketId: body.marketId,
     side: body.side,
     amount: body.amount,
@@ -255,11 +455,14 @@ app.post('/api/duels', asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/duels/:id/accept', asyncRoute(async (req, res) => {
+  if (!requireAuth(req, res)) return;
   const body = z.object({
-    wallet: z.string().optional(),
+    wallet: z.string(),
     side: positionSchema.optional()
   }).parse(req.body);
-  const duel = store.acceptDuel({ wallet: body.wallet || DEV_WALLET, duelId: req.params.id, side: body.side });
+  const wallet = requireWalletBody(req, res, body.wallet);
+  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  const duel = store.acceptDuel({ wallet, duelId: req.params.id, side: body.side });
   await persist();
   emit('duel:accepted', duel);
   res.json(duel);
@@ -272,8 +475,9 @@ app.get('/api/orderbook', (req, res) => {
 });
 
 app.post('/api/orders', asyncRoute(async (req, res) => {
+  if (!requireAuth(req, res)) return;
   const body = z.object({
-    wallet: z.string().optional(),
+    wallet: z.string(),
     marketId: z.string().optional(),
     pair: z.string().default('LYNX/SOL'),
     side: sideSchema,
@@ -282,9 +486,11 @@ app.post('/api/orders', asyncRoute(async (req, res) => {
     price: z.number().positive(),
     currency: currencySchema.default('LYNX')
   }).parse(req.body);
+  const wallet = requireWalletBody(req, res, body.wallet);
+  if (!wallet || !requireApprovedWallet(res, wallet)) return;
 
   const result = store.placeOrder({
-    wallet: body.wallet || DEV_WALLET,
+    wallet,
     marketId: body.marketId,
     pair: body.pair,
     side: body.side as OrderSide,
@@ -302,13 +508,81 @@ app.get('/api/portfolio', (req, res) => {
   res.json(store.getPortfolio(walletFromQuery(req.query.wallet)));
 });
 
+app.get('/api/ledger', (req, res) => {
+  res.json(store.listLedger(walletFromQuery(req.query.wallet)));
+});
+
+app.post('/api/ledger/approve', asyncRoute(async (req, res) => {
+  if (!requireAuth(req, res)) return;
+  const body = z.object({
+    wallet: z.string(),
+    externalWallet: z.string().optional(),
+    signature: z.string().min(8),
+    signatureMessage: z.string().optional()
+  }).parse(req.body);
+  if (!requireSignedIntent(req, res)) return;
+  const wallet = requireWalletBody(req, res, body.wallet);
+  if (!wallet) return;
+  const result = store.approveWallet(wallet, body.externalWallet);
+  await persist();
+  store.addTransaction({ signature: body.signature, wallet, intent: { type: 'APPROVE', message: body.signatureMessage } });
+  emit('ledger:approved', { wallet, result });
+  res.json(result);
+}));
+
+app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
+  if (!requireAuth(req, res)) return;
+  const body = z.object({
+    wallet: z.string(),
+    currency: currencySchema,
+    amount: z.number().positive(),
+    provider: z.enum(['CARD', 'EXTERNAL_WALLET', 'INTERNAL']).default('INTERNAL'),
+    reference: z.string().optional()
+  }).parse(req.body);
+  const wallet = requireWalletBody(req, res, body.wallet);
+  if (!wallet) return;
+  const result = store.deposit({
+    wallet,
+    currency: body.currency,
+    amount: body.amount,
+    provider: body.provider,
+    reference: body.reference
+  });
+  await persist();
+  emit('ledger:deposit', { wallet, result });
+  res.status(201).json(result);
+}));
+
+app.post('/api/ledger/withdraw', asyncRoute(async (req, res) => {
+  if (!requireAuth(req, res)) return;
+  const body = z.object({
+    wallet: z.string(),
+    currency: currencySchema,
+    amount: z.number().positive(),
+    reference: z.string().optional()
+  }).parse(req.body);
+  const wallet = requireWalletBody(req, res, body.wallet);
+  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  const result = store.withdraw({
+    wallet,
+    currency: body.currency,
+    amount: body.amount,
+    reference: body.reference
+  });
+  await persist();
+  emit('ledger:withdrawal', { wallet, result });
+  res.json(result);
+}));
+
 app.get('/api/positions', (req, res) => {
   res.json(store.listPositions(walletFromQuery(req.query.wallet)));
 });
 
 app.post('/api/positions/:id/claim', asyncRoute(async (req, res) => {
-  const body = z.object({ wallet: z.string().optional() }).parse(req.body);
-  const wallet = body.wallet || DEV_WALLET;
+  if (!requireAuth(req, res)) return;
+  const body = z.object({ wallet: z.string() }).parse(req.body);
+  const wallet = requireWalletBody(req, res, body.wallet);
+  if (!wallet || !requireApprovedWallet(res, wallet)) return;
   const result = store.claimPosition(wallet, req.params.id);
   await persist();
   emit('portfolio:updated', { wallet, portfolio: result.portfolio });
@@ -316,7 +590,9 @@ app.post('/api/positions/:id/claim', asyncRoute(async (req, res) => {
 }));
 
 app.delete('/api/orders/:id', asyncRoute(async (req, res) => {
+  if (!requireAuth(req, res)) return;
   const wallet = walletFromQuery(req.query.wallet);
+  if (!requireApprovedWallet(res, wallet)) return;
   const result = store.cancelOrder(wallet, req.params.id);
   await persist();
   emit('orderbook:updated', store.getOrderBook('LYNX/SOL'));
@@ -325,26 +601,35 @@ app.delete('/api/orders/:id', asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/staking/stake', asyncRoute(async (req, res) => {
-  const body = z.object({ wallet: z.string().optional(), amount: z.number().positive() }).parse(req.body);
-  const portfolio = store.stake(body.wallet || DEV_WALLET, body.amount);
+  if (!requireAuth(req, res)) return;
+  const body = z.object({ wallet: z.string(), amount: z.number().positive() }).parse(req.body);
+  const wallet = requireWalletBody(req, res, body.wallet);
+  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  const portfolio = store.stake(wallet, body.amount);
   await persist();
-  emit('portfolio:updated', { wallet: body.wallet || DEV_WALLET, portfolio });
+  emit('portfolio:updated', { wallet, portfolio });
   res.json(portfolio);
 }));
 
 app.post('/api/staking/unstake', asyncRoute(async (req, res) => {
-  const body = z.object({ wallet: z.string().optional(), amount: z.number().positive() }).parse(req.body);
-  const portfolio = store.unstake(body.wallet || DEV_WALLET, body.amount);
+  if (!requireAuth(req, res)) return;
+  const body = z.object({ wallet: z.string(), amount: z.number().positive() }).parse(req.body);
+  const wallet = requireWalletBody(req, res, body.wallet);
+  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  const portfolio = store.unstake(wallet, body.amount);
   await persist();
-  emit('portfolio:updated', { wallet: body.wallet || DEV_WALLET, portfolio });
+  emit('portfolio:updated', { wallet, portfolio });
   res.json(portfolio);
 }));
 
 app.post('/api/staking/claim', asyncRoute(async (req, res) => {
-  const body = z.object({ wallet: z.string().optional() }).parse(req.body);
-  const result = store.claimRewards(body.wallet || DEV_WALLET);
+  if (!requireAuth(req, res)) return;
+  const body = z.object({ wallet: z.string() }).parse(req.body);
+  const wallet = requireWalletBody(req, res, body.wallet);
+  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  const result = store.claimRewards(wallet);
   await persist();
-  emit('portfolio:updated', { wallet: body.wallet || DEV_WALLET, portfolio: result.portfolio });
+  emit('portfolio:updated', { wallet, portfolio: result.portfolio });
   res.json(result);
 }));
 
@@ -353,6 +638,7 @@ app.get('/api/proposals', (_req, res) => {
 });
 
 app.post('/api/proposals', asyncRoute(async (req, res) => {
+  if (!requireAuth(req, res)) return;
   const body = z.object({
     title: z.string().min(4),
     description: z.string().optional(),
@@ -370,15 +656,20 @@ app.get('/api/daostats', (_req, res) => {
 });
 
 app.post('/api/proposals/:id/vote', asyncRoute(async (req, res) => {
+  if (!requireAuth(req, res)) return;
   const body = z.object({
-    wallet: z.string().optional(),
+    wallet: z.string(),
     voteType: z.enum(['yes', 'no'])
   }).parse(req.body);
-  const proposal = store.castVote({ wallet: body.wallet || DEV_WALLET, proposalId: req.params.id, voteType: body.voteType });
+  const wallet = requireWalletBody(req, res, body.wallet);
+  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  const proposal = store.castVote({ wallet, proposalId: req.params.id, voteType: body.voteType });
   await persist();
   emit('dao:proposal-updated', proposal);
   res.json(proposal);
 }));
+
+// ==================== ADMIN ENDPOINTS ====================
 
 app.get('/api/chart/klines', (req, res) => {
   const symbol = typeof req.query.symbol === 'string' ? req.query.symbol : 'LYNX';
@@ -392,6 +683,7 @@ app.get('/api/notifications', (req, res) => {
 });
 
 app.post('/api/notifications/read', asyncRoute(async (req, res) => {
+  if (!requireAuth(req, res)) return;
   const wallet = typeof req.body.wallet === 'string' ? req.body.wallet : DEV_WALLET;
   const id = typeof req.body.id === 'string' ? req.body.id : undefined;
   const notifications = store.markNotificationsRead(wallet, id);

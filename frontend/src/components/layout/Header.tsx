@@ -1,6 +1,8 @@
 ﻿import React, { useState, useEffect } from "react";
-import { Bell, Menu, X, Globe, User } from "lucide-react";
+import { Bell, Menu, X, Globe, User, LogOut } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/src/context/AuthContext';
 import { setUserLanguage } from "@/src/i18n";
 import { AuthModal } from "@/src/components/auth/AuthModal";
 import { NotificationsPopover, Notification } from "@/src/components/layout/NotificationsPopover";
@@ -11,10 +13,14 @@ import { clearManagedAuthSession, getManagedWalletAddress, useManagedAuthSession
 interface HeaderProps {
   onMenuToggle: () => void;
   isSidebarOpen: boolean;
+  onLogout?: () => void;
+  showAuthButtons?: boolean;
 }
 
-export function Header({ onMenuToggle, isSidebarOpen }: HeaderProps) {
+export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons = false }: HeaderProps) {
   const { i18n, t } = useTranslation();
+  const navigate = useNavigate();
+  const { logout, user: jwtUser } = useAuth();
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
@@ -23,18 +29,22 @@ export function Header({ onMenuToggle, isSidebarOpen }: HeaderProps) {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const { connected, disconnect, publicKey } = useWallet();
   const managedSession = useManagedAuthSession();
-  const wallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || "DEV_WALLET";
+  const wallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || "";
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
   useEffect(() => {
-    setIsLoggedIn(connected || Boolean(managedSession));
-  }, [connected, managedSession]);
+    setIsLoggedIn(connected || Boolean(managedSession) || Boolean(jwtUser));
+  }, [connected, managedSession, jwtUser]);
 
   useEffect(() => {
     let cancelled = false;
     const loadNotifications = async () => {
       try {
+        if (!wallet) {
+          setNotifications([]);
+          return;
+        }
         const data = await apiFetch<any[]>(`/api/notifications?wallet=${encodeURIComponent(wallet)}`);
         if (!cancelled) {
           setNotifications(data.map((item) => ({
@@ -57,19 +67,16 @@ export function Header({ onMenuToggle, isSidebarOpen }: HeaderProps) {
   const handleLogout = () => {
     disconnect();
     clearManagedAuthSession();
+    logout();
     setIsLoggedIn(false);
+    if (onLogout) {
+      onLogout();
+    }
+    navigate('/');
   };
 
-  const changeLanguage = (lng: string) => {
-    setUserLanguage(lng);
-    setShowLangMenu(false);
-  };
-
-  const isEnglish = i18n.language.startsWith("en");
-
-  const openAuthModal = (mode: "login" | "signup") => {
-    setAuthMode(mode);
-    setIsAuthModalOpen(true);
+  const handleLoginClick = () => {
+    navigate('/login');
   };
 
   return (
@@ -93,7 +100,7 @@ export function Header({ onMenuToggle, isSidebarOpen }: HeaderProps) {
           <div className="hidden md:flex items-center gap-2 bg-[#18181B] px-3 py-1.5 rounded border border-[#27272A]">
             <div className="w-2 h-2 rounded-full bg-[#00FFD1] animate-pulse"></div>
             <span className="text-[10px] font-mono text-[#A1A1AA]">
-              {t("header.solanaMainnet", "SOLANA MAINNET: 12.4ms")}
+              {t("header.solanaMainnet", "SOLANA DEVNET")}
             </span>
           </div>
 
@@ -105,21 +112,21 @@ export function Header({ onMenuToggle, isSidebarOpen }: HeaderProps) {
             >
               <Globe className="w-4 h-4" />
               <span className="hidden md:inline">
-                {isEnglish ? "EN" : "ES"}
+                {i18n.language.startsWith("en") ? "EN" : "ES"}
               </span>
             </button>
 
             {showLangMenu && (
               <div className="absolute right-0 mt-2 w-36 bg-[#18181B] border border-[#27272A] rounded shadow-xl py-1 z-50">
                 <button
-                  onClick={() => changeLanguage("en")}
+                  onClick={() => { setUserLanguage("en"); setShowLangMenu(false); }}
                   className={`w-full flex justify-between items-center px-4 py-2 text-xs hover:bg-[#27272A] transition-colors ${i18n.language.startsWith("en") ? "text-[#00FFD1]" : "text-white"}`}
                 >
                   <span>English</span>
                   <span className="text-base">US</span>
                 </button>
                 <button
-                  onClick={() => changeLanguage("es")}
+                  onClick={() => { setUserLanguage("es"); setShowLangMenu(false); }}
                   className={`w-full flex justify-between items-center px-4 py-2 text-xs hover:bg-[#27272A] transition-colors ${i18n.language.startsWith("es") ? "text-[#00FFD1]" : "text-white"}`}
                 >
                   <span>Español</span>
@@ -138,43 +145,35 @@ export function Header({ onMenuToggle, isSidebarOpen }: HeaderProps) {
               <Bell className="w-4 h-4" />
               {unreadCount > 0 && <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-[#FF3D00] rounded-full"></span>}
             </button>
-            <NotificationsPopover
-              isOpen={showNotifications}
-              onClose={() => setShowNotifications(false)}
-              wallet={wallet}
-              notifications={notifications}
-              setNotifications={setNotifications}
-            />
+            {isLoggedIn && (
+              <NotificationsPopover
+                isOpen={showNotifications}
+                onClose={() => setShowNotifications(false)}
+                wallet={wallet}
+                notifications={notifications}
+                setNotifications={setNotifications}
+              />
+            )}
           </div>
 
           <div className="flex items-center gap-2 ml-1">
-            {isLoggedIn ? (
+            {isLoggedIn && !showAuthButtons ? (
               <div 
                 className="w-8 h-8 rounded-full bg-[#18181B] border border-[#27272A] flex items-center justify-center cursor-pointer hover:bg-[#27272A] transition-colors group relative"
                 onClick={handleLogout}
-                title="Disconnect Wallet"
+                title="Logout"
               >
-                <User className="w-4 h-4 text-[#A1A1AA] group-hover:text-white" />
+                <LogOut className="w-4 h-4 text-[#A1A1AA] group-hover:text-white" />
                 <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[#00FFD1] border-2 border-[#0D0D0E] rounded-full"></span>
               </div>
-            ) : (
-              <>
-                <button
-                  onClick={() => openAuthModal("login")}
-                  className="bg-[#00FFD1] text-black text-[9px] font-bold w-[60px] h-6 flex items-center justify-center rounded uppercase cursor-pointer hover:bg-[#00E5BC] transition-transform active:scale-95 whitespace-nowrap shadow-[0_0_10px_rgba(0,255,209,0.3)]"
-                  id="log-in-btn"
-                >
-                  {t("common.logIn", "Log In")}
-                </button>
-                <button
-                  onClick={() => openAuthModal("signup")}
-                  className="bg-[#9945FF] text-white text-[9px] font-bold w-[60px] h-6 flex items-center justify-center rounded uppercase cursor-pointer hover:bg-[#8031E5] transition-transform active:scale-95 whitespace-nowrap shadow-[0_0_10px_rgba(153,69,255,0.3)]"
-                  id="sign-up-btn"
-                >
-                  {t("common.signUp", "Sign Up")}
-                </button>
-              </>
-            )}
+            ) : showAuthButtons ? (
+              <button
+                onClick={handleLoginClick}
+                className="bg-[#00FFD1] text-black text-xs font-bold px-4 py-2 rounded uppercase cursor-pointer hover:bg-[#00E5BC] transition-all shadow-[0_0_10px_rgba(0,255,209,0.3)]"
+              >
+                Registrarse / Login
+              </button>
+            ) : null}
           </div>
         </div>
       </header>
@@ -183,7 +182,7 @@ export function Header({ onMenuToggle, isSidebarOpen }: HeaderProps) {
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         defaultMode={authMode}
-        onLoginSuccess={() => setIsLoggedIn(true)}
+        onLoginSuccess={() => { setIsLoggedIn(true); navigate('/dashboard'); }}
       />
     </>
   );

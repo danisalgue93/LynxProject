@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next';
 import CreateProposalModal from './CreateProposalModal';
 import StakeModal from './StakeModal';
 
-export function GovernanceView() {
+export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
   const { t } = useTranslation();
   const { fetchProposals, fetchDaoStats, castVote, createProposal, stakeLynx, isLoading, error } = useProgram();
   const [proposals, setProposals] = useState<Proposal[]>([]);
@@ -31,6 +31,7 @@ export function GovernanceView() {
   }, [fetchProposals, fetchDaoStats]);
 
   const handleVoteAction = async (proposalId: string, voteType: 'yes' | 'no') => {
+    if (readOnly) return;
     setIsPendingAct(true);
     try {
       await castVote(proposalId, voteType);
@@ -45,6 +46,7 @@ export function GovernanceView() {
   };
 
   const handleStakeAction = async (amount?: number) => {
+    if (readOnly) return;
     if (typeof amount === 'undefined') {
       setShowStakeModal(true);
       return;
@@ -63,6 +65,7 @@ export function GovernanceView() {
   };
 
   const handleCreateProposal = async (input?: { title: string; description?: string; category?: string }) => {
+    if (readOnly) return;
     if (!input) {
       setShowCreateModal(true);
       return;
@@ -119,7 +122,7 @@ export function GovernanceView() {
           </p>
         </div>
 
-        <button onClick={() => handleCreateProposal()} className="flex items-center gap-2 px-6 py-3 bg-[#00FFD1] text-black font-black text-sm rounded uppercase tracking-tight hover:scale-[1.02] transition-all shadow-[0_0_20px_rgba(0,255,209,0.2)]">
+        <button onClick={() => handleCreateProposal()} disabled={readOnly} className="flex items-center gap-2 px-6 py-3 bg-[#00FFD1] text-black font-black text-sm rounded uppercase tracking-tight hover:scale-[1.02] transition-all shadow-[0_0_20px_rgba(0,255,209,0.2)] disabled:opacity-50 disabled:cursor-not-allowed">
           <PlusCircle className="w-4 h-4" />
           {t('governance.createProposal', 'Create Proposal')}
         </button>
@@ -264,14 +267,14 @@ export function GovernanceView() {
                          <>
                            <button
                              onClick={() => handleVoteAction(proposal.id, 'yes')}
-                             disabled={isPendingAct}
+                             disabled={isPendingAct || readOnly}
                              className={cn("w-full py-2 rounded text-[10px] font-black uppercase tracking-widest transition-all bg-[#00FFD1] text-black")}
                            >
                              {t('governance.voteYes', 'Vote YES')}
                            </button>
                            <button
                              onClick={() => handleVoteAction(proposal.id, 'no')}
-                             disabled={isPendingAct}
+                             disabled={isPendingAct || readOnly}
                              className={cn("w-full py-2 rounded text-[10px] font-black uppercase tracking-widest transition-all bg-[#18181B] text-white border border-[#27272A] hover:bg-[#52525B]")}
                            >
                              {t('governance.voteNo', 'Vote NO')}
@@ -302,7 +305,7 @@ export function GovernanceView() {
              </div>
              <button 
                 onClick={() => handleStakeAction()}
-                disabled={isPendingAct}
+                disabled={isPendingAct || readOnly}
                 className={cn("px-8 py-4 bg-[#18181B] text-white border border-[#27272A] hover:bg-[#27272A] transition-all rounded font-black text-sm uppercase tracking-widest",
                   isPendingAct && "opacity-50 cursor-not-allowed"
                 )}>

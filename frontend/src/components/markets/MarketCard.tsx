@@ -17,6 +17,13 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
   const { t } = useTranslation();
   const isCutoff = market.status === MarketStatus.CUT_OFF;
   const isLynx = market.currency === 'LYNX';
+  const poolAmount = market.poolAmount || 0;
+  const yesPct = poolAmount > 0 ? (market.yesAmount / poolAmount) * 100 : 0;
+  const noPct = poolAmount > 0 ? (market.noAmount / poolAmount) * 100 : 0;
+  const drawPct = poolAmount > 0 ? ((market.drawAmount || 0) / poolAmount) * 100 : 0;
+  const rewardLabel = poolAmount > 0
+    ? `Up to +${Math.max((market.noAmount * 0.9 / (market.yesAmount || 1)) * 100, (market.yesAmount * 0.9 / (market.noAmount || 1)) * 100).toFixed(0)}% ROI`
+    : 'No pool yet';
   
   return (
     <motion.div 
@@ -63,13 +70,8 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
         </h3>
         
         <div className="flex items-center gap-2 md:gap-3 mb-3 md:mb-6">
-          <div className="flex -space-x-1.5">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="w-3.5 h-3.5 md:w-5 md:h-5 rounded-sm border border-[#0A0A0B] bg-[#1F1F23]" />
-            ))}
-          </div>
           <div className="text-[7px] md:text-[10px] text-[#71717A] uppercase font-bold tracking-widest">
-            <span className="text-white">124</span> {t('marketCard.traders', 'TRADERS')}
+            <span className="text-white">{market.status}</span> · {market.currency}
           </div>
         </div>
 
@@ -85,15 +87,15 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
               <div className="text-[7px] md:text-[9px] uppercase font-bold text-[#52525B] tracking-widest mb-1">{t('marketCard.estReward', 'Est. Win Reward')}</div>
               <div className="flex flex-col items-end gap-1.5">
                 <div className="text-sm md:text-lg font-mono font-bold text-[#00FFD1] leading-none tracking-tighter">
-                  Up to +{Math.max((market.noAmount * 0.9 / (market.yesAmount || 1)) * 100, (market.yesAmount * 0.9 / (market.noAmount || 1)) * 100).toFixed(0)}% ROI
+                  {rewardLabel}
                 </div>
                 {!isLynx ? (
                   <div className="text-[6px] md:text-[8px] bg-[#9945FF]/10 border border-[#9945FF]/30 text-[#9945FF] px-1.5 py-0.5 rounded uppercase tracking-widest">
-                    {t('marketCard.lynxEmission', '+ 20% LYNX EMISSION')}
+                    {t('marketCard.lynxEmission', '+ 30% USER EMISSION')}
                   </div>
                 ) : (
                   <div className="text-[6px] md:text-[8px] bg-red-400/10 border border-red-400/30 text-red-400 px-1.5 py-0.5 rounded uppercase tracking-widest">
-                    {t('marketCard.lynxBurn', '10% LYNX BURN')}
+                    {t('marketCard.lynxBurn', '15% LYNX BURN')}
                   </div>
                 )}
               </div>
@@ -105,21 +107,21 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
               <div className="h-1 lg:h-1.5 w-full bg-[#1F1F23] rounded-full overflow-hidden flex">
                 <div 
                   className={cn("h-full", isLynx ? "bg-[#9945FF]" : "bg-[#00FFD1]")}
-                  style={{ width: `${(market.yesAmount / market.poolAmount) * 100}%` }}
+                  style={{ width: `${yesPct}%` }}
                 />
                 <div 
                   className="h-full bg-red-400/80"
-                  style={{ width: `${(market.noAmount / market.poolAmount) * 100}%` }}
+                  style={{ width: `${noPct}%` }}
                 />
                 <div 
                   className="h-full bg-blue-400/80"
-                  style={{ width: `${((market.drawAmount || 0) / market.poolAmount) * 100}%` }}
+                  style={{ width: `${drawPct}%` }}
                 />
               </div>
               <div className="flex justify-between text-[8px] md:text-[10px] font-mono font-bold uppercase mt-1">
-                <span className={cn(isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>Opt A {(market.yesAmount / market.poolAmount * 100).toFixed(0)}%</span>
-                <span className="text-red-400/80">Opt B {(market.noAmount / market.poolAmount * 100).toFixed(0)}%</span>
-                <span className="text-blue-400/80">Draw {((market.drawAmount || 0) / market.poolAmount * 100).toFixed(0)}%</span>
+                <span className={cn(isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>Opt A {yesPct.toFixed(0)}%</span>
+                <span className="text-red-400/80">Opt B {noPct.toFixed(0)}%</span>
+                <span className="text-blue-400/80">Draw {drawPct.toFixed(0)}%</span>
               </div>
             </>
           ) : (
@@ -127,13 +129,13 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
               <div className="h-1 lg:h-1.5 w-full bg-[#1F1F23] rounded-full overflow-hidden flex">
                 <div 
                   className={cn("h-full", isLynx ? "bg-[#9945FF]" : "bg-[#00FFD1]")}
-                  style={{ width: `${(market.yesAmount / market.poolAmount) * 100}%` }}
+                  style={{ width: `${yesPct}%` }}
                 />
               </div>
               
               <div className="flex justify-between text-[8px] md:text-[10px] font-mono font-bold uppercase mt-1">
-                <span className={cn(isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>{t('marketCard.yes', 'YES')} {(market.yesAmount / market.poolAmount * 100).toFixed(0)}%</span>
-                <span className="text-red-400/80">{t('marketCard.no', 'NO')} {(market.noAmount / market.poolAmount * 100).toFixed(0)}%</span>
+                <span className={cn(isLynx ? "text-[#9945FF]" : "text-[#00FFD1]")}>{t('marketCard.yes', 'YES')} {yesPct.toFixed(0)}%</span>
+                <span className="text-red-400/80">{t('marketCard.no', 'NO')} {noPct.toFixed(0)}%</span>
               </div>
             </>
           )}

@@ -48,11 +48,11 @@ export function DocsView() {
       id: "03",
       title: t('docs.step3Title', "LYNX Emission"),
       icon: <Coins className="w-5 h-5" />,
-      content: t('docs.step3Content', "1 LYNX is emitted for every 1 SOL wagered in regular and 1v1 events. 20% of this emission is distributed among users holding the winning side tokens at the end of the event."),
+      content: t('docs.step3Content', "1 LYNX is emitted for every 1 SOL accumulated in resolved SOL events. 30% goes to users, 10% to treasury, and 60% to liquidity/sales."),
       color: "#14F195",
       details: [
-        { label: "Winners", value: "20%" },
-        { label: "Treasury", value: "20%" },
+        { label: "Users", value: "30%" },
+        { label: "Treasury", value: "10%" },
         { label: "Market Sale", value: "60%", highlight: true }
       ]
     },
@@ -292,4 +292,3 @@ export function DocsView() {
     </div>
   );
 }
-

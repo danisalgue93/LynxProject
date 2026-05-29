@@ -43,7 +43,7 @@
     "lynxMatch": "+ 100% LYNX MATCH",
     "drawPolicy": "Tie ? House takes all",
     "lynxBurn": "15% LYNX BURN",
-    "lynxEmission20": "+ 20% LYNX EMISSION",
+    "lynxEmission20": "NO AUTO EMISSION",
     "protocol": "PROTOCOL",
     "1v1vP": "1v1vP DUEL"
   },
@@ -166,7 +166,7 @@
     "step2Title": "Protocol Fees",
     "step2Content": "A 10% fee is applied to the total event volume for ecosystem growth and rewards.",
     "step3Title": "LYNX Emission",
-    "step3Content": "1 LYNX is emitted for every 1 SOL wagered in regular and 1v1 events. 20% of this emission is distributed among users holding the winning side tokens at the end of the event.",
+    "step3Content": "1 LYNX is emitted for every 1 SOL accumulated in resolved SOL events. 30% goes to users, 10% to treasury, and 60% to liquidity/sales.",
     "step4Title": "Initial & Secondary Market",
     "step4Content": "60% of emitted LYNX is sold via Order Book. Price is 100% defined by free market supply and demand.",
     "step5Title": "Platform Fees & Treasury",

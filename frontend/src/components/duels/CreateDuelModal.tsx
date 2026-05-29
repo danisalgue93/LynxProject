@@ -34,9 +34,11 @@ export function CreateDuelModal({ onClose, onSubmit }: CreateDuelModalProps) {
   const filteredMarkets = useMemo(() => {
     return markets.filter((m) => {
       const isOpen = m.status === "OPEN" || m.status === "ACTIVE";
-      const isSupportedCurrency = m.currency === "SOL";
-      const matchesType = duelType === "1v1" ? !m.isTernary : m.isTernary;
-      return isOpen && isSupportedCurrency && matchesType;
+      const matchesType =
+        duelType === "1v1"
+          ? !m.isTernary && (m.currency === "SOL" || m.currency === "LYNX")
+          : Boolean(m.isTernary) && m.currency === "SOL";
+      return isOpen && matchesType;
     });
   }, [markets, duelType]);
 

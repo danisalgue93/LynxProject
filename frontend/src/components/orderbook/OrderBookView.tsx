@@ -53,21 +53,17 @@ function MarketChart({ isLynxSol, market, chartType = 'line', chartRange = '1M',
     fetchChartData();
   }, [isLynxSol, chartInterval, chartRange]);
 
-  const mockPolymarketData = useMemo(() => {
-    // Generate realistic looking probability curve for prediction markets
-    const numPoints = chartSize === 'expanded' ? 60 : 30;
-    let currentYes = 50;
-    return Array.from({ length: numPoints }).map((_, i) => {
-      currentYes = Math.max(5, Math.min(95, currentYes + (Math.random() - 0.4) * 8));
-      const noProb = 100 - currentYes;
-      return {
-        time: i,
-        YES: currentYes,
-        NO: noProb,
-        DRAW: market?.isTernary ? Math.max(0, 10 - Math.abs(currentYes - 50) + Math.random() * 5) : 0
-      };
-    });
-  }, [market?.isTernary, chartSize]);
+  const marketData = useMemo(() => {
+    if (!market) return [];
+    const total = (market.yesAmount || 0) + (market.noAmount || 0) + (market.drawAmount || 0);
+    if (total <= 0) return [];
+    const point = {
+      YES: ((market.yesAmount || 0) / total) * 100,
+      NO: ((market.noAmount || 0) / total) * 100,
+      DRAW: market.isTernary ? ((market.drawAmount || 0) / total) * 100 : 0
+    };
+    return [{ time: 0, ...point }, { time: 1, ...point }];
+  }, [market]);
 
   if (chartSize === 'minimized') return null;
 
@@ -75,7 +71,7 @@ function MarketChart({ isLynxSol, market, chartType = 'line', chartRange = '1M',
 
   if (isLynxSol) {
     if (tokenData.length === 0) {
-       return <div className={cn("w-full min-w-0 min-h-0 flex items-center justify-center text-[#A1A1AA]", heightClass)}>Loading chart data...</div>;
+       return <div className={cn("w-full min-w-0 min-h-0 flex items-center justify-center text-[#A1A1AA] uppercase text-[10px] font-bold tracking-widest", heightClass)}>No LYNX trades yet</div>;
     }
     
     if (chartType === 'candle') {
@@ -188,10 +184,14 @@ function MarketChart({ isLynxSol, market, chartType = 'line', chartRange = '1M',
     );
   }
 
+  if (marketData.length === 0) {
+    return <div className={cn("w-full min-w-0 min-h-0 flex items-center justify-center text-[#A1A1AA] uppercase text-[10px] font-bold tracking-widest", heightClass)}>No market trades yet</div>;
+  }
+
   return (
     <div className={cn("w-full min-w-0 min-h-0", heightClass)}>
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={mockPolymarketData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
+        <AreaChart data={marketData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#27272A" vertical={false} />
           <XAxis dataKey="time" hide />
           <YAxis domain={[0, 100]} stroke="#52525B" fontSize={10} tickFormatter={(val) => `${val}%`} />
@@ -210,14 +210,15 @@ function MarketChart({ isLynxSol, market, chartType = 'line', chartRange = '1M',
   );
 }
 
-export function OrderBookView() {
+export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?: boolean; onAuthRequired?: (action: string) => void }) {
   const { t } = useTranslation();
   const { publicKey } = useWallet();
   const managedSession = useManagedAuthSession();
-  const myWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || 'DEV_WALLET';
+  const myWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || '';
   const { fetchMarkets, executeTrade, executeLynxOrder, fetchOrderBook, cancelOrder, isLoading, error } = useProgram();
   const [markets, setMarkets] = useState<Market[]>([]);
   const [lynxOrderBook, setLynxOrderBook] = useState<any>(null);
+  const [predictionOrderBook, setPredictionOrderBook] = useState<any>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   
   // 'lynx-sol' is the special native token market
@@ -232,7 +233,7 @@ export function OrderBookView() {
   // Prediction Market specific state
   const [predTradeType, setPredTradeType] = useState<'limit' | 'swap'>('limit');
   const [predSide, setPredSide] = useState<Position>(Position.YES);
-  const [predPrice, setPredPrice] = useState('0.621');
+  const [predPrice, setPredPrice] = useState('');
   const [predAmount, setPredAmount] = useState('5.0');
   
   const [isPending, setIsPending] = useState(false);
@@ -274,7 +275,30 @@ export function OrderBookView() {
     return () => { window.clearInterval(interval); eventBus.removeEventListener('orderbook:updated', onOrderbook as any); };
   }, [fetchOrderBook]);
 
+  useEffect(() => {
+    if (!selectedMarketId || selectedMarketId === 'lynx-sol') {
+      setPredictionOrderBook(null);
+      return;
+    }
+    const loadPredictionOrderBook = async () => {
+      try {
+        const data = await fetchOrderBook(selectedMarketId, selectedMarketId);
+        setPredictionOrderBook(data);
+      } catch (err) {
+        console.error('Failed to load prediction orderbook', err);
+      }
+    };
+    loadPredictionOrderBook();
+    const onOrderbook = () => { loadPredictionOrderBook(); };
+    eventBus.addEventListener('orderbook:updated', onOrderbook as any);
+    return () => eventBus.removeEventListener('orderbook:updated', onOrderbook as any);
+  }, [fetchOrderBook, selectedMarketId]);
+
   const handleLynxTrade = async () => {
+    if (readOnly) {
+      onAuthRequired?.('comprar o vender LYNX');
+      return;
+    }
     setIsPending(true);
     try {
       await executeLynxOrder(
@@ -292,6 +316,10 @@ export function OrderBookView() {
   };
 
   const handlePredTrade = async () => {
+    if (readOnly) {
+      onAuthRequired?.('comprar o vender en mercados');
+      return;
+    }
     if (!selectedMarketId || selectedMarketId === 'lynx-sol') return;
     setIsPending(true);
     try {
@@ -313,16 +341,22 @@ export function OrderBookView() {
   const selectedMarket = !isLynxSol ? markets.find(m => m.id === selectedMarketId) : null;
   const lynxAsks = (lynxOrderBook?.asks || []).slice(0, 5);
   const lynxBids = (lynxOrderBook?.bids || []).slice(0, 5);
-  const bestAsk = lynxAsks[0]?.price ?? 0.0051;
-  const bestBid = lynxBids[0]?.price ?? 0.0050;
-  const midPrice = ((bestAsk + bestBid) / 2).toFixed(5);
-  const spread = Math.max(0, bestAsk - bestBid).toFixed(5);
+  const predAsks = (predictionOrderBook?.asks || []).slice(0, 5);
+  const predBids = (predictionOrderBook?.bids || []).slice(0, 5);
+  const bestAsk = lynxAsks[0]?.price;
+  const bestBid = lynxBids[0]?.price;
+  const midPrice = bestAsk && bestBid ? ((bestAsk + bestBid) / 2).toFixed(5) : 'N/A';
+  const spread = bestAsk && bestBid ? Math.max(0, bestAsk - bestBid).toFixed(5) : 'N/A';
 
   // My open orders (filter both bids and asks by wallet)
   const allOpenOrders = [...(lynxOrderBook?.bids || []), ...(lynxOrderBook?.asks || [])]
     .filter((o: any) => o.owner === myWallet && o.status !== 'FILLED' && o.status !== 'CANCELLED');
 
   const handleCancelOrder = async (orderId: string) => {
+    if (readOnly) {
+      onAuthRequired?.('cancelar ordenes');
+      return;
+    }
     setCancellingId(orderId);
     try {
       await cancelOrder(orderId);
@@ -385,7 +419,7 @@ export function OrderBookView() {
                      <div className="w-1.5 h-1.5 rounded-full bg-[#00FFD1]" />
                      <span className="text-[8px] font-mono font-bold text-white uppercase">SOL</span>
                    </div>
-                   <span className="text-[8px] font-bold text-[#52525B]"><-></span>
+                   <span className="text-[8px] font-bold text-[#52525B]">{"<->"}</span>
                    <div className="flex items-center gap-1">
                      <div className="w-1.5 h-1.5 rounded-full bg-[#9945FF]" />
                      <span className="text-[8px] font-mono font-bold text-white uppercase">LYNX</span>
@@ -572,7 +606,9 @@ export function OrderBookView() {
                   </div>
                   <div className="space-y-[1px] lg:space-y-1 font-mono text-[9px] lg:text-[11px] flex flex-col-reverse lg:flex-col">
                     {isLynxSol ? (
-                      lynxAsks.map((order: any, i: number) => (
+                      lynxAsks.length === 0 ? (
+                        <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">No asks</div>
+                      ) : lynxAsks.map((order: any, i: number) => (
                         <button 
                           key={`ask-${i}`} 
                           onClick={() => setLynxPrice(Number(order.price).toFixed(4))}
@@ -583,26 +619,25 @@ export function OrderBookView() {
                         </button>
                       ))
                     ) : (
-                      [0.645, 0.640, 0.635, 0.630, 0.625].map((p, i) => {
-                        const dynamicPrice = selectedMarket?.currency === 'LYNX' ? p * 1000 : p;
-                        return (
-                          <button 
-                            key={`ask-${i}`} 
-                            onClick={() => setPredPrice(dynamicPrice.toFixed(3))}
-                            className="w-full flex justify-between p-1 lg:p-2 hover:bg-[#00FFD1]/5 rounded transition-colors group text-left"
-                          >
-                            <span className="text-[#00FFD1]">{dynamicPrice.toFixed(3)}</span>
-                            <span className="text-[#52525B] group-hover:text-white">{(12.50 * (i + 1) * (selectedMarket?.currency === 'LYNX' ? 100 : 1)).toFixed(1)}</span>
-                          </button>
-                        );
-                      })
+                      predAsks.length === 0 ? (
+                        <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">No asks</div>
+                      ) : predAsks.map((order: any, i: number) => (
+                        <button 
+                          key={`ask-${i}`} 
+                          onClick={() => setPredPrice(Number(order.price).toFixed(3))}
+                          className="w-full flex justify-between p-1 lg:p-2 hover:bg-[#00FFD1]/5 rounded transition-colors group text-left"
+                        >
+                          <span className="text-[#00FFD1]">{Number(order.price).toFixed(3)}</span>
+                          <span className="text-[#52525B] group-hover:text-white">{Number(order.remaining).toLocaleString()}</span>
+                        </button>
+                      ))
                     )}
                   </div>
                 </div>
                 
                 <div className="flex items-center justify-between py-1 px-2 border-y border-[#1F1F23] bg-[#141417] order-2 lg:hidden">
-                  <span className="text-[10px] font-mono font-bold text-white">{isLynxSol ? midPrice : '0.621'}</span>
-                  <span className="text-[7px] font-bold uppercase tracking-widest text-[#52525B]">{t('orderbook.spread', 'Spread {{value}}', {value: isLynxSol ? spread : '0.004'})}</span>
+                  <span className="text-[10px] font-mono font-bold text-white">{isLynxSol ? midPrice : 'N/A'}</span>
+                  <span className="text-[7px] font-bold uppercase tracking-widest text-[#52525B]">{t('orderbook.spread', 'Spread {{value}}', {value: isLynxSol ? spread : 'N/A'})}</span>
                 </div>
 
                 {/* Bids (Buys / YES) */}
@@ -613,7 +648,9 @@ export function OrderBookView() {
                   </div>
                   <div className="space-y-[1px] lg:space-y-1 font-mono text-[9px] lg:text-[11px]">
                     {isLynxSol ? (
-                      lynxBids.map((order: any, i: number) => (
+                      lynxBids.length === 0 ? (
+                        <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">No bids</div>
+                      ) : lynxBids.map((order: any, i: number) => (
                         <button 
                           key={`bid-${i}`} 
                           onClick={() => setLynxPrice(Number(order.price).toFixed(4))}
@@ -624,19 +661,18 @@ export function OrderBookView() {
                         </button>
                       ))
                     ) : (
-                      [0.615, 0.610, 0.605, 0.600, 0.595].map((p, i) => {
-                        const dynamicPrice = selectedMarket?.currency === 'LYNX' ? p * 1000 : p;
-                        return (
-                          <button 
-                            key={`bid-${i}`} 
-                            onClick={() => setPredPrice(dynamicPrice.toFixed(3))}
-                            className="w-full flex justify-between p-1 lg:p-2 hover:bg-red-400/5 rounded transition-colors group text-left"
-                          >
-                            <span className="text-red-400">{dynamicPrice.toFixed(3)}</span>
-                            <span className="text-[#52525B] group-hover:text-white">{(8.25 * (i + 1) * (selectedMarket?.currency === 'LYNX' ? 100 : 1)).toFixed(1)}</span>
-                          </button>
-                        );
-                      })
+                      predBids.length === 0 ? (
+                        <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">No bids</div>
+                      ) : predBids.map((order: any, i: number) => (
+                        <button 
+                          key={`bid-${i}`} 
+                          onClick={() => setPredPrice(Number(order.price).toFixed(3))}
+                          className="w-full flex justify-between p-1 lg:p-2 hover:bg-red-400/5 rounded transition-colors group text-left"
+                        >
+                          <span className="text-red-400">{Number(order.price).toFixed(3)}</span>
+                          <span className="text-[#52525B] group-hover:text-white">{Number(order.remaining).toLocaleString()}</span>
+                        </button>
+                      ))
                     )}
                   </div>
                 </div>

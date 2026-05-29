@@ -23,6 +23,8 @@ export interface Market {
   oracleId: string;
   oracleMode: string;
   onChainMarket?: string;
+  onChainSignature?: string;
+  createdBy?: string;
   createdAt: number;
   cutoffAt: number;
   resolveAt?: number;
@@ -52,6 +54,9 @@ export interface WalletState {
   totalVolume: number;
   wins: number;
   losses: number;
+  approvedAt?: number;
+  approvalNonce?: string;
+  connectedWallets?: string[];
 }
 
 export interface Order {
@@ -93,6 +98,8 @@ export interface Duel {
   creator: string;
   rival?: string;
   amount: number;
+  grossAmount?: number;
+  burnedAmount?: number;
   currency: Currency;
   status: DuelStatus;
   positionA: Position;
@@ -126,6 +133,19 @@ export interface Notification {
   message: string;
   timestamp: number;
   read: boolean;
+}
+
+export interface LedgerEntry {
+  id: string;
+  wallet: string;
+  type: 'DEPOSIT' | 'WITHDRAWAL' | 'APPROVE' | 'TRADE' | 'SETTLEMENT' | 'FEE' | 'EMISSION' | 'BURN';
+  currency?: Currency;
+  amount?: number;
+  provider?: 'CARD' | 'EXTERNAL_WALLET' | 'INTERNAL';
+  status: 'PENDING' | 'COMPLETED' | 'REJECTED';
+  reference?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: number;
 }
 
 export interface Candle {

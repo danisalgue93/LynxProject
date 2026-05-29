@@ -16,6 +16,7 @@ import type {
   Candle,
   Currency,
   Duel,
+  LedgerEntry,
   Market,
   Notification,
   Order,
@@ -27,8 +28,8 @@ import type {
   WalletState
 } from './types.js';
 
-const STARTING_SOL = 100;
-const STARTING_LYNX = 10000;
+const STARTING_SOL = 0;
+const STARTING_LYNX = 0;
 
 function id(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}_${Date.now().toString(36)}`;
@@ -77,6 +78,7 @@ export class LynxState {
   proposals = new Map<string, Proposal>();
   notifications = new Map<string, Notification[]>();
   transactions = new Map<string, { signature: string; wallet?: string; intent?: any; timestamp: number }>();
+  ledger = new Map<string, LedgerEntry>();
   treasury = {
     sol: 0,
     lynx: 0,
@@ -99,7 +101,12 @@ export class LynxState {
     this.proposals.clear();
     this.notifications.clear();
     this.transactions.clear();
+    this.ledger.clear();
     this.treasury = { sol: 0, lynx: 0, lynxForInitialSale: 0, lynxBurned: 0, protocolDuelSol: 0 };
+
+    if (process.env.LYNX_SEED_DEMO_DATA !== 'true') {
+      return;
+    }
 
     const now = nowMs();
     const cutoffAt = now + 1000 * 60 * 60 * 24;
@@ -185,6 +192,58 @@ export class LynxState {
     this.markets.set(market.id, market);
   }
 
+  isWalletApproved(walletAddress: string) {
+    return Boolean(this.wallets.get(walletAddress)?.approvedAt);
+  }
+
+  approveWallet(walletAddress: string, externalWallet?: string) {
+    const wallet = this.getWallet(walletAddress);
+    wallet.approvedAt = nowMs();
+    wallet.approvalNonce = id('approve');
+    if (externalWallet) {
+      wallet.connectedWallets = Array.from(new Set([...(wallet.connectedWallets ?? []), externalWallet]));
+    }
+    const ledgerEntry = this.addLedgerEntry({
+      wallet: wallet.wallet,
+      type: 'APPROVE',
+      status: 'COMPLETED',
+      reference: wallet.approvalNonce,
+      metadata: { externalWallet }
+    });
+    return { approved: true, approvalNonce: wallet.approvalNonce, wallet: this.getPortfolio(wallet.wallet), ledgerEntry };
+  }
+
+  deposit(input: { wallet: string; currency: Currency; amount: number; provider?: 'CARD' | 'EXTERNAL_WALLET' | 'INTERNAL'; reference?: string }) {
+    assertPositiveAmount(input.amount);
+    const wallet = this.getWallet(input.wallet);
+    this.credit(wallet, input.currency, input.amount);
+    const ledgerEntry = this.addLedgerEntry({
+      wallet: wallet.wallet,
+      type: 'DEPOSIT',
+      currency: input.currency,
+      amount: roundAmount(input.amount),
+      provider: input.provider ?? 'INTERNAL',
+      status: 'COMPLETED',
+      reference: input.reference
+    });
+    return { portfolio: this.getPortfolio(wallet.wallet), ledgerEntry };
+  }
+
+  withdraw(input: { wallet: string; currency: Currency; amount: number; reference?: string }) {
+    assertPositiveAmount(input.amount);
+    const wallet = this.getWallet(input.wallet);
+    this.debit(wallet, input.currency, input.amount);
+    const ledgerEntry = this.addLedgerEntry({
+      wallet: wallet.wallet,
+      type: 'WITHDRAWAL',
+      currency: input.currency,
+      amount: roundAmount(input.amount),
+      status: 'COMPLETED',
+      reference: input.reference
+    });
+    return { portfolio: this.getPortfolio(wallet.wallet), ledgerEntry };
+  }
+
   getWallet(wallet: string) {
     const key = wallet || 'DEV_WALLET';
     let state = this.wallets.get(key);
@@ -197,7 +256,8 @@ export class LynxState {
         rewardsSol: 0,
         totalVolume: 0,
         wins: 0,
-        losses: 0
+        losses: 0,
+        connectedWallets: []
       };
       this.wallets.set(key, state);
     }
@@ -211,6 +271,15 @@ export class LynxState {
   getMarket(id: string) {
     const market = this.markets.get(id);
     if (!market) throw new Error('Market not found');
+    return market;
+  }
+
+  cutOffMarket(marketId: string, force = false) {
+    const market = this.getMarket(marketId);
+    if (market.status === 'RESOLVED') throw new Error('Market already resolved');
+    if (market.status === 'CUT_OFF') return market;
+    if (!force && Date.now() < market.cutoffAt) throw new Error('Cutoff time has not been reached');
+    market.status = 'CUT_OFF';
     return market;
   }
 
@@ -264,6 +333,8 @@ export class LynxState {
       solBalance: roundAmount(wallet.solBalance),
       lynxBalance: roundAmount(wallet.lynxBalance),
       stakedLynx: roundAmount(wallet.stakedLynx),
+      approvedAt: wallet.approvedAt,
+      connectedWallets: wallet.connectedWallets ?? [],
       totalVolume: roundAmount(wallet.totalVolume),
       winRate: wallet.wins + wallet.losses === 0 ? 0 : roundAmount((wallet.wins / (wallet.wins + wallet.losses)) * 100),
       totalProfit: roundAmount(wallet.rewardsSol),
@@ -433,26 +504,42 @@ export class LynxState {
     assertPositionAllowed(positionA, market.isTernary);
     assertMarketAcceptsEntries(market);
 
-    if (market.currency === 'LYNX') {
-      throw new Error('1v1vP and duels are SOL-only in the current Lynx economy');
-    }
-
     const type = input.type ?? (market.isTernary ? '1v1vP' : '1v1');
+    if (market.currency === 'LYNX' && type === '1v1vP') {
+      throw new Error('1v1vP is SOL-only; use 1v1 for LYNX markets');
+    }
     if (type === '1v1' && market.isTernary) throw new Error('1v1 duels require a binary market');
     if (type === '1v1vP' && !market.isTernary) throw new Error('1v1vP duels require a ternary market');
     const protocolWallet = type === '1v1vP' ? this.getWallet(TREASURY_WALLET) : undefined;
-    if (wallet.solBalance < input.amount) throw new Error('Insufficient SOL balance');
+    if (market.currency === 'SOL' && wallet.solBalance < input.amount) throw new Error('Insufficient SOL balance');
+    if (market.currency === 'LYNX' && wallet.lynxBalance < input.amount) throw new Error('Insufficient LYNX balance');
     if (protocolWallet && protocolWallet.solBalance < input.amount) throw new Error('Insufficient protocol SOL balance');
 
-    this.debit(wallet, 'SOL', input.amount);
+    this.debit(wallet, market.currency, input.amount);
     if (type === '1v1vP') {
       this.debit(protocolWallet!, 'SOL', input.amount);
+    }
+    const burnedAmount = market.currency === 'LYNX' ? roundAmount(input.amount * LYNX_EVENT_BURN) : 0;
+    const netAmount = roundAmount(input.amount - burnedAmount);
+    if (burnedAmount > 0) {
+      market.burnedAmount = roundAmount(market.burnedAmount + burnedAmount);
+      this.treasury.lynxBurned = roundAmount(this.treasury.lynxBurned + burnedAmount);
+      this.addLedgerEntry({
+        wallet: wallet.wallet,
+        type: 'BURN',
+        currency: 'LYNX',
+        amount: burnedAmount,
+        status: 'COMPLETED',
+        metadata: { marketId: market.id, mode: 'duel:create' }
+      });
     }
     const duel: Duel = {
       id: id('duel'),
       parentMarketId: market.id,
       creator: wallet.wallet,
-      amount: input.amount,
+      amount: netAmount,
+      grossAmount: input.amount,
+      burnedAmount,
       currency: market.currency,
       status: type === '1v1vP' ? 'ACTIVE' : 'OPEN',
       positionA,
@@ -479,7 +566,22 @@ export class LynxState {
     const positionB = normalizePosition(input.side ?? opposingPosition(duel.positionA, duel.isTernary), duel.isTernary);
     assertPositionAllowed(positionB, duel.isTernary);
     if (positionB === duel.positionA) throw new Error('Rival must choose a different side');
-    this.debit(wallet, duel.currency, duel.amount);
+    const grossAmount = duel.grossAmount ?? duel.amount;
+    this.debit(wallet, duel.currency, grossAmount);
+    if (duel.currency === 'LYNX') {
+      const burn = roundAmount(grossAmount * LYNX_EVENT_BURN);
+      duel.burnedAmount = roundAmount((duel.burnedAmount ?? 0) + burn);
+      market.burnedAmount = roundAmount(market.burnedAmount + burn);
+      this.treasury.lynxBurned = roundAmount(this.treasury.lynxBurned + burn);
+      this.addLedgerEntry({
+        wallet: wallet.wallet,
+        type: 'BURN',
+        currency: 'LYNX',
+        amount: burn,
+        status: 'COMPLETED',
+        metadata: { marketId: market.id, mode: 'duel:accept' }
+      });
+    }
     duel.rival = wallet.wallet;
     duel.positionB = positionB;
     duel.status = 'ACTIVE';
@@ -604,7 +706,7 @@ export class LynxState {
       .filter((trade) => symbol.toUpperCase() === 'LYNX' ? trade.pair === 'LYNX/SOL' : trade.pair.includes(symbol.toUpperCase()))
       .sort((a, b) => a.createdAt - b.createdAt);
 
-    if (trades.length === 0) return this.syntheticCandles(symbol, ms, safeLimit);
+    if (trades.length === 0) return [];
 
     const buckets = new Map<number, Trade[]>();
     const end = Math.ceil(Date.now() / ms) * ms;
@@ -643,9 +745,19 @@ export class LynxState {
     return [...this.transactions.values()].sort((a, b) => b.timestamp - a.timestamp);
   }
 
+  listLedger(walletAddress: string) {
+    return [...this.ledger.values()]
+      .filter((entry) => entry.wallet === walletAddress)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
   addTransaction(tx: { signature: string; wallet?: string; intent?: any }) {
     const ts = Date.now();
     this.transactions.set(tx.signature, { signature: tx.signature, wallet: tx.wallet, intent: tx.intent, timestamp: ts });
+  }
+
+  getUserPositions(marketId: string) {
+    return [...this.positions.values()].filter(p => p.marketId === marketId);
   }
 
   markNotificationsRead(walletAddress: string, notificationId?: string) {
@@ -807,6 +919,26 @@ export class LynxState {
     }
   }
 
+  private mintProtocolDuelLynx(walletAddress: string, protocolSolCounterpart: number) {
+    if (protocolSolCounterpart <= 0) return;
+    const minted = roundAmount(protocolSolCounterpart * LYNX_EMISSION_PER_SOL);
+    const wallet = this.getWallet(walletAddress);
+    wallet.lynxBalance = roundAmount(wallet.lynxBalance + minted);
+    this.addLedgerEntry({
+      wallet: wallet.wallet,
+      type: 'EMISSION',
+      currency: 'LYNX',
+      amount: minted,
+      status: 'COMPLETED',
+      metadata: { source: '1v1vP', protocolSolCounterpart }
+    });
+    this.pushNotification(wallet.wallet, {
+      type: 'claimable',
+      title: 'LYNX protocol-duel emission',
+      message: `${minted} LYNX minted from the protocol-side SOL counterpart.`
+    });
+  }
+
   private resolveDuelsForMarket(market: Market) {
     const duels = [...this.duels.values()].filter((duel) => duel.parentMarketId === market.id && duel.status === 'ACTIVE');
     for (const duel of duels) {
@@ -823,6 +955,7 @@ export class LynxState {
           const payout = roundAmount(total - fee);
           const wallet = this.getWallet(duel.creator);
           this.credit(wallet, 'SOL', payout);
+          this.mintProtocolDuelLynx(wallet.wallet, duel.amount);
           this.treasury.sol = roundAmount(this.treasury.sol + fee);
           duel.winner = duel.creator;
         } else {
@@ -877,6 +1010,16 @@ export class LynxState {
       ...partial
     };
     this.notifications.set(wallet, [notification, ...(this.notifications.get(wallet) ?? [])]);
+  }
+
+  private addLedgerEntry(input: Omit<LedgerEntry, 'id' | 'createdAt'>) {
+    const entry: LedgerEntry = {
+      id: id('ledger'),
+      createdAt: nowMs(),
+      ...input
+    };
+    this.ledger.set(entry.id, entry);
+    return entry;
   }
 
   private seedLynxBook() {

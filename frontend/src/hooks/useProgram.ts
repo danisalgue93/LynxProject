@@ -19,9 +19,59 @@ import { getManagedWalletAddress, useManagedAuthSession } from '../lib/auth';
 export function useProgram() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { publicKey } = useWallet();
+  const { publicKey, signMessage } = useWallet();
   const managedSession = useManagedAuthSession();
-  const wallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || 'DEV_WALLET';
+  const wallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || '';
+
+  const requireWallet = useCallback(() => {
+    if (!wallet) {
+      throw new Error('Connect or create an account before using this action.');
+    }
+    return wallet;
+  }, [wallet]);
+
+  const signAction = useCallback(async (action: string, payload: Record<string, unknown>) => {
+    if (!publicKey || !signMessage) {
+      throw new Error('Connect a Solana wallet to sign this action.');
+    }
+    const signatureMessage = JSON.stringify({
+      app: 'LYNX',
+      action,
+      wallet: publicKey.toBase58(),
+      payload,
+      issuedAt: new Date().toISOString()
+    });
+    const bytes = await signMessage(new TextEncoder().encode(signatureMessage));
+    let binary = '';
+    bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+    return {
+      signature: window.btoa(binary),
+      signatureMessage,
+      signer: publicKey.toBase58()
+    };
+  }, [publicKey, signMessage]);
+
+  const approveWallet = useCallback(async () => {
+    const currentWallet = requireWallet();
+    const signed = await signAction('APPROVE_INTERNAL_LEDGER', { wallet: currentWallet });
+    return await apiFetch('/api/ledger/approve', {
+      method: 'POST',
+      body: JSON.stringify({
+        wallet: currentWallet,
+        externalWallet: publicKey?.toBase58(),
+        ...signed
+      }),
+    });
+  }, [publicKey, requireWallet, signAction]);
+
+  const ensureApproved = useCallback(async () => {
+    const currentWallet = requireWallet();
+    const portfolio = await apiFetch<Portfolio>(`/api/portfolio?wallet=${encodeURIComponent(currentWallet)}`);
+    if (!portfolio.approvedAt) {
+      await approveWallet();
+    }
+    return currentWallet;
+  }, [approveWallet, requireWallet]);
 
   // Fetch all active markets from the backend indexer
   const fetchMarkets = useCallback(async (): Promise<Market[]> => {
@@ -49,10 +99,11 @@ export function useProgram() {
     setIsLoading(true);
     setError(null);
     try {
+      const currentWallet = await ensureApproved();
       const position = typeof side === 'boolean' ? (side ? 'YES' : 'NO') : side;
       return await apiFetch(`/api/markets/${marketId}/trades`, {
         method: 'POST',
-        body: JSON.stringify({ wallet, amount, position, tradeType, limitPrice }),
+        body: JSON.stringify({ wallet: currentWallet, amount, position, tradeType, limitPrice }),
       });
     } catch (err: any) {
       setError(err.message || 'Failed to execute trade');
@@ -60,16 +111,17 @@ export function useProgram() {
     } finally {
       setIsLoading(false);
     }
-  }, [wallet]);
+  }, [ensureApproved]);
 
   const executeLynxOrder = useCallback(async (side: 'BUY' | 'SELL', amount: number, price: number) => {
     setIsLoading(true);
     setError(null);
     try {
+      const currentWallet = await ensureApproved();
       return await apiFetch('/api/orders', {
         method: 'POST',
         body: JSON.stringify({
-          wallet,
+          wallet: currentWallet,
           pair: 'LYNX/SOL',
           side,
           amount,
@@ -83,7 +135,7 @@ export function useProgram() {
     } finally {
       setIsLoading(false);
     }
-  }, [wallet]);
+  }, [ensureApproved]);
 
   const fetchOrderBook = useCallback(async (pair = 'LYNX/SOL', marketId?: string) => {
     const params = new URLSearchParams({ pair });
@@ -108,9 +160,10 @@ export function useProgram() {
   const createDuel = useCallback(async (duelParams: any) => {
     setIsLoading(true);
     try {
+      const currentWallet = await ensureApproved();
       return await apiFetch('/api/duels', {
         method: 'POST',
-        body: JSON.stringify({ wallet, ...duelParams }),
+        body: JSON.stringify({ wallet: currentWallet, ...duelParams }),
       });
     } catch (err: any) {
       setError(err.message || 'Failed to create duel');
@@ -118,13 +171,30 @@ export function useProgram() {
     } finally {
       setIsLoading(false);
     }
-  }, [wallet]);
+  }, [ensureApproved]);
+
+  const createMarket = useCallback(async (marketParams: any) => {
+    setIsLoading(true);
+    try {
+      const signed = await signAction('CREATE_MARKET', marketParams);
+      return await apiFetch('/api/markets', {
+        method: 'POST',
+        body: JSON.stringify({ ...marketParams, ...signed }),
+      });
+    } catch (err: any) {
+      setError(err.message || 'Failed to create market');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [signAction]);
 
   // Fetch user portfolio
   const fetchPortfolio = useCallback(async (): Promise<Portfolio> => {
     setIsLoading(true);
     try {
-      return await apiFetch<Portfolio>(`/api/portfolio?wallet=${encodeURIComponent(wallet)}`);
+      const currentWallet = requireWallet();
+      return await apiFetch<Portfolio>(`/api/portfolio?wallet=${encodeURIComponent(currentWallet)}`);
     } catch (err: any) {
       setError(err.message || 'Failed to fetch portfolio');
       return {
@@ -138,7 +208,7 @@ export function useProgram() {
     } finally {
       setIsLoading(false);
     }
-  }, [wallet]);
+  }, [requireWallet]);
 
   // Fetch DAO proposals
   const fetchProposals = useCallback(async (): Promise<Proposal[]> => {
@@ -185,9 +255,10 @@ export function useProgram() {
   const castVote = useCallback(async (proposalId: string, voteType: 'yes' | 'no') => {
     setIsLoading(true);
     try {
+      const currentWallet = await ensureApproved();
       return await apiFetch(`/api/proposals/${proposalId}/vote`, {
         method: 'POST',
-        body: JSON.stringify({ wallet, voteType }),
+        body: JSON.stringify({ wallet: currentWallet, voteType }),
       });
     } catch (err: any) {
       setError(err.message || 'Failed to vote');
@@ -195,15 +266,16 @@ export function useProgram() {
     } finally {
       setIsLoading(false);
     }
-  }, [wallet]);
+  }, [ensureApproved]);
 
   // Example: Stake LYNX tokens
   const stakeLynx = useCallback(async (amount: number) => {
     setIsLoading(true);
     try {
+      const currentWallet = await ensureApproved();
       return await apiFetch<Portfolio>('/api/staking/stake', {
         method: 'POST',
-        body: JSON.stringify({ wallet, amount }),
+        body: JSON.stringify({ wallet: currentWallet, amount }),
       });
     } catch (err: any) {
       setError(err.message || 'Failed to stake');
@@ -211,7 +283,7 @@ export function useProgram() {
     } finally {
       setIsLoading(false);
     }
-  }, [wallet]);
+  }, [ensureApproved]);
 
   const fetchTransactions = useCallback(async () => {
     try {
@@ -226,9 +298,10 @@ export function useProgram() {
   const claimRewards = useCallback(async () => {
     setIsLoading(true);
     try {
+      const currentWallet = await ensureApproved();
       return await apiFetch<{ claimed: number; portfolio: Portfolio }>('/api/staking/claim', {
         method: 'POST',
-        body: JSON.stringify({ wallet }),
+        body: JSON.stringify({ wallet: currentWallet }),
       });
     } catch (err: any) {
       setError(err.message || 'Failed to claim rewards');
@@ -236,15 +309,16 @@ export function useProgram() {
     } finally {
       setIsLoading(false);
     }
-  }, [wallet]);
+  }, [ensureApproved]);
 
   // Example: Accept a duel
   const acceptDuel = useCallback(async (duelId: string, position?: string) => {
     setIsLoading(true);
     try {
+      const currentWallet = await ensureApproved();
       return await apiFetch(`/api/duels/${duelId}/accept`, {
         method: 'POST',
-        body: JSON.stringify({ wallet, side: position }),
+        body: JSON.stringify({ wallet: currentWallet, side: position }),
       });
     } catch (err: any) {
       setError(err.message || 'Failed to accept duel');
@@ -252,15 +326,16 @@ export function useProgram() {
     } finally {
       setIsLoading(false);
     }
-  }, [wallet]);
+  }, [ensureApproved]);
 
   // Example: Unstake LYNX tokens
   const unstakeLynx = useCallback(async (amount: number) => {
     setIsLoading(true);
     try {
+      const currentWallet = await ensureApproved();
       return await apiFetch<Portfolio>('/api/staking/unstake', {
         method: 'POST',
-        body: JSON.stringify({ wallet, amount }),
+        body: JSON.stringify({ wallet: currentWallet, amount }),
       });
     } catch (err: any) {
       setError(err.message || 'Failed to unstake');
@@ -268,25 +343,27 @@ export function useProgram() {
     } finally {
       setIsLoading(false);
     }
-  }, [wallet]);
+  }, [ensureApproved]);
 
   // Fetch positions for the current wallet
   const fetchPositions = useCallback(async () => {
     try {
-      return await apiFetch<any[]>(`/api/positions?wallet=${encodeURIComponent(wallet)}`);
+      const currentWallet = requireWallet();
+      return await apiFetch<any[]>(`/api/positions?wallet=${encodeURIComponent(currentWallet)}`);
     } catch (err: any) {
       console.error('Failed to fetch positions', err);
       return [];
     }
-  }, [wallet]);
+  }, [requireWallet]);
 
   // Claim a winning position payout
   const claimPosition = useCallback(async (positionId: string) => {
     setIsLoading(true);
     try {
+      const currentWallet = await ensureApproved();
       return await apiFetch<{ payout: number; currency: string; portfolio: Portfolio }>(
         `/api/positions/${positionId}/claim`,
-        { method: 'POST', body: JSON.stringify({ wallet }) }
+        { method: 'POST', body: JSON.stringify({ wallet: currentWallet }) }
       );
     } catch (err: any) {
       setError(err.message || 'Failed to claim position');
@@ -294,14 +371,15 @@ export function useProgram() {
     } finally {
       setIsLoading(false);
     }
-  }, [wallet]);
+  }, [ensureApproved]);
 
   // Cancel an open order and get refunded
   const cancelOrder = useCallback(async (orderId: string) => {
     setIsLoading(true);
     try {
+      const currentWallet = await ensureApproved();
       return await apiFetch<{ cancelled: string; portfolio: Portfolio }>(
-        `/api/orders/${orderId}?wallet=${encodeURIComponent(wallet)}`,
+        `/api/orders/${orderId}?wallet=${encodeURIComponent(currentWallet)}`,
         { method: 'DELETE' }
       );
     } catch (err: any) {
@@ -310,7 +388,7 @@ export function useProgram() {
     } finally {
       setIsLoading(false);
     }
-  }, [wallet]);
+  }, [ensureApproved]);
 
   return {
     isLoading,
@@ -318,9 +396,11 @@ export function useProgram() {
     fetchMarkets,
     executeTrade,
     executeLynxOrder,
+    approveWallet,
     fetchOrderBook,
     fetchDuels,
     createDuel,
+    createMarket,
     acceptDuel,
     fetchPortfolio,
     fetchPositions,
