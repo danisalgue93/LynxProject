@@ -7,10 +7,13 @@ import { Proposal } from '@/src/types';
 import { useTranslation } from 'react-i18next';
 import CreateProposalModal from './CreateProposalModal';
 import StakeModal from './StakeModal';
+import { useBlockchainTransaction } from '@/src/hooks/useBlockchainTransaction';
+import { getTxExplorerUrl } from '@/src/lib/explorer';
 
 export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
   const { t } = useTranslation();
   const { fetchProposals, fetchDaoStats, castVote, createProposal, stakeLynx, isLoading, error } = useProgram();
+  const { executeTransaction } = useBlockchainTransaction();
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [activeCategory, setActiveCategory] = useState<string>('all');
@@ -34,7 +37,18 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
     if (readOnly) return;
     setIsPendingAct(true);
     try {
-      await castVote(proposalId, voteType);
+      await executeTransaction(
+        async () => {
+          await castVote(proposalId, voteType);
+          return `vote-${proposalId}-${voteType}-${Date.now()}`;
+        },
+        {
+          pendingMessage: `Casting ${voteType} vote...`,
+          successMessage: `Vote cast successfully!`,
+          errorMessage: 'Failed to cast vote',
+          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+        }
+      );
       const [proposalsData, statsData] = await Promise.all([fetchProposals(), fetchDaoStats()]);
       setProposals(proposalsData);
       setStats(statsData);
@@ -54,7 +68,18 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
     if (!amount || amount <= 0) return;
     setIsPendingAct(true);
     try {
-      await stakeLynx(amount);
+      await executeTransaction(
+        async () => {
+          await stakeLynx(amount);
+          return `stake-${amount}-${Date.now()}`;
+        },
+        {
+          pendingMessage: `Staking ${amount} LYNX...`,
+          successMessage: `Successfully staked ${amount} LYNX!`,
+          errorMessage: 'Failed to stake LYNX',
+          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+        }
+      );
       const statsData = await fetchDaoStats();
       setStats(statsData);
     } catch (e) {
@@ -72,7 +97,18 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
     }
     setIsPendingAct(true);
     try {
-      await createProposal(input);
+      await executeTransaction(
+        async () => {
+          await createProposal(input);
+          return `proposal-${Date.now()}`;
+        },
+        {
+          pendingMessage: `Creating proposal: "${input.title}"...`,
+          successMessage: 'Proposal created successfully!',
+          errorMessage: 'Failed to create proposal',
+          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+        }
+      );
       const [proposalsData, statsData] = await Promise.all([fetchProposals(), fetchDaoStats()]);
       setProposals(proposalsData);
       setStats(statsData);

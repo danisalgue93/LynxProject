@@ -6,6 +6,8 @@ import http from 'http';
 import morgan from 'morgan';
 import { Server } from 'socket.io';
 import { z, ZodError } from 'zod';
+import nacl from 'tweetnacl';
+import bs58 from 'bs58';
 import { DEV_WALLET } from './economy.js';
 import { createPersistence } from './persistence.js';
 import { LynxState } from './state.js';
@@ -108,6 +110,8 @@ interface AuthUser {
   passwordHash: string;
   displayName?: string;
   role: 'admin' | 'user';
+  walletAddress?: string;
+  walletLinkedAt?: number;
 }
 
 const users = new Map<string, AuthUser>();
@@ -171,6 +175,17 @@ function requireWalletBody(req: express.Request, res: express.Response, wallet?:
   return normalized;
 }
 
+function verifyWalletSignature(wallet: string, signatureMessage: string, signature: string) {
+  try {
+    const pubkey = bs58.decode(wallet);
+    const messageBytes = new TextEncoder().encode(signatureMessage);
+    const signatureBytes = new Uint8Array(Buffer.from(signature, 'base64'));
+    return nacl.sign.detached.verify(messageBytes, signatureBytes, pubkey);
+  } catch (err) {
+    return false;
+  }
+}
+
 function requireSignedIntent(req: express.Request, res: express.Response) {
   const signature = typeof req.body?.signature === 'string' ? req.body.signature.trim() : '';
   if (!signature) {
@@ -230,7 +245,7 @@ app.post('/auth/register', asyncRoute(async (req, res) => {
   const token = generateToken({ userId, email: user.email, role: user.role });
 
   res.status(201).json({
-    user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role },
+    user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role, walletAddress: user.walletAddress },
     token
   });
 }));
@@ -257,7 +272,7 @@ app.post('/auth/login', asyncRoute(async (req, res) => {
   const token = generateToken({ userId: user.id, email: user.email, role: user.role });
 
   res.json({
-    user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role },
+    user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role, walletAddress: user.walletAddress },
     token
   });
 }));
@@ -274,7 +289,75 @@ app.get('/auth/me', (req: any, res) => {
     id: user.id,
     email: user.email,
     displayName: user.displayName,
-    role: user.role
+    role: user.role,
+    walletAddress: user.walletAddress,
+  });
+});
+
+app.post('/auth/link-wallet', asyncRoute(async (req: any, res) => {
+  if (!requireAuth(req, res)) return;
+
+  const body = z.object({
+    wallet: z.string().min(32),
+    signatureMessage: z.string().min(20),
+    signature: z.string().min(1)
+  }).parse(req.body);
+
+  const currentUser = users.get(req.user.userId);
+  if (!currentUser) {
+    return res.status(404).json({ error: 'Authenticated user not found' });
+  }
+
+  const parsed = (() => {
+    try {
+      return JSON.parse(body.signatureMessage) as { wallet?: string; action?: string };
+    } catch {
+      return null;
+    }
+  })();
+
+  if (!parsed || parsed.wallet !== body.wallet || parsed.action !== 'LINK_WALLET') {
+    return res.status(400).json({ error: 'Invalid wallet signature message' });
+  }
+
+  if (!verifyWalletSignature(body.wallet, body.signatureMessage, body.signature)) {
+    return res.status(400).json({ error: 'Wallet signature verification failed' });
+  }
+
+  const walletTaken = [...users.values()].find((user) => user.walletAddress === body.wallet && user.id !== currentUser.id);
+  if (walletTaken) {
+    return res.status(400).json({ error: 'Wallet already linked to another account' });
+  }
+
+  currentUser.walletAddress = body.wallet;
+  currentUser.walletLinkedAt = Date.now();
+
+  res.json({
+    id: currentUser.id,
+    email: currentUser.email,
+    displayName: currentUser.displayName,
+    role: currentUser.role,
+    walletAddress: currentUser.walletAddress,
+  });
+}));
+
+app.delete('/auth/unlink-wallet', (req: any, res) => {
+  if (!requireAuth(req, res)) return;
+
+  const currentUser = users.get(req.user.userId);
+  if (!currentUser) {
+    return res.status(404).json({ error: 'Authenticated user not found' });
+  }
+
+  currentUser.walletAddress = undefined;
+  currentUser.walletLinkedAt = undefined;
+
+  res.json({
+    id: currentUser.id,
+    email: currentUser.email,
+    displayName: currentUser.displayName,
+    role: currentUser.role,
+    walletAddress: currentUser.walletAddress,
   });
 });
 

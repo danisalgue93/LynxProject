@@ -6,6 +6,7 @@ export interface AuthUser {
   email: string;
   displayName?: string;
   role?: 'admin' | 'user';
+  walletAddress?: string;
 }
 
 interface AuthContextType {
@@ -14,6 +15,9 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, displayName?: string) => Promise<void>;
   logout: () => void;
+  linkWallet: (wallet: string, signatureMessage: string, signature: string) => Promise<void>;
+  unlinkWallet: () => Promise<void>;
+  refreshUser: () => Promise<void>;
   isAuthenticated: boolean;
   isAdmin: boolean;
   isLoading: boolean;
@@ -29,6 +33,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  const refreshUser = async () => {
+    const storedToken = localStorage.getItem(STORAGE_KEY_TOKEN);
+    if (!storedToken) return;
+
+    try {
+      const response = await fetch(apiUrl('/auth/me'), {
+        headers: {
+          Authorization: `Bearer ${storedToken}`
+        }
+      });
+      if (!response.ok) {
+        localStorage.removeItem(STORAGE_KEY_TOKEN);
+        localStorage.removeItem(STORAGE_KEY_USER);
+        setToken(null);
+        setUser(null);
+        return;
+      }
+      const data = await response.json();
+      setUser(data);
+      localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data));
+    } catch {
+      setUser(null);
+      setToken(null);
+      localStorage.removeItem(STORAGE_KEY_TOKEN);
+      localStorage.removeItem(STORAGE_KEY_USER);
+    }
+  };
+
   // Load from localStorage on mount
   useEffect(() => {
     const storedToken = localStorage.getItem(STORAGE_KEY_TOKEN);
@@ -37,9 +69,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (storedToken && storedUser) {
       setToken(storedToken);
       setUser(JSON.parse(storedUser));
+      refreshUser().finally(() => setIsLoading(false));
+    } else {
+      setIsLoading(false);
     }
-
-    setIsLoading(false);
   }, []);
 
   const login = async (email: string, password: string) => {
@@ -82,6 +115,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data.user));
   };
 
+  const linkWallet = async (wallet: string, signatureMessage: string, signature: string) => {
+    if (!token) {
+      throw new Error('Authentication required to link wallet');
+    }
+
+    const response = await fetch(apiUrl('/auth/link-wallet'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ wallet, signatureMessage, signature })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Wallet linking failed');
+    }
+
+    const data = await response.json();
+    setUser(data);
+    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data));
+  };
+
+  const unlinkWallet = async () => {
+    if (!token) {
+      throw new Error('Authentication required to unlink wallet');
+    }
+
+    const response = await fetch(apiUrl('/auth/unlink-wallet'), {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Wallet unlink failed');
+    }
+
+    const data = await response.json();
+    setUser(data);
+    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data));
+  };
+
   const logout = () => {
     setUser(null);
     setToken(null);
@@ -97,6 +176,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         login,
         register,
         logout,
+        linkWallet,
+        unlinkWallet,
+        refreshUser,
         isAuthenticated: !!user && !!token,
         isAdmin: user?.role === 'admin',
         isLoading

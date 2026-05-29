@@ -11,11 +11,19 @@ import {
   EyeOff,
   ChevronRight,
   Save,
-  RefreshCw
+  RefreshCw,
+  Wallet,
+  Link2,
+  X,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '@/src/lib/utils';
 import { useTranslation } from 'react-i18next';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { useWalletModal } from '@solana/wallet-adapter-react-ui';
+import { useAuth } from '@/src/context/AuthContext';
+import { useNavigate } from 'react-router-dom';
+import { useBlockchainTransaction } from '@/src/hooks/useBlockchainTransaction';
 
 export function SettingsView() {
   const { t } = useTranslation();
@@ -27,6 +35,14 @@ export function SettingsView() {
     gov: true,
     system: false
   });
+  const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkSuccess, setLinkSuccess] = useState<string | null>(null);
+  const { publicKey, signMessage, connected } = useWallet();
+  const { setVisible } = useWalletModal();
+  const navigate = useNavigate();
+  const { user, linkWallet, unlinkWallet, isAuthenticated } = useAuth();
+  const { executeTransaction } = useBlockchainTransaction();
 
   // Load saved settings from localStorage
   React.useEffect(() => {
@@ -55,6 +71,84 @@ export function SettingsView() {
     setPriorityFee('fast');
     setNotifications({ trades: true, gov: true, system: false });
     console.log('[settings] reset to defaults');
+  };
+
+  const handleLinkWallet = async () => {
+    setLinkError(null);
+    setLinkSuccess(null);
+
+    if (!isAuthenticated) {
+      window.dispatchEvent(new CustomEvent('open-auth-modal', { detail: { mode: 'login' } }));
+      return;
+    }
+
+    if (!connected) {
+      setVisible(true);
+      return;
+    }
+
+    if (!publicKey || !signMessage) {
+      setLinkError('No wallet is ready. Conecta Phantom o Solflare primero.');
+      return;
+    }
+
+    setLinking(true);
+    try {
+      await executeTransaction(
+        async () => {
+          const walletAddress = publicKey.toBase58();
+          const signatureMessage = JSON.stringify({
+            app: 'LYNX',
+            action: 'LINK_WALLET',
+            wallet: walletAddress,
+            issuedAt: new Date().toISOString()
+          });
+          const rawSignature = await signMessage(new TextEncoder().encode(signatureMessage));
+          let binary = '';
+          rawSignature.forEach((byte) => { binary += String.fromCharCode(byte); });
+          const signature = window.btoa(binary);
+
+          await linkWallet(walletAddress, signatureMessage, signature);
+          setLinkSuccess('Wallet vinculada correctamente a tu cuenta.');
+          return `link-${walletAddress}-${Date.now()}`;
+        },
+        {
+          pendingMessage: 'Linking wallet to account...',
+          successMessage: 'Wallet linked successfully!',
+          errorMessage: 'Failed to link wallet',
+          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+        }
+      );
+    } catch (error: any) {
+      setLinkError(error?.message || 'Error al vincular la wallet');
+      console.error('Link wallet failed', error);
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  const handleUnlinkWallet = async () => {
+    setLinkError(null);
+    setLinkSuccess(null);
+
+    try {
+      await executeTransaction(
+        async () => {
+          await unlinkWallet();
+          setLinkSuccess('Wallet desvinculada. Puedes enlazar otra wallet ahora.');
+          return `unlink-${Date.now()}`;
+        },
+        {
+          pendingMessage: 'Unlinking wallet from account...',
+          successMessage: 'Wallet unlinked successfully!',
+          errorMessage: 'Failed to unlink wallet',
+          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+        }
+      );
+    } catch (error: any) {
+      setLinkError(error?.message || 'Error al desvincular la wallet');
+      console.error('Unlink wallet failed', error);
+    }
   };
 
   return (
@@ -181,6 +275,65 @@ export function SettingsView() {
               <div className="h-1.5 w-full bg-[#1F1F23] rounded-full">
                 <div className="h-full w-[35%] bg-[#9945FF] rounded-full" />
               </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Wallet Linking */}
+        <section className="glass-card rounded-2xl border border-[#1F1F23] bg-[#0D0D0E] overflow-hidden">
+          <div className="p-6 border-b border-[#1F1F23] flex items-center gap-3 bg-[#141417]/50">
+            <Wallet className="w-4 h-4 text-[#00FFD1]" />
+            <h3 className="text-xs font-black text-white uppercase tracking-widest">{t('settings.walletBinding', 'Wallet Binding')}</h3>
+          </div>
+
+          <div className="p-6 space-y-5">
+            <div className="rounded-2xl border border-[#27272A] bg-[#141417] p-5">
+              <div className="flex items-center justify-between gap-4 mb-4">
+                <div>
+                  <p className="text-sm font-bold text-white">{t('settings.accountWallet', 'Account Wallet')}</p>
+                  <p className="text-[11px] text-[#71717A]">{t('settings.walletBindingDesc', 'Link your authenticated account to a Solana wallet for trading and market actions.')}</p>
+                </div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-[#27272A] bg-[#0D0D0E] px-3 py-1 text-[10px] uppercase tracking-widest text-[#A1A1AA]">
+                  <Link2 className="w-3 h-3" />
+                  {user?.walletAddress ? t('settings.linked', 'Linked') : t('settings.notLinked', 'Not linked')}
+                </div>
+              </div>
+
+              {user?.walletAddress ? (
+                <div className="space-y-3">
+                  <div className="text-[11px] text-[#D4D4D8] font-mono break-all">{user.walletAddress}</div>
+                  <button
+                    type="button"
+                    onClick={handleUnlinkWallet}
+                    className="inline-flex items-center justify-center gap-2 rounded-full bg-[#18181B] border border-[#27272A] px-4 py-2 text-[11px] font-semibold uppercase tracking-widest text-[#F97316] hover:bg-[#27272A] transition"
+                  >
+                    <X className="w-4 h-4" />
+                    {t('settings.unlinkWallet', 'Unlink Wallet')}
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <p className="text-[11px] text-[#A1A1AA]">{t('settings.connectWalletInstruction', 'Connect a wallet and sign a verification message to bind it to your account.')}</p>
+                  <button
+                    type="button"
+                    onClick={handleLinkWallet}
+                    disabled={linking}
+                    className="inline-flex items-center justify-center gap-2 rounded-full bg-[#00FFD1] px-4 py-2 text-[11px] font-semibold uppercase tracking-widest text-black hover:bg-[#a2ffe0] transition disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Wallet className="w-4 h-4" />
+                    {linking ? t('settings.linkingWallet', 'Linking wallet...') : t('settings.linkWallet', 'Link Wallet')}
+                  </button>
+                </div>
+              )}
+
+              {(linkError || linkSuccess) && (
+                <div className={cn(
+                  'rounded-2xl border px-4 py-3 text-[11px] font-medium',
+                  linkError ? 'border-rose-500/30 bg-rose-500/10 text-rose-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                )}>
+                  {linkError || linkSuccess}
+                </div>
+              )}
             </div>
           </div>
         </section>

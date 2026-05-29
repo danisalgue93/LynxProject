@@ -6,6 +6,8 @@ import { eventBus } from '@/src/lib/eventBus';
 import { Market, Portfolio } from '@/src/types';
 import { useTranslation } from 'react-i18next';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { useBlockchainTransaction } from '@/src/hooks/useBlockchainTransaction';
+import { getTxExplorerUrl } from '@/src/lib/explorer';
 
 async function openSignedMoonPay(walletAddress?: string) {
   const params = new URLSearchParams({ currencyCode: 'sol' });
@@ -25,6 +27,7 @@ export function PortfolioView() {
   const { publicKey } = useWallet();
   const walletAddress = publicKey?.toBase58();
   const { fetchMarkets, fetchPortfolio, claimRewards, stakeLynx, unstakeLynx, isLoading, error } = useProgram();
+  const { executeTransaction } = useBlockchainTransaction();
   const [markets, setMarkets] = useState<Market[]>([]);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [isClaiming, setIsClaiming] = useState(false);
@@ -56,8 +59,19 @@ export function PortfolioView() {
   const handleClaim = async () => {
     setIsClaiming(true);
     try {
-      const result = await claimRewards();
-      if (result?.portfolio) setPortfolio(result.portfolio);
+      await executeTransaction(
+        async () => {
+          const result = await claimRewards();
+          if (result?.portfolio) setPortfolio(result.portfolio);
+          return `claim-${Date.now()}`;
+        },
+        {
+          pendingMessage: 'Claiming staking rewards...',
+          successMessage: 'Rewards claimed successfully!',
+          errorMessage: 'Failed to claim rewards',
+          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+        }
+      );
     } catch (err) {
       console.error(err);
     } finally {
@@ -69,13 +83,25 @@ export function PortfolioView() {
     if (!stakeAmount || isNaN(Number(stakeAmount))) return;
     setIsStaking(true);
     try {
-      if (stakeMode === 'stake') {
-        const updated = await stakeLynx(Number(stakeAmount));
-        if (updated) setPortfolio(updated);
-      } else {
-        const updated = await unstakeLynx(Number(stakeAmount));
-        if (updated) setPortfolio(updated);
-      }
+      const amount = Number(stakeAmount);
+      await executeTransaction(
+        async () => {
+          if (stakeMode === 'stake') {
+            const updated = await stakeLynx(amount);
+            if (updated) setPortfolio(updated);
+          } else {
+            const updated = await unstakeLynx(amount);
+            if (updated) setPortfolio(updated);
+          }
+          return `${stakeMode}-${amount}-${Date.now()}`;
+        },
+        {
+          pendingMessage: `${stakeMode === 'stake' ? 'Staking' : 'Unstaking'} ${amount} LYNX...`,
+          successMessage: `${stakeMode === 'stake' ? 'Staked' : 'Unstaked'} ${amount} LYNX successfully!`,
+          errorMessage: `Failed to ${stakeMode} LYNX`,
+          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+        }
+      );
       setStakeAmount('');
     } catch (err) {
       console.error(err);

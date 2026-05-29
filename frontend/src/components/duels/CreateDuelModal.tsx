@@ -14,6 +14,7 @@ interface CreateDuelModalProps {
 export function CreateDuelModal({ onClose, onSubmit }: CreateDuelModalProps) {
   const { t } = useTranslation();
   const { fetchMarkets, isLoading } = useProgram();
+  const { executeTransaction } = useBlockchainTransaction();
   const [markets, setMarkets] = useState<Market[]>([]);
 
   const [step, setStep] = useState(1);
@@ -62,7 +63,19 @@ export function CreateDuelModal({ onClose, onSubmit }: CreateDuelModalProps) {
     if (!selectedMarket || !side) return;
     setIsSubmitting(true);
     try {
-      await onSubmit({ marketId: selectedMarket.id, side, amount, currency, type: duelType });
+      await executeTransaction(
+        async () => {
+          await onSubmit({ marketId: selectedMarket.id, side, amount, currency, type: duelType });
+          return `create-duel-${Date.now()}`;
+        },
+        {
+          pendingMessage: `Creating ${duelType} duel with ${amount} ${currency}...`,
+          successMessage: 'Duel created successfully!',
+          errorMessage: 'Failed to create duel',
+          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+        }
+      );
+      onClose();
     } catch (e) {
       console.error(e);
     } finally {

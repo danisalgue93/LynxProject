@@ -1,6 +1,16 @@
 import React, { useState, useEffect } from "react";
 import { Market, Position, Duel } from "@/src/types";
-import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, Tooltip as RechartsTooltip, CartesianGrid, Line, LineChart } from 'recharts';
+import {
+  Area,
+  AreaChart,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+  Tooltip as RechartsTooltip,
+  CartesianGrid,
+  Line,
+  LineChart,
+} from "recharts";
 import {
   X,
   TrendingUp,
@@ -11,7 +21,9 @@ import {
   Clock,
   ArrowRight,
   Sword,
+  Wallet,
 } from "lucide-react";
+import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { motion, AnimatePresence } from "motion/react";
 import { formatSOL, cn } from "@/src/lib/utils";
 import { useProgram } from "@/src/hooks/useProgram";
@@ -24,34 +36,84 @@ interface MarketDetailProps {
   onAuthRequired?: (action: string) => void;
 }
 
-function MiniMarketChart({ isLynx, market }: { isLynx: boolean; market: Market }) {
-  const total = (market.yesAmount || 0) + (market.noAmount || 0) + (market.drawAmount || 0);
+function MiniMarketChart({
+  isLynx,
+  market,
+}: {
+  isLynx: boolean;
+  market: Market;
+}) {
+  const total =
+    (market.yesAmount || 0) + (market.noAmount || 0) + (market.drawAmount || 0);
   if (total <= 0) {
-    return <div className="w-full h-full flex items-center justify-center text-[10px] text-[#71717A] uppercase font-bold tracking-widest">Sin trades aun</div>;
+    return (
+      <div className="w-full h-full flex items-center justify-center text-[10px] text-[#71717A] uppercase font-bold tracking-widest">
+        Sin trades aun
+      </div>
+    );
   }
   const yesProb = ((market.yesAmount || 0) / total) * 100;
   const noProb = ((market.noAmount || 0) / total) * 100;
-  const drawProb = market.isTernary ? ((market.drawAmount || 0) / total) * 100 : 0;
+  const drawProb = market.isTernary
+    ? ((market.drawAmount || 0) / total) * 100
+    : 0;
   const marketData = [
     { time: 0, YES: yesProb, NO: noProb, DRAW: drawProb },
-    { time: 1, YES: yesProb, NO: noProb, DRAW: drawProb }
+    { time: 1, YES: yesProb, NO: noProb, DRAW: drawProb },
   ];
 
   return (
     <div className="w-full h-full">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={marketData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#27272A" vertical={false} />
-          <XAxis dataKey="time" hide />
-          <YAxis domain={[0, 100]} stroke="#52525B" fontSize={10} tickFormatter={(val) => `${val}%`} />
-          <RechartsTooltip 
-            contentStyle={{ backgroundColor: '#0D0D0E', border: '1px solid #27272A', borderRadius: '4px' }}
-            labelStyle={{ display: 'none' }}
+        <AreaChart
+          data={marketData}
+          margin={{ top: 10, right: 0, left: -20, bottom: 0 }}
+        >
+          <CartesianGrid
+            strokeDasharray="3 3"
+            stroke="#27272A"
+            vertical={false}
           />
-          <Area type="monotone" dataKey="YES" stackId="1" stroke="#00FFD1" fill="#00FFD1" fillOpacity={0.2} />
-          <Area type="monotone" dataKey="NO" stackId="2" stroke="#F87171" fill="#F87171" fillOpacity={0.2} />
+          <XAxis dataKey="time" hide />
+          <YAxis
+            domain={[0, 100]}
+            stroke="#52525B"
+            fontSize={10}
+            tickFormatter={(val) => `${val}%`}
+          />
+          <RechartsTooltip
+            contentStyle={{
+              backgroundColor: "#0D0D0E",
+              border: "1px solid #27272A",
+              borderRadius: "4px",
+            }}
+            labelStyle={{ display: "none" }}
+          />
+          <Area
+            type="monotone"
+            dataKey="YES"
+            stackId="1"
+            stroke="#00FFD1"
+            fill="#00FFD1"
+            fillOpacity={0.2}
+          />
+          <Area
+            type="monotone"
+            dataKey="NO"
+            stackId="2"
+            stroke="#F87171"
+            fill="#F87171"
+            fillOpacity={0.2}
+          />
           {market?.isTernary && (
-             <Area type="monotone" dataKey="DRAW" stackId="3" stroke="#60A5FA" fill="#60A5FA" fillOpacity={0.2} />
+            <Area
+              type="monotone"
+              dataKey="DRAW"
+              stackId="3"
+              stroke="#60A5FA"
+              fill="#60A5FA"
+              fillOpacity={0.2}
+            />
           )}
         </AreaChart>
       </ResponsiveContainer>
@@ -59,9 +121,16 @@ function MiniMarketChart({ isLynx, market }: { isLynx: boolean; market: Market }
   );
 }
 
-export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired }: MarketDetailProps) {
+export function MarketDetail({
+  market,
+  onClose,
+  readOnly = false,
+  onAuthRequired,
+}: MarketDetailProps) {
   const { t } = useTranslation();
-  const { fetchDuels, executeTrade, fetchPositions, claimPosition } = useProgram();
+  const { fetchDuels, executeTrade, fetchPositions, claimPosition } =
+    useProgram();
+  const { executeTransaction } = useBlockchainTransaction();
   const [marketDuels, setMarketDuels] = useState<Duel[]>([]);
 
   const [betAmount, setBetAmount] = useState("5.0");
@@ -69,7 +138,10 @@ export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired
   const [isPending, setIsPending] = useState(false);
   const [claimablePosId, setClaimablePosId] = useState<string | null>(null);
   const [isClaiming, setIsClaiming] = useState(false);
-  const [claimResult, setClaimResult] = useState<{ payout: number; currency: string } | null>(null);
+  const [claimResult, setClaimResult] = useState<{
+    payout: number;
+    currency: string;
+  } | null>(null);
 
   const [activeMode, setActiveMode] = useState<"quick" | "book" | "duels">(
     "quick",
@@ -78,15 +150,15 @@ export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired
 
   // Load claimable position for this market if resolved
   useEffect(() => {
-    if (market.status === 'RESOLVED' && market.result) {
+    if (market.status === "RESOLVED" && market.result) {
       fetchPositions().then((positions) => {
         const winPos = positions.find(
           (p: any) =>
             p.marketId === market.id &&
             !p.claimed &&
             (p.position === market.result ||
-              (market.result === 'YES' && p.position === 'A') ||
-              (market.result === 'NO' && p.position === 'B'))
+              (market.result === "YES" && p.position === "A") ||
+              (market.result === "NO" && p.position === "B")),
         );
         setClaimablePosId(winPos?.id ?? null);
       });
@@ -105,16 +177,27 @@ export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired
 
   const handleQuickBet = async () => {
     if (readOnly) {
-      onAuthRequired?.('comprar o vender en mercados');
+      onAuthRequired?.("comprar o vender en mercados");
       return;
     }
     setIsPending(true);
     try {
-      await executeTrade(
-        market.id,
-        parseFloat(betAmount) || 0,
-        selectedSide,
-        "swap",
+      await executeTransaction(
+        async () => {
+          await executeTrade(
+            market.id,
+            parseFloat(betAmount) || 0,
+            selectedSide,
+            "swap",
+          );
+          return `trade-${market.id}-${Date.now()}`;
+        },
+        {
+          pendingMessage: `Placing ${betAmount} ${market.currency} on ${selectedSide}...`,
+          successMessage: `Trade executed successfully!`,
+          errorMessage: "Trade failed",
+          explorerUrl: () => "https://explorer.solana.com?cluster=devnet",
+        },
       );
       onClose();
     } catch (err) {
@@ -124,13 +207,36 @@ export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired
     }
   };
 
+  const { setVisible } = useWalletModal();
+
   const handleClaim = async () => {
     if (readOnly) {
-      onAuthRequired?.('reclamar payout');
+      onAuthRequired?.("reclamar payout");
       return;
     }
     if (!claimablePosId) return;
     setIsClaiming(true);
+    try {
+      await executeTransaction(
+        async () => {
+          const result = await claimPosition(claimablePosId);
+          if (result) setClaimResult(result);
+          return `claim-${claimablePosId}-${Date.now()}`;
+        },
+        {
+          pendingMessage: "Claiming payout...",
+          successMessage: "Position claimed successfully!",
+          errorMessage: "Failed to claim position",
+          explorerUrl: () => "https://explorer.solana.com?cluster=devnet",
+        },
+      );
+      return;
+    } catch (err) {
+      console.error("Claim failed", err);
+      setIsClaiming(false);
+      return;
+    }
+    setIsClaiming(false);
     try {
       const result = await claimPosition(claimablePosId);
       if (result) {
@@ -152,16 +258,35 @@ export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired
   const currentDrawAmount = market.drawAmount || 0;
   const totalPool = currentYesAmount + currentNoAmount + currentDrawAmount;
 
-  const yesRatio = totalPool > 0 ? (currentYesAmount / totalPool) * 100 : (market.isTernary ? 33.3 : 50);
-  const noRatio = totalPool > 0 ? (currentNoAmount / totalPool) * 100 : (market.isTernary ? 33.3 : 50);
-  const drawRatio = totalPool > 0 ? (currentDrawAmount / totalPool) * 100 : (market.isTernary ? 33.3 : 0);
+  const yesRatio =
+    totalPool > 0
+      ? (currentYesAmount / totalPool) * 100
+      : market.isTernary
+        ? 33.3
+        : 50;
+  const noRatio =
+    totalPool > 0
+      ? (currentNoAmount / totalPool) * 100
+      : market.isTernary
+        ? 33.3
+        : 50;
+  const drawRatio =
+    totalPool > 0
+      ? (currentDrawAmount / totalPool) * 100
+      : market.isTernary
+        ? 33.3
+        : 0;
 
   const parsedAmount = parseFloat(betAmount) || 0;
   const isYes = selectedSide === Position.YES;
   const isNo = selectedSide === Position.NO;
   const isDraw = selectedSide === Position.DRAW;
 
-  const currentSidePool = isYes ? currentYesAmount : (isNo ? currentNoAmount : currentDrawAmount);
+  const currentSidePool = isYes
+    ? currentYesAmount
+    : isNo
+      ? currentNoAmount
+      : currentDrawAmount;
   const oppositeSidePool = totalPool - currentSidePool;
 
   const newSidePool = currentSidePool + parsedAmount;
@@ -235,17 +360,35 @@ export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired
                       label: t("marketDetail.ratio", "Ratio"),
                       value: market.isTernary ? (
                         <span className="flex items-center gap-1">
-                          <span className={isLynx ? "text-[#9945FF]" : "text-[#00FFD1]"}>{yesRatio.toFixed(0)}% A</span>
+                          <span
+                            className={
+                              isLynx ? "text-[#9945FF]" : "text-[#00FFD1]"
+                            }
+                          >
+                            {yesRatio.toFixed(0)}% A
+                          </span>
                           <span className="text-[#52525B]">/</span>
-                          <span className="text-red-400">{noRatio.toFixed(0)}% B</span>
+                          <span className="text-red-400">
+                            {noRatio.toFixed(0)}% B
+                          </span>
                           <span className="text-[#52525B]">/</span>
-                          <span className="text-blue-400">{drawRatio.toFixed(0)}% D</span>
+                          <span className="text-blue-400">
+                            {drawRatio.toFixed(0)}% D
+                          </span>
                         </span>
                       ) : (
                         <span className="flex items-center gap-1">
-                          <span className={isLynx ? "text-[#9945FF]" : "text-[#00FFD1]"}>{yesRatio.toFixed(0)}% Y</span>
+                          <span
+                            className={
+                              isLynx ? "text-[#9945FF]" : "text-[#00FFD1]"
+                            }
+                          >
+                            {yesRatio.toFixed(0)}% Y
+                          </span>
                           <span className="text-[#52525B]">/</span>
-                          <span className="text-red-400">{noRatio.toFixed(0)}% N</span>
+                          <span className="text-red-400">
+                            {noRatio.toFixed(0)}% N
+                          </span>
                         </span>
                       ),
                       color: "",
@@ -256,7 +399,9 @@ export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired
                       color: "text-white",
                     },
                     {
-                      label: isLynx ? t("marketDetail.deflation", "Deflation") : t("marketDetail.lynxYield", "$LYNX Yield"),
+                      label: isLynx
+                        ? t("marketDetail.deflation", "Deflation")
+                        : t("marketDetail.lynxYield", "$LYNX Yield"),
                       value: isLynx ? "15% Burn" : "+30% Pool",
                       color: isLynx ? "text-red-400" : "text-[#9945FF]",
                     },
@@ -423,12 +568,20 @@ export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired
                       isLynx ? "text-[#9945FF]" : "text-[#00FFD1]",
                     )}
                   />
-                  <p className="text-[8px] md:text-[10px] font-bold text-[#52525B] uppercase tracking-widest">
+                  <p className="text-[8px] md:text-[10px] font-bold text-[#52525B] uppercase tracking-widest mb-4">
                     {t(
                       "marketDetail.connectToTrade",
                       "Connect wallet to trade",
                     )}
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => setVisible(true)}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#00FFD1] text-black text-xs font-bold uppercase rounded hover:bg-[#00E5BC] transition-colors"
+                  >
+                    <Wallet className="w-4 h-4" />
+                    {t("marketDetail.connectWallet", "Connect Wallet")}
+                  </button>
                 </div>
               </motion.div>
             )}
@@ -543,7 +696,9 @@ export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired
               onClick={() => setShowMobileTrade(true)}
               className={cn(
                 "w-full text-black font-black py-4 rounded uppercase tracking-tighter text-sm transition-all flex items-center justify-center gap-2",
-                isLynx ? "bg-[#9945FF]" : "bg-gradient-to-r from-[#00FFD1] to-[#9945FF]"
+                isLynx
+                  ? "bg-[#9945FF]"
+                  : "bg-gradient-to-r from-[#00FFD1] to-[#9945FF]",
               )}
             >
               {t("marketDetail.tradeNow", "Trade")}
@@ -558,17 +713,23 @@ export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired
         )}
 
         {/* Right Side: Execution Panel */}
-        <aside 
+        <aside
           className={cn(
             "w-full md:w-[360px] lg:w-[400px] bg-[#0D0D0E] border-t md:border-t-0 md:border-l border-[#1F1F23] flex-col shrink-0 overflow-y-auto custom-scrollbar md:flex transition-all",
-            showMobileTrade ? "flex h-[65dvh] md:h-auto" : "hidden"
+            showMobileTrade ? "flex h-[65dvh] md:h-auto" : "hidden",
           )}
         >
           {/* Mobile Header with Hide button */}
           <div className="md:hidden p-4 border-b border-[#1F1F23] flex items-center justify-between bg-[#0A0A0B] shrink-0 sticky top-0 z-10">
-            <span className="text-[10px] font-bold text-white uppercase tracking-widest">{t("marketDetail.trade", "Trade")}</span>
-            <button onClick={() => setShowMobileTrade(false)} className="text-[#A1A1AA] flex items-center gap-2 font-mono text-[10px] uppercase font-bold px-2 py-1 bg-[#141417] rounded border border-[#27272A]">
-              <ArrowRight className="w-3 h-3 rotate-90" /> {t("marketDetail.hide", "Hide")}
+            <span className="text-[10px] font-bold text-white uppercase tracking-widest">
+              {t("marketDetail.trade", "Trade")}
+            </span>
+            <button
+              onClick={() => setShowMobileTrade(false)}
+              className="text-[#A1A1AA] flex items-center gap-2 font-mono text-[10px] uppercase font-bold px-2 py-1 bg-[#141417] rounded border border-[#27272A]"
+            >
+              <ArrowRight className="w-3 h-3 rotate-90" />{" "}
+              {t("marketDetail.hide", "Hide")}
             </button>
           </div>
 
@@ -740,12 +901,12 @@ export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired
                           {t("marketDetail.lynxDrop", "$LYNX Drop")}
                         </span>
                         <div className="flex flex-col items-end">
-                           <span className="font-mono text-[#9945FF] font-bold text-sm">
-                             +{lynxDrop.toFixed(2)}
-                           </span>
-                           <span className="text-[6px] md:text-[7px] text-[#9945FF]/70 uppercase tracking-widest">
-                             30% User Emission Share
-                           </span>
+                          <span className="font-mono text-[#9945FF] font-bold text-sm">
+                            +{lynxDrop.toFixed(2)}
+                          </span>
+                          <span className="text-[6px] md:text-[7px] text-[#9945FF]/70 uppercase tracking-widest">
+                            30% User Emission Share
+                          </span>
                         </div>
                       </div>
                     )}
@@ -774,7 +935,7 @@ export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired
 
                   <button
                     onClick={handleQuickBet}
-                    disabled={isPending || market.status === 'RESOLVED'}
+                    disabled={isPending || market.status === "RESOLVED"}
                     className={cn(
                       "w-full text-black font-black py-3 md:py-4 rounded uppercase tracking-tighter text-[10px] md:text-sm transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:scale-100 flex items-center justify-center gap-2 md:gap-3",
                       isLynx
@@ -793,12 +954,17 @@ export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired
                   </button>
 
                   {/* Claim payout banner for resolved markets */}
-                  {market.status === 'RESOLVED' && (
+                  {market.status === "RESOLVED" && (
                     <div className="mt-3 p-4 bg-[#00FFD1]/5 border border-[#00FFD1]/20 rounded-xl">
                       {claimResult ? (
                         <div className="text-center">
-                          <div className="text-[#00FFD1] font-black text-lg mb-1">✓ Claimed!</div>
-                          <div className="text-white text-sm font-bold">{claimResult.payout} {claimResult.currency} added to your balance</div>
+                          <div className="text-[#00FFD1] font-black text-lg mb-1">
+                            ✓ Claimed!
+                          </div>
+                          <div className="text-white text-sm font-bold">
+                            {claimResult.payout} {claimResult.currency} added to
+                            your balance
+                          </div>
                         </div>
                       ) : claimablePosId ? (
                         <>
@@ -811,8 +977,13 @@ export function MarketDetail({ market, onClose, readOnly = false, onAuthRequired
                             className="w-full py-3 bg-[#00FFD1] text-black font-black text-[10px] uppercase tracking-widest rounded flex items-center justify-center gap-2 hover:bg-[#00E5BC] transition-all disabled:opacity-60"
                           >
                             {isClaiming ? (
-                              <><div className="w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" /> Claiming…</>
-                            ) : 'Claim Payout'}
+                              <>
+                                <div className="w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" />{" "}
+                                Claiming…
+                              </>
+                            ) : (
+                              "Claim Payout"
+                            )}
                           </button>
                         </>
                       ) : (

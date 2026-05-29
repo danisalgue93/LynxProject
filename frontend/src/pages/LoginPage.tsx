@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { useWalletModal } from '@solana/wallet-adapter-react-ui';
+import { Wallet } from 'lucide-react';
 
 export function LoginPage() {
   const [email, setEmail] = useState('');
@@ -12,6 +15,8 @@ export function LoginPage() {
 
   const navigate = useNavigate();
   const { login, register } = useAuth();
+  const { connected } = useWallet();
+  const { setVisible } = useWalletModal();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,6 +104,28 @@ export function LoginPage() {
               {isLoading ? 'Processing...' : isRegister ? 'Register' : 'Login'}
             </button>
           </form>
+
+          <div className="mt-4 p-4 bg-slate-900 border border-slate-700 rounded text-sm text-slate-300">
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <div>
+                <div className="font-semibold text-slate-100">Wallet connection</div>
+                <p className="text-xs text-slate-500">Conecta tu wallet Solana para poder operar tras iniciar sesión.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setVisible(true)}
+                className="inline-flex items-center gap-2 bg-[#00FFD1] text-black text-xs font-bold px-3 py-2 rounded uppercase hover:bg-[#00E5BC] transition-colors"
+              >
+                <Wallet className="w-4 h-4" />
+                Connect Wallet
+              </button>
+            </div>
+            {connected ? (
+              <div className="text-xs text-[#A1E9D5]">Wallet connected. Ahora podrás realizar trades y duels.</div>
+            ) : (
+              <div className="text-xs text-slate-500">Si no ves tu wallet, asegúrate de tener Phantom o Solflare instalado.</div>
+            )}
+          </div>
 
           <div className="mt-6 text-center">
             <p className="text-slate-400 text-sm">

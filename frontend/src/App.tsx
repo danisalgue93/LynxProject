@@ -9,6 +9,7 @@ import { useAuth } from './context/AuthContext';
 import { LoginPage } from './pages/LoginPage';
 import { Dashboard } from './pages/Dashboard';
 import { PublicPage } from './pages/PublicPage';
+import { ToastContainer } from './components/layout/ToastContainer';
 
 export default function App() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -25,7 +26,9 @@ export default function App() {
   }
 
   return (
-    <Routes>
+    <>
+      <ToastContainer />
+      <Routes>
       {/* Public route - accessible to everyone */}
       <Route path="/" element={<PublicPage />} />
       
@@ -38,5 +41,6 @@ export default function App() {
       {/* Catch all */}
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
+    </>
   );
 }

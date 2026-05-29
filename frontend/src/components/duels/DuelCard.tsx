@@ -15,6 +15,7 @@ interface DuelCardProps {
 export function DuelCard({ duel }: DuelCardProps) {
   const { t } = useTranslation();
   const { fetchMarkets, acceptDuel } = useProgram();
+  const { executeTransaction } = useBlockchainTransaction();
   const [parentMarket, setParentMarket] = useState<Market | null>(null);
   const [isAccepting, setIsAccepting] = useState(false);
 
@@ -31,7 +32,18 @@ export function DuelCard({ duel }: DuelCardProps) {
     if (duel.status !== DuelStatus.OPEN) return;
     setIsAccepting(true);
     try {
-      await acceptDuel(duel.id, position);
+      await executeTransaction(
+        async () => {
+          await acceptDuel(duel.id, position);
+          return `accept-duel-${duel.id}-${Date.now()}`;
+        },
+        {
+          pendingMessage: 'Accepting duel...',
+          successMessage: 'Duel accepted successfully!',
+          errorMessage: 'Failed to accept duel',
+          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+        }
+      );
     } catch (e) {
       console.error(e);
     } finally {
