@@ -27,6 +27,9 @@ import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { motion, AnimatePresence } from "motion/react";
 import { formatSOL, cn } from "@/src/lib/utils";
 import { useProgram } from "@/src/hooks/useProgram";
+import { useBlockchainTransaction } from "@/src/hooks/useBlockchainTransaction";
+import { useToast } from "@/src/context/ToastContext";
+import { apiUrl } from "@/src/lib/api";
 import { useTranslation } from "react-i18next";
 
 interface MarketDetailProps {
@@ -34,6 +37,7 @@ interface MarketDetailProps {
   onClose: () => void;
   readOnly?: boolean;
   onAuthRequired?: (action: string) => void;
+  onHostDuel?: () => void;
 }
 
 function MiniMarketChart({
@@ -43,30 +47,64 @@ function MiniMarketChart({
   isLynx: boolean;
   market: Market;
 }) {
+  const { t } = useTranslation();
+  const [historicalData, setHistoricalData] = useState<any[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadHistory = async () => {
+      try {
+        const response = await fetch(apiUrl(`/api/chart/klines?marketId=${encodeURIComponent(market.id)}&interval=1h&limit=48`));
+        const candles = await response.json();
+        if (!cancelled && Array.isArray(candles)) {
+          setHistoricalData(candles.map((candle: any) => {
+            const yes = Math.max(0, Math.min(100, Number(candle.close) * 100));
+            return {
+              time: candle.time,
+              YES: yes,
+              NO: market.isTernary ? Math.max(0, (100 - yes) / 2) : Math.max(0, 100 - yes),
+              DRAW: market.isTernary ? Math.max(0, (100 - yes) / 2) : 0,
+            };
+          }));
+        }
+      } catch (err) {
+        console.error("Failed to load market chart history", err);
+      }
+    };
+    loadHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [market.id, market.isTernary]);
+
   const total =
     (market.yesAmount || 0) + (market.noAmount || 0) + (market.drawAmount || 0);
-  if (total <= 0) {
+  const yesProb = total > 0 ? ((market.yesAmount || 0) / total) * 100 : 0;
+  const noProb = total > 0 ? ((market.noAmount || 0) / total) * 100 : 0;
+  const drawProb = market.isTernary
+    ? total > 0 ? ((market.drawAmount || 0) / total) * 100 : 0
+    : 0;
+  const snapshotData = total > 0
+    ? [
+        { time: 0, YES: yesProb, NO: noProb, DRAW: drawProb },
+        { time: 1, YES: yesProb, NO: noProb, DRAW: drawProb },
+      ]
+    : [];
+  const chartData = historicalData.length > 0 ? historicalData : snapshotData;
+
+  if (total <= 0 && chartData.length === 0) {
     return (
       <div className="w-full h-full flex items-center justify-center text-[10px] text-[#71717A] uppercase font-bold tracking-widest">
-        Sin trades aun
+        {t("marketDetail.noTradesYet", "No trades yet")}
       </div>
     );
   }
-  const yesProb = ((market.yesAmount || 0) / total) * 100;
-  const noProb = ((market.noAmount || 0) / total) * 100;
-  const drawProb = market.isTernary
-    ? ((market.drawAmount || 0) / total) * 100
-    : 0;
-  const marketData = [
-    { time: 0, YES: yesProb, NO: noProb, DRAW: drawProb },
-    { time: 1, YES: yesProb, NO: noProb, DRAW: drawProb },
-  ];
 
   return (
     <div className="w-full h-full">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart
-          data={marketData}
+          data={chartData}
           margin={{ top: 10, right: 0, left: -20, bottom: 0 }}
         >
           <CartesianGrid
@@ -126,11 +164,13 @@ export function MarketDetail({
   onClose,
   readOnly = false,
   onAuthRequired,
+  onHostDuel,
 }: MarketDetailProps) {
   const { t } = useTranslation();
   const { fetchDuels, executeTrade, fetchPositions, claimPosition } =
     useProgram();
   const { executeTransaction } = useBlockchainTransaction();
+  const { addToast } = useToast();
   const [marketDuels, setMarketDuels] = useState<Duel[]>([]);
 
   const [betAmount, setBetAmount] = useState("5.0");
@@ -177,7 +217,7 @@ export function MarketDetail({
 
   const handleQuickBet = async () => {
     if (readOnly) {
-      onAuthRequired?.("comprar o vender en mercados");
+      onAuthRequired?.(t("marketDetail.actionBuyMarket", "buy or sell in markets"));
       return;
     }
     setIsPending(true);
@@ -193,15 +233,22 @@ export function MarketDetail({
           return `trade-${market.id}-${Date.now()}`;
         },
         {
-          pendingMessage: `Placing ${betAmount} ${market.currency} on ${selectedSide}...`,
-          successMessage: `Trade executed successfully!`,
-          errorMessage: "Trade failed",
+          pendingMessage: t("marketDetail.tradePending", "Placing {{amount}} {{currency}} on {{side}}...", {
+            amount: betAmount,
+            currency: market.currency,
+            side: selectedSide,
+          }),
+          successMessage: t("marketDetail.tradeSuccess", "Trade executed successfully!"),
+          errorMessage: t("marketDetail.tradeFailed", "Trade failed"),
           explorerUrl: () => "https://explorer.solana.com?cluster=devnet",
         },
       );
-      onClose();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Quick bet failed", err);
+      addToast({
+        type: "error",
+        message: err?.message || t("marketDetail.tradeFailed", "Trade failed"),
+      });
     } finally {
       setIsPending(false);
     }
@@ -211,7 +258,7 @@ export function MarketDetail({
 
   const handleClaim = async () => {
     if (readOnly) {
-      onAuthRequired?.("reclamar payout");
+      onAuthRequired?.(t("marketDetail.actionClaimPayout", "claim payout"));
       return;
     }
     if (!claimablePosId) return;
@@ -220,34 +267,36 @@ export function MarketDetail({
       await executeTransaction(
         async () => {
           const result = await claimPosition(claimablePosId);
-          if (result) setClaimResult(result);
+          if (result) {
+            setClaimResult(result);
+            setClaimablePosId(null);
+          }
           return `claim-${claimablePosId}-${Date.now()}`;
         },
         {
-          pendingMessage: "Claiming payout...",
-          successMessage: "Position claimed successfully!",
-          errorMessage: "Failed to claim position",
+          pendingMessage: t("marketDetail.claimPending", "Claiming payout..."),
+          successMessage: t("marketDetail.claimSuccess", "Position claimed successfully!"),
+          errorMessage: t("marketDetail.claimFailed", "Failed to claim position"),
           explorerUrl: () => "https://explorer.solana.com?cluster=devnet",
         },
       );
-      return;
-    } catch (err) {
+    } catch (err: any) {
       console.error("Claim failed", err);
-      setIsClaiming(false);
-      return;
-    }
-    setIsClaiming(false);
-    try {
-      const result = await claimPosition(claimablePosId);
-      if (result) {
-        setClaimResult({ payout: result.payout, currency: result.currency });
-        setClaimablePosId(null);
-      }
-    } catch (err) {
-      console.error("Claim failed", err);
+      addToast({
+        type: "error",
+        message: err?.message || t("marketDetail.claimFailed", "Failed to claim position"),
+      });
     } finally {
       setIsClaiming(false);
     }
+  };
+
+  const handleHostDuel = () => {
+    if (readOnly) {
+      onAuthRequired?.(t("marketDetail.actionHostDuel", "host a duel"));
+      return;
+    }
+    onHostDuel?.();
   };
 
   const isLynx = market.currency === "LYNX";
@@ -603,6 +652,8 @@ export function MarketDetail({
                     )}
                   </h4>
                   <button
+                    type="button"
+                    onClick={handleHostDuel}
                     className={cn(
                       "px-4 py-1.5 rounded text-[10px] font-bold uppercase tracking-widest border transition-all",
                       isLynx
@@ -959,17 +1010,23 @@ export function MarketDetail({
                       {claimResult ? (
                         <div className="text-center">
                           <div className="text-[#00FFD1] font-black text-lg mb-1">
-                            ✓ Claimed!
+                            {t("marketDetail.claimed", "Claimed!")}
                           </div>
                           <div className="text-white text-sm font-bold">
-                            {claimResult.payout} {claimResult.currency} added to
-                            your balance
+                            {t(
+                              "marketDetail.claimAddedToBalance",
+                              "{{amount}} {{currency}} added to your balance",
+                              {
+                                amount: claimResult.payout,
+                                currency: claimResult.currency,
+                              },
+                            )}
                           </div>
                         </div>
                       ) : claimablePosId ? (
                         <>
                           <p className="text-[10px] text-[#00FFD1] uppercase font-black tracking-widest mb-3 text-center">
-                            🏆 You won this market!
+                            {t("marketDetail.youWonMarket", "You won this market!")}
                           </p>
                           <button
                             onClick={handleClaim}
@@ -979,16 +1036,18 @@ export function MarketDetail({
                             {isClaiming ? (
                               <>
                                 <div className="w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" />{" "}
-                                Claiming…
+                                {t("marketDetail.claiming", "Claiming...")}
                               </>
                             ) : (
-                              "Claim Payout"
+                              t("marketDetail.claimPayout", "Claim Payout")
                             )}
                           </button>
                         </>
                       ) : (
                         <p className="text-[10px] text-[#52525B] uppercase font-bold tracking-widest text-center">
-                          Market resolved · {market.result} won
+                          {t("marketDetail.marketResolvedWon", "Market resolved - {{result}} won", {
+                            result: market.result,
+                          })}
                         </p>
                       )}
                     </div>

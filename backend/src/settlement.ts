@@ -26,8 +26,8 @@ export interface SettlementResult {
 }
 
 const FEE_TOTAL_PERCENT = 0.10; // 10%
-const FEE_STAKING_PERCENT = 0.05; // 5% staking/dividends
-const FEE_TREASURY_PERCENT = 0.05; // 5% treasury
+const FEE_STAKING_SHARE = 0.50; // 50% of total fees
+const FEE_TREASURY_SHARE = 0.50; // 50% of total fees
 
 /**
  * Calculate settlement payouts for a market
@@ -41,8 +41,8 @@ export function calculateSettlement(input: SettlementInput): SettlementResult {
 
   // Calculate total fees
   const feeTotal = totalPoolAmount * FEE_TOTAL_PERCENT;
-  const feeStaking = totalPoolAmount * FEE_STAKING_PERCENT;
-  const feeTreasury = totalPoolAmount * FEE_TREASURY_PERCENT;
+  const feeStaking = feeTotal * FEE_STAKING_SHARE;
+  const feeTreasury = feeTotal * FEE_TREASURY_SHARE;
 
   // Amount available for winners after fees
   const amountForWinners = totalPoolAmount - feeTotal;

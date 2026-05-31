@@ -16,6 +16,7 @@ import { generateToken, verifyToken, hashPassword, hashPasswordSync, verifyPassw
 import { calculateSettlement, validateSettlement } from './settlement.js';
 
 const app = express();
+app.set('trust proxy', 1);
 const httpServer = http.createServer(app);
 const port = Number(process.env.PORT || 4000);
 const store = new LynxState();
@@ -54,7 +55,13 @@ if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
 // attach a simple request logger for body/query
 app.use((req, _res, next) => {
   try {
-    (req as any).log.info({ query: req.query, body: req.body }, 'request:received');
+    const safeBody = req.body && typeof req.body === 'object' ? { ...req.body } : req.body;
+    if (safeBody && typeof safeBody === 'object') {
+      for (const key of ['password', 'signature', 'signatureMessage']) {
+        if (key in safeBody) safeBody[key] = '[REDACTED]';
+      }
+    }
+    (req as any).log.info({ query: req.query, body: safeBody }, 'request:received');
   } catch (e) {
     // fallback
     logger.info({ method: req.method, path: req.path }, 'request:received');
@@ -67,10 +74,20 @@ io.on('connection', (socket) => {
     ok: true,
     markets: store.listMarkets().length
   });
+  socket.on('identify', (wallet: unknown) => {
+    if (typeof wallet === 'string' && wallet.trim()) {
+      socket.join(`wallet:${wallet.trim()}`);
+    }
+  });
 });
 
 function emit(event: string, payload: unknown) {
   io.emit(event, payload);
+}
+
+function emitPortfolioUpdated(wallet: string, portfolio: unknown) {
+  io.emit('portfolio:updated', { wallet });
+  io.to(`wallet:${wallet}`).emit('portfolio:updated:private', { wallet, portfolio });
 }
 
 async function persist() {
@@ -101,6 +118,29 @@ function requireAdminApiToken(req: express.Request, res: express.Response) {
   return true;
 }
 
+function createSimpleRateLimit({ windowMs, max }: { windowMs: number; max: number }) {
+  const attempts = new Map<string, { count: number; resetAt: number }>();
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const key = req.ip || req.socket.remoteAddress || 'unknown';
+    const now = Date.now();
+    const current = attempts.get(key);
+    if (!current || current.resetAt <= now) {
+      attempts.set(key, { count: 1, resetAt: now + windowMs });
+      next();
+      return;
+    }
+    if (current.count >= max) {
+      res.set('Retry-After', Math.ceil((current.resetAt - now) / 1000).toString());
+      res.status(429).json({ error: 'Too many requests. Try again later.' });
+      return;
+    }
+    current.count += 1;
+    next();
+  };
+}
+
+const authRateLimit = createSimpleRateLimit({ windowMs: 15 * 60 * 1000, max: 10 });
+
 // ==================== AUTH UTILITIES ====================
 
 // In-memory user store (replace with Prisma DB later)
@@ -115,16 +155,27 @@ interface AuthUser {
 }
 
 const users = new Map<string, AuthUser>();
+const configuredAdminPassword = process.env.ADMIN_PASSWORD
+  ?? (process.env.NODE_ENV === 'production' ? undefined : process.env.DEV_ADMIN_PASSWORD);
+const adminPassword = configuredAdminPassword ?? (process.env.NODE_ENV === 'test' ? 'admin123' : undefined);
 
-// Add default admin user for testing
-const adminUser: AuthUser = {
-  id: 'admin-1',
-  email: 'admin@lynx.local',
-  passwordHash: hashPasswordSync(process.env.DEV_ADMIN_PASSWORD || 'admin123'),
-  displayName: 'Admin',
-  role: 'admin'
-};
-users.set(adminUser.id, adminUser);
+if (process.env.NODE_ENV === 'production' && !adminPassword) {
+  throw new Error('ADMIN_PASSWORD must be set for the default admin user');
+}
+if (process.env.NODE_ENV === 'production' && adminPassword && !/^(?=.*[A-Z])(?=.*\d).{8,}$/.test(adminPassword)) {
+  throw new Error('ADMIN_PASSWORD must be at least 8 characters and include one uppercase letter and one number');
+}
+
+if (adminPassword) {
+  const adminUser: AuthUser = {
+    id: 'admin-1',
+    email: 'admin@lynx.local',
+    passwordHash: hashPasswordSync(adminPassword),
+    displayName: 'Admin',
+    role: 'admin'
+  };
+  users.set(adminUser.id, adminUser);
+}
 
 // Extract JWT from request
 app.use((req: any, _res, next) => {
@@ -213,10 +264,13 @@ const sideSchema = z.enum(['BUY', 'SELL']);
 
 // ==================== AUTH ENDPOINTS ====================
 
-app.post('/auth/register', asyncRoute(async (req, res) => {
+app.post('/auth/register', authRateLimit, asyncRoute(async (req, res) => {
   const body = z.object({
     email: z.string().email(),
-    password: z.string().min(6),
+    password: z.string()
+      .min(8, 'Minimum 8 characters')
+      .regex(/[A-Z]/, 'Must contain uppercase')
+      .regex(/[0-9]/, 'Must contain a number'),
     displayName: z.string().optional()
   }).parse(req.body);
 
@@ -250,7 +304,7 @@ app.post('/auth/register', asyncRoute(async (req, res) => {
   });
 }));
 
-app.post('/auth/login', asyncRoute(async (req, res) => {
+app.post('/auth/login', authRateLimit, asyncRoute(async (req, res) => {
   const body = z.object({
     email: z.string().email(),
     password: z.string()
@@ -632,7 +686,8 @@ app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
     reference: body.reference
   });
   await persist();
-  emit('ledger:deposit', { wallet, result });
+  emit('ledger:deposit', { wallet, ledgerEntry: result.ledgerEntry });
+  emitPortfolioUpdated(wallet, result.portfolio);
   res.status(201).json(result);
 }));
 
@@ -653,7 +708,8 @@ app.post('/api/ledger/withdraw', asyncRoute(async (req, res) => {
     reference: body.reference
   });
   await persist();
-  emit('ledger:withdrawal', { wallet, result });
+  emit('ledger:withdrawal', { wallet, ledgerEntry: result.ledgerEntry });
+  emitPortfolioUpdated(wallet, result.portfolio);
   res.json(result);
 }));
 
@@ -668,7 +724,7 @@ app.post('/api/positions/:id/claim', asyncRoute(async (req, res) => {
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
   const result = store.claimPosition(wallet, req.params.id);
   await persist();
-  emit('portfolio:updated', { wallet, portfolio: result.portfolio });
+  emitPortfolioUpdated(wallet, result.portfolio);
   res.json(result);
 }));
 
@@ -679,7 +735,7 @@ app.delete('/api/orders/:id', asyncRoute(async (req, res) => {
   const result = store.cancelOrder(wallet, req.params.id);
   await persist();
   emit('orderbook:updated', store.getOrderBook('LYNX/SOL'));
-  emit('portfolio:updated', { wallet, portfolio: result.portfolio });
+  emitPortfolioUpdated(wallet, result.portfolio);
   res.json(result);
 }));
 
@@ -690,7 +746,7 @@ app.post('/api/staking/stake', asyncRoute(async (req, res) => {
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
   const portfolio = store.stake(wallet, body.amount);
   await persist();
-  emit('portfolio:updated', { wallet, portfolio });
+  emitPortfolioUpdated(wallet, portfolio);
   res.json(portfolio);
 }));
 
@@ -701,7 +757,7 @@ app.post('/api/staking/unstake', asyncRoute(async (req, res) => {
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
   const portfolio = store.unstake(wallet, body.amount);
   await persist();
-  emit('portfolio:updated', { wallet, portfolio });
+  emitPortfolioUpdated(wallet, portfolio);
   res.json(portfolio);
 }));
 
@@ -712,7 +768,7 @@ app.post('/api/staking/claim', asyncRoute(async (req, res) => {
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
   const result = store.claimRewards(wallet);
   await persist();
-  emit('portfolio:updated', { wallet, portfolio: result.portfolio });
+  emitPortfolioUpdated(wallet, result.portfolio);
   res.json(result);
 }));
 
@@ -758,7 +814,8 @@ app.get('/api/chart/klines', (req, res) => {
   const symbol = typeof req.query.symbol === 'string' ? req.query.symbol : 'LYNX';
   const interval = typeof req.query.interval === 'string' ? req.query.interval : '1d';
   const limit = Number(req.query.limit || 100);
-  res.json(store.klines(symbol, interval, limit));
+  const marketId = typeof req.query.marketId === 'string' ? req.query.marketId : undefined;
+  res.json(store.klines(symbol, interval, limit, marketId));
 });
 
 app.get('/api/notifications', (req, res) => {
@@ -844,6 +901,9 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 });
 
 async function start() {
+  if (process.env.NODE_ENV === 'production' && persistence.driver !== 'prisma') {
+    throw new Error('STORE_DRIVER must be "prisma" in production');
+  }
   await persistence.load(store);
   httpServer.listen(port, '0.0.0.0', () => {
     console.log(`Lynx backend listening on http://0.0.0.0:${port}`);

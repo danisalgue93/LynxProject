@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useBlockchainTransaction } from '@/src/hooks/useBlockchainTransaction';
 import { getTxExplorerUrl } from '@/src/lib/explorer';
+import { useToast } from '@/src/context/ToastContext';
 
 async function openSignedMoonPay(walletAddress?: string) {
   const params = new URLSearchParams({ currencyCode: 'sol' });
@@ -22,12 +23,19 @@ async function openSignedMoonPay(walletAddress?: string) {
   window.open(data.url, '_blank', 'width=500,height=700,noopener');
 }
 
+function getPendingRewards(portfolio?: Portfolio | null) {
+  if (!portfolio) return 0;
+  if (typeof portfolio.totalProfit === 'number') return portfolio.totalProfit;
+  return portfolio.payments?.reduce((total, payment: any) => total + (Number(payment.amount) || 0), 0) || 0;
+}
+
 export function PortfolioView() {
   const { t } = useTranslation();
   const { publicKey } = useWallet();
   const walletAddress = publicKey?.toBase58();
-  const { fetchMarkets, fetchPortfolio, claimRewards, stakeLynx, unstakeLynx, isLoading, error } = useProgram();
+  const { fetchMarkets, fetchPortfolio, claimRewards, stakeLynx, unstakeLynx, depositSol, withdrawSol, isLoading, error } = useProgram();
   const { executeTransaction } = useBlockchainTransaction();
+  const { addToast } = useToast();
   const [markets, setMarkets] = useState<Market[]>([]);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [isClaiming, setIsClaiming] = useState(false);
@@ -36,6 +44,8 @@ export function PortfolioView() {
   const [stakeAmount, setStakeAmount] = useState('');
   const [activeTab, setActiveTab] = useState<'wallet' | 'portfolio' | 'staking'>('wallet');
   const [moonPayError, setMoonPayError] = useState<string | null>(null);
+  const [solLedgerAmount, setSolLedgerAmount] = useState('');
+  const [isLedgerPending, setIsLedgerPending] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -57,6 +67,7 @@ export function PortfolioView() {
   }, [fetchMarkets, fetchPortfolio]);
 
   const handleClaim = async () => {
+    if (getPendingRewards(portfolio) <= 0) return;
     setIsClaiming(true);
     try {
       await executeTransaction(
@@ -66,14 +77,18 @@ export function PortfolioView() {
           return `claim-${Date.now()}`;
         },
         {
-          pendingMessage: 'Claiming staking rewards...',
-          successMessage: 'Rewards claimed successfully!',
-          errorMessage: 'Failed to claim rewards',
+          pendingMessage: t('portfolio.claimRewardsPending', 'Claiming staking rewards...'),
+          successMessage: t('portfolio.claimRewardsSuccess', 'Rewards claimed successfully!'),
+          errorMessage: t('portfolio.claimRewardsFailed', 'Failed to claim rewards'),
           explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
         }
       );
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      addToast({
+        type: 'error',
+        message: err?.message || t('portfolio.claimRewardsFailed', 'Failed to claim rewards'),
+      });
     } finally {
       setIsClaiming(false);
     }
@@ -96,17 +111,74 @@ export function PortfolioView() {
           return `${stakeMode}-${amount}-${Date.now()}`;
         },
         {
-          pendingMessage: `${stakeMode === 'stake' ? 'Staking' : 'Unstaking'} ${amount} LYNX...`,
-          successMessage: `${stakeMode === 'stake' ? 'Staked' : 'Unstaked'} ${amount} LYNX successfully!`,
-          errorMessage: `Failed to ${stakeMode} LYNX`,
+          pendingMessage: t(
+            stakeMode === 'stake' ? 'portfolio.stakePending' : 'portfolio.unstakePending',
+            stakeMode === 'stake' ? 'Staking {{amount}} LYNX...' : 'Unstaking {{amount}} LYNX...',
+            { amount }
+          ),
+          successMessage: t(
+            stakeMode === 'stake' ? 'portfolio.stakeSuccess' : 'portfolio.unstakeSuccess',
+            stakeMode === 'stake' ? 'Staked {{amount}} LYNX successfully!' : 'Unstaked {{amount}} LYNX successfully!',
+            { amount }
+          ),
+          errorMessage: t(
+            stakeMode === 'stake' ? 'portfolio.stakeFailed' : 'portfolio.unstakeFailed',
+            stakeMode === 'stake' ? 'Failed to stake LYNX' : 'Failed to unstake LYNX'
+          ),
           explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
         }
       );
       setStakeAmount('');
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      addToast({
+        type: 'error',
+        message: err?.message || t('portfolio.stakeActionFailed', 'Failed to update staking'),
+      });
     } finally {
       setIsStaking(false);
+    }
+  };
+
+  const handleSolLedgerAction = async (mode: 'deposit' | 'withdraw') => {
+    const amount = Number(solLedgerAmount);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    setIsLedgerPending(true);
+    try {
+      await executeTransaction(
+        async () => {
+          const updated = mode === 'deposit'
+            ? await depositSol(amount)
+            : await withdrawSol(amount);
+          if (updated) setPortfolio(updated);
+          return `${mode}-sol-${amount}-${Date.now()}`;
+        },
+        {
+          pendingMessage: t(
+            mode === 'deposit' ? 'portfolio.depositPending' : 'portfolio.withdrawPending',
+            mode === 'deposit' ? 'Depositing {{amount}} SOL...' : 'Withdrawing {{amount}} SOL...',
+            { amount }
+          ),
+          successMessage: t(
+            mode === 'deposit' ? 'portfolio.depositSuccess' : 'portfolio.withdrawSuccess',
+            mode === 'deposit' ? 'Deposit completed!' : 'Withdrawal completed!'
+          ),
+          errorMessage: t(
+            mode === 'deposit' ? 'portfolio.depositFailed' : 'portfolio.withdrawFailed',
+            mode === 'deposit' ? 'Failed to deposit SOL' : 'Failed to withdraw SOL'
+          ),
+          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+        }
+      );
+      setSolLedgerAmount('');
+    } catch (err: any) {
+      console.error(err);
+      addToast({
+        type: 'error',
+        message: err?.message || t('portfolio.ledgerActionFailed', 'Failed to update SOL balance'),
+      });
+    } finally {
+      setIsLedgerPending(false);
     }
   };
 
@@ -128,6 +200,11 @@ export function PortfolioView() {
       </div>
     );
   }
+
+  const pendingRewards = getPendingRewards(portfolio);
+  const hasPendingRewards = pendingRewards > 0;
+  const solLedgerValue = Number(solLedgerAmount);
+  const isSolLedgerAmountInvalid = !Number.isFinite(solLedgerValue) || solLedgerValue <= 0;
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -196,6 +273,36 @@ export function PortfolioView() {
                     <div className="bg-[#141417] p-4 rounded border border-[#27272A] flex-1">
                       <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-2">LYNX Balance</div>
                       <div className="font-mono font-bold text-[#9945FF]">{formatNumber(portfolio.lynxBalance)}</div>
+                    </div>
+                 </div>
+                 <div className="bg-[#141417] p-4 rounded border border-[#27272A]">
+                    <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-3">SOL Ledger</div>
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={solLedgerAmount}
+                        onChange={(e) => setSolLedgerAmount(e.target.value)}
+                        placeholder="0.00 SOL"
+                        className="flex-1 bg-[#18181B] border border-[#27272A] rounded p-3 text-sm text-white outline-none focus:border-[#00FFD1]"
+                      />
+                      <div className="grid grid-cols-2 gap-2 sm:w-56">
+                        <button
+                          onClick={() => handleSolLedgerAction('deposit')}
+                          disabled={isLedgerPending || isSolLedgerAmountInvalid}
+                          className="rounded bg-[#00FFD1] text-black px-3 py-2 text-[10px] font-black uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {t('portfolio.deposit', 'Deposit')}
+                        </button>
+                        <button
+                          onClick={() => handleSolLedgerAction('withdraw')}
+                          disabled={isLedgerPending || isSolLedgerAmountInvalid}
+                          className="rounded bg-[#18181B] text-white border border-[#27272A] px-3 py-2 text-[10px] font-black uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {t('portfolio.withdraw', 'Withdraw')}
+                        </button>
+                      </div>
                     </div>
                  </div>
                </div>
@@ -275,10 +382,11 @@ export function PortfolioView() {
                 </div>
                 <button 
                   onClick={handleClaim}
-                  disabled={isClaiming}
+                  disabled={isClaiming || !hasPendingRewards}
+                  title={!hasPendingRewards ? t('portfolio.noRewardsToClaim', 'No rewards to claim') : undefined}
                   className={cn(
                   "text-[9px] md:text-[10px] font-bold text-[#00FFD1] hover:underline uppercase tracking-widest",
-                  isClaiming && "opacity-50 cursor-not-allowed"
+                  (isClaiming || !hasPendingRewards) && "opacity-50 cursor-not-allowed hover:no-underline"
                 )}>{t('portfolio.claimAll', 'Claim All')}</button>
               </div>
               
@@ -322,10 +430,10 @@ export function PortfolioView() {
                       </div>
                       <button 
                         onClick={handleClaim}
-                        disabled={isClaiming}
+                        disabled={isClaiming || !hasPendingRewards}
                         className={cn(
                         "px-4 py-2 bg-[#00FFD1] text-black text-[10px] font-black uppercase rounded tracking-tight hover:scale-105 active:scale-95 transition-all",
-                        isClaiming && "opacity-50 hover:scale-100 active:scale-100 cursor-not-allowed",
+                        (isClaiming || !hasPendingRewards) && "opacity-50 hover:scale-100 active:scale-100 cursor-not-allowed",
                         (claim.token || 'SOL') === 'LYNX' && "bg-[#9945FF] text-white"
                       )}>
                         {t('portfolio.claim', 'Claim')}
@@ -423,12 +531,13 @@ export function PortfolioView() {
 
               <button 
                 onClick={handleClaim}
-                disabled={isClaiming}
+                disabled={isClaiming || !hasPendingRewards}
+                title={!hasPendingRewards ? t('portfolio.noRewardsToClaim', 'No rewards to claim') : undefined}
                 className={cn(
                 "w-full py-3 lg:mb-0 mb-6 bg-gradient-to-r from-[#00FFD1] to-[#9945FF] text-black font-black text-xs rounded shadow-[0_0_20px_rgba(0,255,209,0.2)] uppercase tracking-tighter transition-all hover:scale-[1.02] active:scale-95",
-                isClaiming && "opacity-50 cursor-not-allowed hover:scale-100 active:scale-100"
+                (isClaiming || !hasPendingRewards) && "opacity-50 cursor-not-allowed hover:scale-100 active:scale-100"
               )}>
-                {t('portfolio.claimAmount', 'Claim {{amount}} SOL', { amount: portfolio.totalProfit || '0.00' })}
+                {t('portfolio.claimAmount', 'Claim {{amount}} SOL', { amount: pendingRewards || '0.00' })}
               </button>
             </div>
 

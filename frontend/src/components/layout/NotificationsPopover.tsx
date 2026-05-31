@@ -3,6 +3,7 @@ import { Trophy, Coins, Info } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/src/lib/utils';
 import { apiFetch } from '@/src/lib/api';
+import { useToast } from '@/src/context/ToastContext';
 
 export type NotificationType = 'tournament_entry' | 'tournament_ended' | 'claimable' | 'system_info' | 'trade' | 'market_resolved';
 
@@ -25,6 +26,7 @@ interface NotificationsPopoverProps {
 
 export function NotificationsPopover({ isOpen, onClose, wallet, notifications, setNotifications }: NotificationsPopoverProps) {
   const { t } = useTranslation();
+  const { addToast } = useToast();
 
   if (!isOpen) return null;
 
@@ -37,8 +39,12 @@ export function NotificationsPopover({ isOpen, onClose, wallet, notifications, s
         body: JSON.stringify({ wallet })
       });
       setNotifications(data.map(n => ({ ...n, timestamp: new Date(n.timestamp || Date.now()) })));
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to mark notifications read', err);
+      addToast({
+        type: 'error',
+        message: err?.message || t('notifications.markReadFailed', 'Failed to update notifications'),
+      });
     }
   };
 
@@ -49,8 +55,12 @@ export function NotificationsPopover({ isOpen, onClose, wallet, notifications, s
         body: JSON.stringify({ wallet, id })
       });
       setNotifications(data.map(n => ({ ...n, timestamp: new Date(n.timestamp || Date.now()) })));
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to mark notification read', err);
+      addToast({
+        type: 'error',
+        message: err?.message || t('notifications.markReadFailed', 'Failed to update notifications'),
+      });
     }
   };
 

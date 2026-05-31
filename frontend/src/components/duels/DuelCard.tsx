@@ -3,8 +3,11 @@ import { Duel, DuelStatus, Market, Position } from '@/src/types';
 import { formatSOL, cn } from '@/src/lib/utils';
 import { Sword, User, Timer, ArrowRight, Shield } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useWallet } from '@solana/wallet-adapter-react';
 import { STATUS_COLORS } from '@/src/constants';
 import { useProgram } from '@/src/hooks/useProgram';
+import { useBlockchainTransaction } from '@/src/hooks/useBlockchainTransaction';
+import { getManagedWalletAddress, useManagedAuthSession } from '@/src/lib/auth';
 import { useTranslation } from 'react-i18next';
 
 interface DuelCardProps {
@@ -16,6 +19,8 @@ export function DuelCard({ duel }: DuelCardProps) {
   const { t } = useTranslation();
   const { fetchMarkets, acceptDuel } = useProgram();
   const { executeTransaction } = useBlockchainTransaction();
+  const { publicKey } = useWallet();
+  const managedSession = useManagedAuthSession();
   const [parentMarket, setParentMarket] = useState<Market | null>(null);
   const [isAccepting, setIsAccepting] = useState(false);
 
@@ -29,7 +34,7 @@ export function DuelCard({ duel }: DuelCardProps) {
   }, [duel.parentMarketId, fetchMarkets]);
 
   const handleAccept = async (position?: Position) => {
-    if (duel.status !== DuelStatus.OPEN) return;
+    if (duel.status !== DuelStatus.OPEN || isCreator) return;
     setIsAccepting(true);
     try {
       await executeTransaction(
@@ -38,9 +43,9 @@ export function DuelCard({ duel }: DuelCardProps) {
           return `accept-duel-${duel.id}-${Date.now()}`;
         },
         {
-          pendingMessage: 'Accepting duel...',
-          successMessage: 'Duel accepted successfully!',
-          errorMessage: 'Failed to accept duel',
+          pendingMessage: t('duels.acceptPending', 'Accepting duel...'),
+          successMessage: t('duels.acceptSuccess', 'Duel accepted successfully!'),
+          errorMessage: t('duels.acceptFailed', 'Failed to accept duel'),
           explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
         }
       );
@@ -53,6 +58,13 @@ export function DuelCard({ duel }: DuelCardProps) {
 
   const isOpen = duel.status === DuelStatus.OPEN;
   const isLynx = duel.currency === 'LYNX';
+  const currentWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || '';
+  const isCreator = Boolean(currentWallet && duel.creator === currentWallet);
+  const cannotAcceptOwnDuelLabel = t('duels.cannotAcceptOwn', 'You created this duel');
+  const ownDuelButtonLabel = t('duels.ownDuel', 'Own Duel');
+  const acceptableTernaryPositions = [Position.YES, Position.NO, Position.DRAW].filter(
+    (position) => position !== duel.positionA
+  );
 
   const displayAmount = duel.currency === 'LYNX' ? `${(duel.amount * 1).toLocaleString()} $LYNX` : formatSOL(duel.amount);
 
@@ -208,22 +220,24 @@ export function DuelCard({ duel }: DuelCardProps) {
         <div className="mt-auto hidden" />
         <div className="mt-auto shrink-0">
           {duel.isTernary && isOpen ? (
-            <div className="grid grid-cols-2 gap-2 h-10 md:h-12">
-              {[Position.YES, Position.NO, Position.DRAW]
-                .filter(p => p !== duel.positionA)
-                .map(pos => (
+            <div className={cn(
+              "grid gap-2 h-10 md:h-12",
+              acceptableTernaryPositions.length === 3 ? "grid-cols-3" : "grid-cols-2"
+            )}>
+              {acceptableTernaryPositions.map(pos => (
                   <button
                     key={pos}
                     onClick={() => handleAccept(pos)}
-                    disabled={isAccepting}
+                    disabled={isAccepting || isCreator}
+                    title={isCreator ? cannotAcceptOwnDuelLabel : undefined}
                     className={cn(
                       "w-full h-full rounded font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden",
                       "bg-[#00FFD1] text-black hover:bg-[#00E5BC] shadow-[0_0_15px_rgba(0,255,209,0.2)]",
-                      isAccepting && "opacity-50 cursor-not-allowed hover:bg-[#00FFD1]"
+                      (isAccepting || isCreator) && "opacity-50 cursor-not-allowed hover:bg-[#00FFD1]"
                     )}
                   >
                     <span className="truncate">
-                      {isAccepting ? t('duels.accepting', "...") : (
+                      {isCreator ? ownDuelButtonLabel : isAccepting ? t('duels.accepting', "...") : (
                         pos === Position.YES ? t('marketDetail.optA', 'OPT A') : 
                         pos === Position.NO ? t('marketDetail.optB', 'OPT B') : 
                         t('marketDetail.draw', 'DRAW')
@@ -236,15 +250,16 @@ export function DuelCard({ duel }: DuelCardProps) {
             <div className="h-10 md:h-12">
               <button 
                 onClick={() => handleAccept()}
-                 disabled={isAccepting || (!isOpen && duel.status !== DuelStatus.OPEN)}
+                 disabled={isAccepting || isCreator || (!isOpen && duel.status !== DuelStatus.OPEN)}
+                 title={isCreator ? cannotAcceptOwnDuelLabel : undefined}
                  className={cn(
                  "w-full h-full rounded font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 whitespace-nowrap",
                  isOpen 
                    ? "bg-[#00FFD1] text-black hover:bg-[#00E5BC] shadow-[0_0_15px_rgba(0,255,209,0.2)]" 
                    : "bg-[#18181B] text-[#71717A] border border-[#27272A] hover:text-white",
-                 isAccepting && "opacity-50 cursor-not-allowed hover:bg-[#00FFD1]"
+                 (isAccepting || isCreator) && "opacity-50 cursor-not-allowed hover:bg-[#00FFD1]"
                )}>
-                 <span className="truncate">{isAccepting ? t('duels.accepting', "Accepting...") : (isOpen ? t('duels.acceptDuel', "Accept Duel") : t('duels.matchProgress', "Match Progress"))}</span>
+                 <span className="truncate">{isCreator ? ownDuelButtonLabel : isAccepting ? t('duels.accepting', "Accepting...") : (isOpen ? t('duels.acceptDuel', "Accept Duel") : t('duels.matchProgress', "Match Progress"))}</span>
                  <ArrowRight className="w-2.5 h-2.5 md:w-3 md:h-3 shrink-0" />
                </button>
             </div>

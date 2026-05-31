@@ -88,7 +88,7 @@ export function SettingsView() {
     }
 
     if (!publicKey || !signMessage) {
-      setLinkError('No wallet is ready. Conecta Phantom o Solflare primero.');
+      setLinkError(t('settings.walletNotReady', 'No wallet is ready. Connect Phantom or Solflare first.'));
       return;
     }
 
@@ -109,18 +109,18 @@ export function SettingsView() {
           const signature = window.btoa(binary);
 
           await linkWallet(walletAddress, signatureMessage, signature);
-          setLinkSuccess('Wallet vinculada correctamente a tu cuenta.');
+          setLinkSuccess(t('settings.walletLinked', 'Wallet linked to your account.'));
           return `link-${walletAddress}-${Date.now()}`;
         },
         {
-          pendingMessage: 'Linking wallet to account...',
-          successMessage: 'Wallet linked successfully!',
-          errorMessage: 'Failed to link wallet',
+          pendingMessage: t('settings.linkWalletPending', 'Linking wallet to account...'),
+          successMessage: t('settings.linkWalletSuccess', 'Wallet linked successfully!'),
+          errorMessage: t('settings.linkWalletFailed', 'Failed to link wallet'),
           explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
         }
       );
     } catch (error: any) {
-      setLinkError(error?.message || 'Error al vincular la wallet');
+      setLinkError(error?.message || t('settings.linkWalletFailed', 'Failed to link wallet'));
       console.error('Link wallet failed', error);
     } finally {
       setLinking(false);
@@ -135,18 +135,18 @@ export function SettingsView() {
       await executeTransaction(
         async () => {
           await unlinkWallet();
-          setLinkSuccess('Wallet desvinculada. Puedes enlazar otra wallet ahora.');
+          setLinkSuccess(t('settings.walletUnlinked', 'Wallet unlinked. You can link another wallet now.'));
           return `unlink-${Date.now()}`;
         },
         {
-          pendingMessage: 'Unlinking wallet from account...',
-          successMessage: 'Wallet unlinked successfully!',
-          errorMessage: 'Failed to unlink wallet',
+          pendingMessage: t('settings.unlinkWalletPending', 'Unlinking wallet from account...'),
+          successMessage: t('settings.unlinkWalletSuccess', 'Wallet unlinked successfully!'),
+          errorMessage: t('settings.unlinkWalletFailed', 'Failed to unlink wallet'),
           explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
         }
       );
     } catch (error: any) {
-      setLinkError(error?.message || 'Error al desvincular la wallet');
+      setLinkError(error?.message || t('settings.unlinkWalletFailed', 'Failed to unlink wallet'));
       console.error('Unlink wallet failed', error);
     }
   };

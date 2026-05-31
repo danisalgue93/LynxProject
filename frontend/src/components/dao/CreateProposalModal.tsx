@@ -3,6 +3,7 @@ import { X, PlusCircle, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/src/lib/utils';
+import { useToast } from '@/src/context/ToastContext';
 
 interface Props {
   onClose: () => void;
@@ -11,6 +12,7 @@ interface Props {
 
 export function CreateProposalModal({ onClose, onSubmit }: Props) {
   const { t } = useTranslation();
+  const { addToast } = useToast();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('general');
@@ -22,8 +24,12 @@ export function CreateProposalModal({ onClose, onSubmit }: Props) {
     try {
       await onSubmit({ title: title.trim(), description: description.trim(), category: category.trim() });
       onClose();
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      addToast({
+        type: 'error',
+        message: e?.message || t('governance.createProposalFailed', 'Failed to create proposal'),
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -44,7 +50,7 @@ export function CreateProposalModal({ onClose, onSubmit }: Props) {
               <div className="text-[10px] text-[#71717A] font-bold uppercase tracking-widest">{t('governance.createProposalDesc', 'Propose a change to the protocol')}</div>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 text-[#52525B] hover:text-white"><X className="w-5 h-5" /></button>
+          <button type="button" aria-label={t('common.close', 'Close')} onClick={onClose} className="p-2 text-[#52525B] hover:text-white"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="p-6 space-y-4">

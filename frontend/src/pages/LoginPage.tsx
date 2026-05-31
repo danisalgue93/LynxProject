@@ -143,11 +143,11 @@ export function LoginPage() {
           </div>
         </div>
 
-        <div className="mt-8 text-center text-slate-400 text-sm">
-          <p>
-            Test account: <strong>admin@lynx.local</strong> / <strong>admin123</strong>
-          </p>
-        </div>
+        {import.meta.env.DEV && (
+          <div className="mt-8 text-center text-slate-400 text-sm">
+            <p>Use the configured local admin credentials.</p>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -10,6 +10,11 @@ export const LYNX_TREASURY_SHARE = 0.1;
 export const LYNX_INITIAL_SALE_SHARE = 0.6;
 
 export const DEV_WALLET = 'DEV_WALLET';
+
+if (process.env.NODE_ENV === 'production' && !process.env.TREASURY_WALLET) {
+  throw new Error('TREASURY_WALLET must be set in production');
+}
+
 export const TREASURY_WALLET = process.env.TREASURY_WALLET || 'LYNX_DEV_TREASURY';
 
 export function roundAmount(value: number) {

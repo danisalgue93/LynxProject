@@ -345,6 +345,49 @@ export function useProgram() {
     }
   }, [ensureApproved]);
 
+  const depositSol = useCallback(async (amount: number) => {
+    setIsLoading(true);
+    try {
+      const currentWallet = await ensureApproved();
+      const result = await apiFetch<{ portfolio: Portfolio }>('/api/ledger/deposit', {
+        method: 'POST',
+        body: JSON.stringify({
+          wallet: currentWallet,
+          currency: 'SOL',
+          amount,
+          provider: 'EXTERNAL_WALLET',
+        }),
+      });
+      return result.portfolio;
+    } catch (err: any) {
+      setError(err.message || 'Failed to deposit SOL');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [ensureApproved]);
+
+  const withdrawSol = useCallback(async (amount: number) => {
+    setIsLoading(true);
+    try {
+      const currentWallet = await ensureApproved();
+      const result = await apiFetch<{ portfolio: Portfolio }>('/api/ledger/withdraw', {
+        method: 'POST',
+        body: JSON.stringify({
+          wallet: currentWallet,
+          currency: 'SOL',
+          amount,
+        }),
+      });
+      return result.portfolio;
+    } catch (err: any) {
+      setError(err.message || 'Failed to withdraw SOL');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [ensureApproved]);
+
   // Fetch positions for the current wallet
   const fetchPositions = useCallback(async () => {
     try {
@@ -411,6 +454,8 @@ export function useProgram() {
     stakeLynx,
     fetchTransactions,
     unstakeLynx,
+    depositSol,
+    withdrawSol,
     claimRewards,
     claimPosition,
     cancelOrder,

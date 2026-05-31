@@ -10,6 +10,7 @@ import { Market, Position } from '@/src/types';
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Line, LineChart } from 'recharts';
 import { apiUrl } from '@/src/lib/api';
 import { getManagedWalletAddress, useManagedAuthSession } from '@/src/lib/auth';
+import { useToast } from '@/src/context/ToastContext';
 
 function MarketChart({ isLynxSol, market, chartType = 'line', chartRange = '1M', chartInterval = '1D', chartSize }: { isLynxSol: boolean; market: Market | null; chartType?: 'line' | 'candle'; chartRange?: string; chartInterval?: string; chartSize?: 'minimized' | 'normal' | 'expanded' }) {
   const [tokenData, setTokenData] = useState<any[]>([]);
@@ -212,6 +213,7 @@ function MarketChart({ isLynxSol, market, chartType = 'line', chartRange = '1M',
 
 export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?: boolean; onAuthRequired?: (action: string) => void }) {
   const { t } = useTranslation();
+  const { addToast } = useToast();
   const { publicKey } = useWallet();
   const managedSession = useManagedAuthSession();
   const myWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || '';
@@ -237,6 +239,20 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
   const [predAmount, setPredAmount] = useState('5.0');
   
   const [isPending, setIsPending] = useState(false);
+  const lynxOrderAmount = parseFloat(lynxAmount);
+  const lynxOrderPrice = parseFloat(lynxPrice);
+  const isLynxOrderInvalid =
+    !Number.isFinite(lynxOrderAmount) ||
+    lynxOrderAmount <= 0 ||
+    !Number.isFinite(lynxOrderPrice) ||
+    lynxOrderPrice <= 0;
+  const predOrderAmount = parseFloat(predAmount);
+  const predOrderPrice = parseFloat(predPrice);
+  const isPredOrderInvalid =
+    !isLynxSol &&
+    (!Number.isFinite(predOrderAmount) ||
+      predOrderAmount <= 0 ||
+      (predTradeType === 'limit' && (!Number.isFinite(predOrderPrice) || predOrderPrice <= 0)));
   
   // Chart state
   const [chartType, setChartType] = useState<'line' | 'candle'>('candle');
@@ -296,20 +312,31 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
 
   const handleLynxTrade = async () => {
     if (readOnly) {
-      onAuthRequired?.('comprar o vender LYNX');
+      onAuthRequired?.(t('orderbook.actionBuyLynx', 'buy or sell LYNX'));
+      return;
+    }
+    if (isLynxOrderInvalid) {
+      addToast({
+        type: 'error',
+        message: t('orderbook.invalidOrder', 'Enter a valid amount and price.'),
+      });
       return;
     }
     setIsPending(true);
     try {
       await executeLynxOrder(
         lynxSide === 'buy' ? 'BUY' : 'SELL',
-        parseFloat(lynxAmount) || 0,
-        parseFloat(lynxPrice) || 0
+        lynxOrderAmount,
+        lynxOrderPrice
       );
       const data = await fetchOrderBook('LYNX/SOL');
       setLynxOrderBook(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      addToast({
+        type: 'error',
+        message: err?.message || t('orderbook.orderFailed', 'Order failed'),
+      });
     } finally {
       setIsPending(false);
     }
@@ -317,21 +344,32 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
 
   const handlePredTrade = async () => {
     if (readOnly) {
-      onAuthRequired?.('comprar o vender en mercados');
+      onAuthRequired?.(t('orderbook.actionBuyPred', 'buy or sell in markets'));
       return;
     }
     if (!selectedMarketId || selectedMarketId === 'lynx-sol') return;
+    if (isPredOrderInvalid) {
+      addToast({
+        type: 'error',
+        message: t('orderbook.invalidOrder', 'Enter a valid amount and price.'),
+      });
+      return;
+    }
     setIsPending(true);
     try {
       await executeTrade(
         selectedMarketId, 
-        parseFloat(predAmount), 
+        predOrderAmount, 
         predSide,
-        predTradeType, 
-        predTradeType === 'limit' ? parseFloat(predPrice) : undefined
+        predTradeType,
+        predTradeType === 'limit' ? predOrderPrice : undefined
       );
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      addToast({
+        type: 'error',
+        message: err?.message || t('orderbook.orderFailed', 'Order failed'),
+      });
     } finally {
       setIsPending(false);
     }
@@ -354,15 +392,19 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
 
   const handleCancelOrder = async (orderId: string) => {
     if (readOnly) {
-      onAuthRequired?.('cancelar ordenes');
+      onAuthRequired?.(t('orderbook.actionCancelOrder', 'cancel orders'));
       return;
     }
     setCancellingId(orderId);
     try {
       await cancelOrder(orderId);
       // Orderbook will refresh via socket event
-    } catch (err) {
+    } catch (err: any) {
       console.error('Cancel order failed', err);
+      addToast({
+        type: 'error',
+        message: err?.message || t('orderbook.cancelFailed', 'Failed to cancel order'),
+      });
     } finally {
       setCancellingId(null);
     }
@@ -543,12 +585,24 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                      )}
                      <div className="flex items-center gap-1 bg-[#141417] p-0.5 rounded border border-[#27272A] ml-auto">
                         {chartSize !== 'minimized' && (
-                          <button onClick={() => setChartSize(chartSize === 'expanded' ? 'normal' : 'expanded')} className="p-1 hover:bg-[#27272A] rounded text-[#A1A1AA] hover:text-white transition-colors">
+                          <button
+                            type="button"
+                            aria-label={chartSize === 'expanded' ? t('orderbook.restoreChart', 'Restore chart') : t('orderbook.expandChart', 'Expand chart')}
+                            title={chartSize === 'expanded' ? t('orderbook.restoreChart', 'Restore chart') : t('orderbook.expandChart', 'Expand chart')}
+                            onClick={() => setChartSize(chartSize === 'expanded' ? 'normal' : 'expanded')}
+                            className="p-1 hover:bg-[#27272A] rounded text-[#A1A1AA] hover:text-white transition-colors"
+                          >
                             {chartSize === 'expanded' ? <Minimize2 className="w-3 h-3 lg:w-4 lg:h-4" /> : <Maximize2 className="w-3 h-3 lg:w-4 lg:h-4" />}
                           </button>
                         )}
                         {chartSize !== 'expanded' && (
-                          <button onClick={() => setChartSize(chartSize === 'minimized' ? 'normal' : 'minimized')} className="p-1 hover:bg-[#27272A] rounded text-[#A1A1AA] hover:text-white transition-colors">
+                          <button
+                            type="button"
+                            aria-label={chartSize === 'minimized' ? t('orderbook.showChart', 'Show chart') : t('orderbook.hideChart', 'Hide chart')}
+                            title={chartSize === 'minimized' ? t('orderbook.showChart', 'Show chart') : t('orderbook.hideChart', 'Hide chart')}
+                            onClick={() => setChartSize(chartSize === 'minimized' ? 'normal' : 'minimized')}
+                            className="p-1 hover:bg-[#27272A] rounded text-[#A1A1AA] hover:text-white transition-colors"
+                          >
                             {chartSize === 'minimized' ? <ChevronDown className="w-3 h-3 lg:w-4 lg:h-4" /> : <ChevronUp className="w-3 h-3 lg:w-4 lg:h-4" />}
                           </button>
                         )}
@@ -841,7 +895,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
 
                    <button 
                      onClick={isLynxSol ? handleLynxTrade : handlePredTrade}
-                     disabled={isPending}
+                     disabled={isPending || (isLynxSol && isLynxOrderInvalid) || isPredOrderInvalid}
                      className={cn(
                      "w-full py-2 lg:py-5 rounded text-black font-black uppercase text-[10px] lg:text-sm tracking-widest shadow-2xl transition-all hover:scale-[1.02] active:scale-95 shrink-0 flex items-center justify-center gap-2",
                      isLynxSol 
@@ -849,7 +903,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                         : ((predSide === Position.NO || predSide === Position.B)
                             ? "bg-red-400 shadow-red-400/30 text-white" 
                             : (selectedMarket?.currency === 'LYNX' ? "bg-[#9945FF] shadow-[#9945FF]/30 text-white" : "bg-[#00FFD1] shadow-[#00FFD1]/30 text-black")),
-                     isPending && "opacity-50 cursor-not-allowed"
+                     (isPending || (isLynxSol && isLynxOrderInvalid) || isPredOrderInvalid) && "opacity-50 cursor-not-allowed"
                    )}>
                      {isPending && <Loader2 className="w-3 h-3 lg:w-4 lg:h-4 animate-spin" />}
                      {isLynxSol 

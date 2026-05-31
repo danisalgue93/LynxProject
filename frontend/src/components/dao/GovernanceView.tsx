@@ -9,15 +9,18 @@ import CreateProposalModal from './CreateProposalModal';
 import StakeModal from './StakeModal';
 import { useBlockchainTransaction } from '@/src/hooks/useBlockchainTransaction';
 import { getTxExplorerUrl } from '@/src/lib/explorer';
+import { useToast } from '@/src/context/ToastContext';
 
 export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
   const { t } = useTranslation();
   const { fetchProposals, fetchDaoStats, castVote, createProposal, stakeLynx, isLoading, error } = useProgram();
   const { executeTransaction } = useBlockchainTransaction();
+  const { addToast } = useToast();
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [isPendingAct, setIsPendingAct] = useState(false);
+  const [votedProposalIds, setVotedProposalIds] = useState<Set<string>>(() => new Set());
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showStakeModal, setShowStakeModal] = useState(false);
 
@@ -43,17 +46,19 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
           return `vote-${proposalId}-${voteType}-${Date.now()}`;
         },
         {
-          pendingMessage: `Casting ${voteType} vote...`,
-          successMessage: `Vote cast successfully!`,
-          errorMessage: 'Failed to cast vote',
+          pendingMessage: t('governance.votePending', 'Casting {{voteType}} vote...', { voteType }),
+          successMessage: t('governance.voteSuccess', 'Vote cast successfully!'),
+          errorMessage: t('governance.voteFailed', 'Failed to cast vote'),
           explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
         }
       );
+      setVotedProposalIds((prev) => new Set(prev).add(proposalId));
       const [proposalsData, statsData] = await Promise.all([fetchProposals(), fetchDaoStats()]);
       setProposals(proposalsData);
       setStats(statsData);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      addToast({ type: 'error', message: e?.message || t('governance.voteFailed', 'Failed to cast vote') });
     } finally {
       setIsPendingAct(false);
     }
@@ -74,16 +79,17 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
           return `stake-${amount}-${Date.now()}`;
         },
         {
-          pendingMessage: `Staking ${amount} LYNX...`,
-          successMessage: `Successfully staked ${amount} LYNX!`,
-          errorMessage: 'Failed to stake LYNX',
+          pendingMessage: t('governance.stakePending', 'Staking {{amount}} LYNX...', { amount }),
+          successMessage: t('governance.stakeSuccess', 'Successfully staked {{amount}} LYNX!', { amount }),
+          errorMessage: t('governance.stakeFailed', 'Failed to stake LYNX'),
           explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
         }
       );
       const statsData = await fetchDaoStats();
       setStats(statsData);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      addToast({ type: 'error', message: e?.message || t('governance.stakeFailed', 'Failed to stake LYNX') });
     } finally {
       setIsPendingAct(false);
     }
@@ -103,9 +109,9 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
           return `proposal-${Date.now()}`;
         },
         {
-          pendingMessage: `Creating proposal: "${input.title}"...`,
-          successMessage: 'Proposal created successfully!',
-          errorMessage: 'Failed to create proposal',
+          pendingMessage: t('governance.createProposalPending', 'Creating proposal: "{{title}}"...', { title: input.title }),
+          successMessage: t('governance.createProposalSuccess', 'Proposal created successfully!'),
+          errorMessage: t('governance.createProposalFailed', 'Failed to create proposal'),
           explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
         }
       );
@@ -113,8 +119,9 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
       setProposals(proposalsData);
       setStats(statsData);
       setShowCreateModal(false);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      addToast({ type: 'error', message: e?.message || t('governance.createProposalFailed', 'Failed to create proposal') });
     } finally {
       setIsPendingAct(false);
     }
@@ -303,15 +310,23 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
                          <>
                            <button
                              onClick={() => handleVoteAction(proposal.id, 'yes')}
-                             disabled={isPendingAct || readOnly}
-                             className={cn("w-full py-2 rounded text-[10px] font-black uppercase tracking-widest transition-all bg-[#00FFD1] text-black")}
+                             disabled={isPendingAct || readOnly || votedProposalIds.has(proposal.id)}
+                             title={votedProposalIds.has(proposal.id) ? t('governance.alreadyVoted', 'You already voted on this proposal') : undefined}
+                             className={cn(
+                               "w-full py-2 rounded text-[10px] font-black uppercase tracking-widest transition-all bg-[#00FFD1] text-black",
+                               (isPendingAct || readOnly || votedProposalIds.has(proposal.id)) && "opacity-50 cursor-not-allowed"
+                             )}
                            >
                              {t('governance.voteYes', 'Vote YES')}
                            </button>
                            <button
                              onClick={() => handleVoteAction(proposal.id, 'no')}
-                             disabled={isPendingAct || readOnly}
-                             className={cn("w-full py-2 rounded text-[10px] font-black uppercase tracking-widest transition-all bg-[#18181B] text-white border border-[#27272A] hover:bg-[#52525B]")}
+                             disabled={isPendingAct || readOnly || votedProposalIds.has(proposal.id)}
+                             title={votedProposalIds.has(proposal.id) ? t('governance.alreadyVoted', 'You already voted on this proposal') : undefined}
+                             className={cn(
+                               "w-full py-2 rounded text-[10px] font-black uppercase tracking-widest transition-all bg-[#18181B] text-white border border-[#27272A] hover:bg-[#52525B]",
+                               (isPendingAct || readOnly || votedProposalIds.has(proposal.id)) && "opacity-50 cursor-not-allowed hover:bg-[#18181B]"
+                             )}
                            >
                              {t('governance.voteNo', 'Vote NO')}
                            </button>

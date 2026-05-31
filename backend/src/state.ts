@@ -690,7 +690,7 @@ export class LynxState {
     return { pair, marketId, bids, asks, recentTrades };
   }
 
-  klines(symbol = 'LYNX', interval = '1d', limit = 100): Candle[] {
+  klines(symbol = 'LYNX', interval = '1d', limit = 100, marketId?: string): Candle[] {
     const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
     const ms = interval === '15m'
       ? 15 * 60 * 1000
@@ -703,7 +703,11 @@ export class LynxState {
             : 24 * 60 * 60 * 1000;
 
     const trades = [...this.trades.values()]
-      .filter((trade) => symbol.toUpperCase() === 'LYNX' ? trade.pair === 'LYNX/SOL' : trade.pair.includes(symbol.toUpperCase()))
+      .filter((trade) => marketId
+        ? trade.marketId === marketId
+        : symbol.toUpperCase() === 'LYNX'
+          ? trade.pair === 'LYNX/SOL'
+          : trade.pair.includes(symbol.toUpperCase()))
       .sort((a, b) => a.createdAt - b.createdAt);
 
     if (trades.length === 0) return [];

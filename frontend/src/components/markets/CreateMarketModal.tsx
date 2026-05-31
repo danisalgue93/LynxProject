@@ -70,7 +70,7 @@ export function CreateMarketModal({ onClose, onSubmit }: CreateMarketModalProps)
               <p className="text-[10px] text-[#71717A] uppercase tracking-widest">Solo administrador + firma wallet</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 text-[#71717A] hover:text-white"><X className="w-5 h-5" /></button>
+          <button type="button" aria-label="Cerrar modal" onClick={onClose} className="p-2 text-[#71717A] hover:text-white"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="p-6 space-y-4">

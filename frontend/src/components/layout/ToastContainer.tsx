@@ -42,6 +42,8 @@ export function ToastContainer() {
           </div>
 
           <button
+            type="button"
+            aria-label="Close notification"
             onClick={() => removeToast(toast.id)}
             className="flex-shrink-0 text-[#71717A] hover:text-white transition-colors"
           >

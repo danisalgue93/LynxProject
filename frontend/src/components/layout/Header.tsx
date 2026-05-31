@@ -106,6 +106,8 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
       <header className="h-16 border-b border-[#1F1F23] flex items-center justify-between px-4 lg:px-8 bg-[#0D0D0E] sticky top-0 z-50">
         <div className="flex items-center gap-4 flex-1">
           <button
+            type="button"
+            aria-label={isSidebarOpen ? t("common.close", "Close") : t("header.openMenu", "Open menu")}
             onClick={onMenuToggle}
             className="lg:hidden p-2 text-[#71717A] hover:text-white transition-colors"
             id="mobile-menu-toggle"
@@ -128,6 +130,8 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
 
           <div className="relative">
             <button
+              type="button"
+              aria-label={t("header.changeLanguage", "Change language")}
               onClick={() => setShowLangMenu(!showLangMenu)}
               className="flex items-center gap-2 p-2 text-[#71717A] hover:text-white transition-colors text-xs font-semibold"
               id="language-switcher"
@@ -160,6 +164,8 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
 
           <div className="relative">
             <button
+              type="button"
+              aria-label={t("notifications.title", "Notifications")}
               onClick={() => setShowNotifications(!showNotifications)}
               className="flex p-2 text-[#71717A] hover:text-white transition-colors relative"
               id="notifications"
@@ -239,14 +245,16 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
             )}
 
             {isLoggedIn && !showAuthButtons ? (
-              <div 
+              <button
+                type="button"
+                aria-label={t("header.logout", "Logout")}
                 className="w-8 h-8 rounded-full bg-[#18181B] border border-[#27272A] flex items-center justify-center cursor-pointer hover:bg-[#27272A] transition-colors group relative"
                 onClick={handleLogout}
-                title="Logout"
+                title={t("header.logout", "Logout")}
               >
                 <LogOut className="w-4 h-4 text-[#A1A1AA] group-hover:text-white" />
                 <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[#00FFD1] border-2 border-[#0D0D0E] rounded-full"></span>
-              </div>
+              </button>
             ) : showAuthButtons ? (
               <button
                 onClick={handleLoginClick}

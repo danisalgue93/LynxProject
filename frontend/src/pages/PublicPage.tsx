@@ -26,10 +26,16 @@ import { eventBus } from '../lib/eventBus';
 import { API_BASE_URL } from '../lib/api';
 import { io } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
+import { useToast } from '../context/ToastContext';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { getManagedWalletAddress, useManagedAuthSession } from '../lib/auth';
 
 export function PublicPage() {
   const { t } = useTranslation();
   const { isAuthenticated } = useAuth();
+  const { addToast } = useToast();
+  const { publicKey } = useWallet();
+  const managedSession = useManagedAuthSession();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('markets');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -39,12 +45,16 @@ export function PublicPage() {
   const [loginModalAction, setLoginModalAction] = useState('');
   const [marketSummary, setMarketSummary] = useState({ markets: 0, volume: 0 });
   const { fetchMarkets, createDuel } = useProgram();
+  const activeWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession);
 
   useEffect(() => {
     try {
       const socket = io(API_BASE_URL, { transports: ['websocket'] });
-      socket.on('connect', () => console.log('[socket] connected', socket.id));
-      const events = ['market:created','market:updated','duel:created','duel:accepted','orderbook:updated','portfolio:updated','dao:proposal-created','dao:proposal-updated','dev:reset','crypto:tx'];
+      socket.on('connect', () => {
+        console.log('[socket] connected', socket.id);
+        if (activeWallet) socket.emit('identify', activeWallet);
+      });
+      const events = ['market:created','market:updated','duel:created','duel:accepted','orderbook:updated','portfolio:updated','portfolio:updated:private','dao:proposal-created','dao:proposal-updated','dev:reset','crypto:tx'];
       for (const ev of events) {
         socket.on(ev, (payload: any) => {
           eventBus.dispatchEvent(new CustomEvent(ev, { detail: payload }));
@@ -56,7 +66,7 @@ export function PublicPage() {
     } catch (err) {
       console.error('Socket init failed', err);
     }
-  }, []);
+  }, [activeWallet]);
 
   // Toasts for transactions
   const [txToasts, setTxToasts] = useState<Array<{ id: string; signature: string; link: string; wallet?: string }>>([]);
@@ -98,7 +108,12 @@ export function PublicPage() {
     const markets = await fetchMarkets();
     if (markets.length > 0) {
       setSelectedMarket(markets[0]);
+      return;
     }
+    addToast({
+      type: 'info',
+      message: t('dashboard.noActiveMarkets', 'No active markets yet'),
+    });
   };
 
   const handleActionClick = (action: string) => {
@@ -351,10 +366,10 @@ export function PublicPage() {
               &copy; 2026 LYNX MARKET. <span className="text-[#00FFD1]">{t('footer.dao', 'DEX PROTOCOL DAO.')}</span>
             </div>
             <div className="grid grid-cols-2 sm:flex sm:flex-row gap-4 sm:gap-8 text-[9px] md:text-[10px] text-[#52525B] font-black uppercase tracking-widest text-center">
-              <a href="#" className="hover:text-white transition-colors">{t('footer.privacy', 'Privacy')}</a>
-              <a href="#" className="hover:text-white transition-colors">{t('footer.terms', 'Terms')}</a>
-              <a href="#" className="hover:text-white transition-colors">{t('footer.twitter', 'Twitter (X)')}</a>
-              <a href="#" className="hover:text-white transition-colors">{t('footer.discord', 'Discord')}</a>
+              <span>{t('footer.privacy', 'Privacy')}</span>
+              <span>{t('footer.terms', 'Terms')}</span>
+              <span>{t('footer.twitter', 'Twitter (X)')}</span>
+              <span>{t('footer.discord', 'Discord')}</span>
             </div>
           </div>
         </footer>
@@ -367,6 +382,7 @@ export function PublicPage() {
             onClose={() => setSelectedMarket(null)}
             readOnly={!isAuthenticated}
             onAuthRequired={handleActionClick}
+            onHostDuel={() => setIsCreateDuelOpen(true)}
           />
         )}
         {isCreateDuelOpen && isAuthenticated && (
@@ -396,7 +412,7 @@ export function PublicPage() {
           <div key={t.id} className="bg-[#0D0D0E] border border-[#27272A] rounded p-3 shadow-lg min-w-[260px]">
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1">
-                <div className="text-sm font-bold text-white">Transaccion registrada</div>
+                <div className="text-sm font-bold text-white">{t('dashboard.txRegistered', 'Transaction registered')}</div>
                 <a href={t.link} target="_blank" rel="noreferrer" className="text-xs text-[#00FFD1] hover:underline">
                   {t.signature.slice(0, 20)}...
                 </a>

@@ -45,6 +45,8 @@ export function RequiresLoginModal({ isOpen, onClose, action = 'realizar esta ac
             <div className="bg-[#0D0D0E] border border-[#27272A] rounded-xl p-8 shadow-2xl">
               {/* Close button */}
               <button
+                type="button"
+                aria-label="Cerrar"
                 onClick={onClose}
                 className="absolute top-4 right-4 p-2 hover:bg-[#1F1F23] rounded transition-colors"
               >

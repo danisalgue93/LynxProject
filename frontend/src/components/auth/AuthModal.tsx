@@ -136,6 +136,8 @@ export function AuthModal({
         onClick={(e) => e.stopPropagation()}
       >
         <button
+          type="button"
+          aria-label={t("common.close", "Close")}
           onClick={onClose}
           className="absolute top-4 right-4 text-[#71717A] hover:text-white transition-colors"
         >

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Market, Position } from "@/src/types";
 import { useProgram } from "@/src/hooks/useProgram";
+import { useBlockchainTransaction } from "@/src/hooks/useBlockchainTransaction";
 import { X, Sword, Target, ChevronRight, Info, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { formatSOL, cn } from "@/src/lib/utils";
@@ -69,9 +70,13 @@ export function CreateDuelModal({ onClose, onSubmit }: CreateDuelModalProps) {
           return `create-duel-${Date.now()}`;
         },
         {
-          pendingMessage: `Creating ${duelType} duel with ${amount} ${currency}...`,
-          successMessage: 'Duel created successfully!',
-          errorMessage: 'Failed to create duel',
+          pendingMessage: t("createDuel.createPending", "Creating {{type}} duel with {{amount}} {{currency}}...", {
+            type: duelType,
+            amount,
+            currency,
+          }),
+          successMessage: t("createDuel.createSuccess", "Duel created successfully!"),
+          errorMessage: t("duels.createFailed", "Failed to create duel"),
           explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
         }
       );
@@ -115,6 +120,8 @@ export function CreateDuelModal({ onClose, onSubmit }: CreateDuelModalProps) {
             </div>
           </div>
           <button
+            type="button"
+            aria-label={t("common.close", "Close")}
             onClick={onClose}
             className="p-2 text-[#52525B] hover:text-white transition-colors"
           >

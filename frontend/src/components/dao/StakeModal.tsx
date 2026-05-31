@@ -3,6 +3,7 @@ import { X, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/src/lib/utils';
+import { useToast } from '@/src/context/ToastContext';
 
 interface Props {
   onClose: () => void;
@@ -12,6 +13,7 @@ interface Props {
 
 export function StakeModal({ onClose, onSubmit, defaultAmount = 1 }: Props) {
   const { t } = useTranslation();
+  const { addToast } = useToast();
   const [amount, setAmount] = useState<number>(defaultAmount);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -21,8 +23,12 @@ export function StakeModal({ onClose, onSubmit, defaultAmount = 1 }: Props) {
     try {
       await onSubmit(amount);
       onClose();
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      addToast({
+        type: 'error',
+        message: e?.message || t('governance.stakeFailed', 'Failed to stake LYNX'),
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -38,7 +44,7 @@ export function StakeModal({ onClose, onSubmit, defaultAmount = 1 }: Props) {
             <h3 className="text-sm font-bold text-white uppercase tracking-tight">{t('governance.stakeLynx', 'Stake $LYNX')}</h3>
             <div className="text-[10px] text-[#71717A] font-bold uppercase tracking-widest">{t('governance.stakeDesc', 'Stake tokens to participate in governance')}</div>
           </div>
-          <button onClick={onClose} className="p-2 text-[#52525B] hover:text-white"><X className="w-5 h-5" /></button>
+          <button type="button" aria-label={t('common.close', 'Close')} onClick={onClose} className="p-2 text-[#52525B] hover:text-white"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="p-6 space-y-4">
