@@ -331,6 +331,43 @@ app.post('/auth/login', authRateLimit, asyncRoute(async (req, res) => {
   });
 }));
 
+// Login or auto-register via Phantom/Solflare wallet signature
+app.post('/auth/wallet-login', authRateLimit, asyncRoute(async (req, res) => {
+  const body = z.object({
+    wallet: z.string().min(32),
+    signatureMessage: z.string().min(1),
+    signature: z.string().min(1),
+  }).parse(req.body);
+
+  if (!verifyWalletSignature(body.wallet, body.signatureMessage, body.signature)) {
+    return res.status(401).json({ error: 'Wallet signature verification failed' });
+  }
+
+  // Find existing user by wallet or create one
+  let user = [...users.values()].find(u => u.walletAddress === body.wallet);
+
+  if (!user) {
+    const userId = `wallet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    user = {
+      id: userId,
+      email: `${body.wallet.slice(0, 8)}@wallet.lynx`,
+      passwordHash: '',
+      displayName: `${body.wallet.slice(0, 4)}...${body.wallet.slice(-4)}`,
+      role: 'user',
+      walletAddress: body.wallet,
+      walletLinkedAt: Date.now(),
+    };
+    users.set(userId, user);
+  }
+
+  const token = generateToken({ userId: user.id, email: user.email, role: user.role });
+
+  res.json({
+    user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role, walletAddress: user.walletAddress },
+    token,
+  });
+}));
+
 app.get('/auth/me', (req: any, res) => {
   if (!requireAuth(req, res)) return;
 

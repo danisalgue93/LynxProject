@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { saveManagedAuthSession } from "@/src/lib/auth";
+import { useAuth } from "@/src/context/AuthContext";
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -38,19 +39,43 @@ export function AuthModal({
 }: AuthModalProps) {
   const { t } = useTranslation();
   const { setVisible } = useWalletModal();
-  const { connected } = useWallet();
+  const { connected, publicKey, signMessage } = useWallet();
+  const { loginWithWallet } = useAuth();
 
   const [emailStep, setEmailStep] = useState<"idle" | "input" | "loading" | "done">("idle");
   const [email, setEmail] = useState("");
   const [magicError, setMagicError] = useState<string | null>(null);
+  const [walletLoading, setWalletLoading] = useState(false);
 
-  // Auto-close when external wallet connects
+  // When wallet connects, sign a message and login
   useEffect(() => {
-    if (connected && onLoginSuccess && isOpen) {
-      onLoginSuccess();
-      onClose();
-    }
-  }, [connected, onLoginSuccess, isOpen, onClose]);
+    if (!connected || !publicKey || !signMessage || !isOpen) return;
+
+    const doWalletLogin = async () => {
+      setWalletLoading(true);
+      setMagicError(null);
+      try {
+        const message = JSON.stringify({
+          action: 'LYNX_LOGIN',
+          wallet: publicKey.toBase58(),
+          ts: Date.now(),
+        });
+        const encoded = new TextEncoder().encode(message);
+        const signatureBytes = await signMessage(encoded);
+        const signature = Buffer.from(signatureBytes).toString('base64');
+        await loginWithWallet(publicKey.toBase58(), message, signature);
+        if (onLoginSuccess) onLoginSuccess();
+        onClose();
+      } catch (err: any) {
+        console.error('Wallet login failed', err);
+        setMagicError(err.message || 'Wallet login failed. Try again.');
+      } finally {
+        setWalletLoading(false);
+      }
+    };
+
+    doWalletLogin();
+  }, [connected, publicKey, signMessage, isOpen]);
 
   useEffect(() => {
     const magic = getMagic();
@@ -243,11 +268,12 @@ export function AuthModal({
 
             {/* External Wallet (Phantom / Solflare) */}
             <button
-              className="w-full flex items-center justify-center gap-3 bg-[#00FFD1]/10 hover:bg-[#00FFD1]/20 border border-[#00FFD1]/30 text-[#00FFD1] py-3 px-4 rounded font-bold text-sm transition-colors"
+              className="w-full flex items-center justify-center gap-3 bg-[#00FFD1]/10 hover:bg-[#00FFD1]/20 border border-[#00FFD1]/30 text-[#00FFD1] py-3 px-4 rounded font-bold text-sm transition-colors disabled:opacity-50"
               onClick={handleWalletConnect}
+              disabled={walletLoading}
             >
-              <Wallet className="w-5 h-5" />
-              {t("common.continueWithWallet", "Connect Phantom / Solflare")}
+              {walletLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Wallet className="w-5 h-5" />}
+              {walletLoading ? 'Signing in...' : t("common.continueWithWallet", "Connect Phantom / Solflare")}
             </button>
           </div>
 

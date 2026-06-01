@@ -246,6 +246,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
     lynxOrderAmount <= 0 ||
     !Number.isFinite(lynxOrderPrice) ||
     lynxOrderPrice <= 0;
+  const isLynxSol = selectedMarketId === 'lynx-sol';
   const predOrderAmount = parseFloat(predAmount);
   const predOrderPrice = parseFloat(predPrice);
   const isPredOrderInvalid =
@@ -375,7 +376,6 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
     }
   };
 
-  const isLynxSol = selectedMarketId === 'lynx-sol';
   const selectedMarket = !isLynxSol ? markets.find(m => m.id === selectedMarketId) : null;
   const lynxAsks = (lynxOrderBook?.asks || []).slice(0, 5);
   const lynxBids = (lynxOrderBook?.bids || []).slice(0, 5);

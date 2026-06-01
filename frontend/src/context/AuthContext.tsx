@@ -14,6 +14,7 @@ interface AuthContextType {
   token: string | null;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, displayName?: string) => Promise<void>;
+  loginWithWallet: (wallet: string, signatureMessage: string, signature: string) => Promise<void>;
   logout: () => void;
   linkWallet: (wallet: string, signatureMessage: string, signature: string) => Promise<void>;
   unlinkWallet: () => Promise<void>;
@@ -115,6 +116,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data.user));
   };
 
+  const loginWithWallet = async (wallet: string, signatureMessage: string, signature: string) => {
+    const response = await fetch(apiUrl('/auth/wallet-login'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wallet, signatureMessage, signature }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Wallet login failed');
+    }
+
+    const data = await response.json();
+    setToken(data.token);
+    setUser(data.user);
+    localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
+    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data.user));
+  };
+
   const linkWallet = async (wallet: string, signatureMessage: string, signature: string) => {
     if (!token) {
       throw new Error('Authentication required to link wallet');
@@ -175,6 +195,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         token,
         login,
         register,
+        loginWithWallet,
         logout,
         linkWallet,
         unlinkWallet,
