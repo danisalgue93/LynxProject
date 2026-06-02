@@ -2,7 +2,8 @@
  * Utilidades para Solana blockchain explorer URLs
  */
 
-const DEVNET_EXPLORER = 'https://explorer.solana.com';
+const EXPLORER_BASE = 'https://explorer.solana.com';
+const DEFAULT_SOLANA_CLUSTER = (import.meta.env?.VITE_SOLANA_NETWORK as string) || 'devnet';
 
 /**
  * Obtiene la URL del explorer para una transacción
@@ -10,8 +11,8 @@ const DEVNET_EXPLORER = 'https://explorer.solana.com';
  * @param cluster Cluster de Solana (devnet, testnet, mainnet-beta)
  * @returns URL del explorer
  */
-export function getTxExplorerUrl(txHash: string, cluster: string = 'devnet'): string {
-  return `${DEVNET_EXPLORER}/tx/${txHash}?cluster=${cluster}`;
+export function getTxExplorerUrl(txHash: string, cluster: string = DEFAULT_SOLANA_CLUSTER): string {
+  return `${EXPLORER_BASE}/tx/${txHash}?cluster=${cluster}`;
 }
 
 /**
@@ -20,8 +21,8 @@ export function getTxExplorerUrl(txHash: string, cluster: string = 'devnet'): st
  * @param cluster Cluster de Solana
  * @returns URL del explorer
  */
-export function getAddressExplorerUrl(address: string, cluster: string = 'devnet'): string {
-  return `${DEVNET_EXPLORER}/address/${address}?cluster=${cluster}`;
+export function getAddressExplorerUrl(address: string, cluster: string = DEFAULT_SOLANA_CLUSTER): string {
+  return `${EXPLORER_BASE}/address/${address}?cluster=${cluster}`;
 }
 
 /**
@@ -30,6 +31,6 @@ export function getAddressExplorerUrl(address: string, cluster: string = 'devnet
  * @param cluster Cluster de Solana
  * @returns URL del explorer
  */
-export function getTokenExplorerUrl(mint: string, cluster: string = 'devnet'): string {
-  return `${DEVNET_EXPLORER}/address/${mint}?cluster=${cluster}`;
+export function getTokenExplorerUrl(mint: string, cluster: string = DEFAULT_SOLANA_CLUSTER): string {
+  return `${EXPLORER_BASE}/address/${mint}?cluster=${cluster}`;
 }

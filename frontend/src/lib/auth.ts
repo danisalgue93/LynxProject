@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 
 export type ManagedAuthSession = {
-  provider: 'magic-email' | 'magic-google';
+  provider: 'email-password' | 'magic-email' | 'magic-google';
   email?: string;
   issuer?: string;
+  walletAddress?: string;
   loginAt: number;
 };
 
@@ -30,6 +31,7 @@ export function clearManagedAuthSession() {
 
 export function getManagedWalletAddress(session = getManagedAuthSession()) {
   if (!session) return null;
+  if (session.walletAddress) return session.walletAddress;
   const stableId = session.issuer || session.email;
   return stableId ? `MAGIC:${stableId}` : null;
 }

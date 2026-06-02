@@ -13,7 +13,6 @@ import { DuelsGrid } from '../components/duels/DuelsGrid';
 import { OrderBookView } from '../components/orderbook/OrderBookView';
 import { PortfolioView } from '../components/portfolio/PortfolioView';
 import { GovernanceView } from '../components/dao/GovernanceView';
-import { SettingsView } from '../components/settings/SettingsView';
 import { DocsView } from '../components/docs/DocsView';
 import { MarketDetail } from '../components/markets/MarketDetail';
 import { CreateDuelModal } from '../components/duels/CreateDuelModal';
@@ -104,18 +103,6 @@ export function PublicPage() {
     };
   }, [fetchMarkets]);
 
-  const launchFirstMarket = async () => {
-    const markets = await fetchMarkets();
-    if (markets.length > 0) {
-      setSelectedMarket(markets[0]);
-      return;
-    }
-    addToast({
-      type: 'info',
-      message: t('dashboard.noActiveMarkets', 'No active markets yet'),
-    });
-  };
-
   const handleActionClick = (action: string) => {
     if (!isAuthenticated) {
       setLoginModalAction(action);
@@ -160,73 +147,6 @@ export function PublicPage() {
                 exit={{ opacity: 0, y: -20 }}
                 transition={{ duration: 0.3 }}
               >
-                {/* Hero section */}
-                <div className="p-4 md:p-8 pb-0">
-                  <div className="relative overflow-hidden rounded-xl bg-[#0D0D0E] border border-[#1F1F23] p-6 md:p-12">
-                    <div className="absolute inset-0 opacity-10 bg-[radial-gradient(circle_at_50%_50%,_#00FFD1_0%,_transparent_70%)] pointer-events-none"></div>
-                    
-                    <div className="relative z-10 max-w-2xl">
-                      <div className="flex items-center gap-2 mb-4 md:mb-6">
-                        <span className="text-[9px] md:text-[10px] bg-[#18181B] text-[#A1A1AA] px-2 py-0.5 rounded border border-[#27272A] tracking-widest uppercase font-bold">
-                          {t('dashboard.mainnetBadge', 'DEVNET')}
-                        </span>
-                        <span className="text-[#71717A] text-[9px] md:text-[10px] font-bold uppercase tracking-[0.2em]">
-                          {t('dashboard.daoSubtitle', 'DEX PROTOCOL DAO')}
-                        </span>
-                      </div>
-
-                      <h1 className="text-4xl md:text-6xl font-bold text-white mb-4 md:mb-6 leading-[1.05] tracking-tighter">
-                        {t('dashboard.heroTitle1', 'Predict. Duel.')} <br/>
-                        <span className="text-gradient">{t('dashboard.heroTitle2', 'Dominate.')}</span>
-                      </h1>
-
-                      <p className="text-sm md:text-base text-[#71717A] mb-6 md:mb-8 leading-relaxed max-w-lg">
-                        {t('dashboard.heroDescription', 'The definitive P2P prediction ecosystem on Solana. Trade real-world outcomes, duel with high leverage, and shape the protocol through our Dex Protocol DAO.')}
-                      </p>
-
-                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
-                        <button 
-                          onClick={launchFirstMarket}
-                          className="px-6 md:px-8 py-3 md:py-4 bg-[#00FFD1] text-black font-black text-xs md:text-sm rounded shadow-[0_0_20px_rgba(0,255,209,0.2)] uppercase tracking-tight hover:bg-[#00E5BC] transition-all flex items-center justify-center gap-2 group"
-                        >
-                          {t('dashboard.launchMarkets', 'Launch Markets')}
-                          <ArrowUpRight className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
-                        </button>
-                        <button 
-                          onClick={() => handleActionClick('crear duel')}
-                          className="px-6 md:px-8 py-3 md:py-4 bg-[#18181B] text-white font-bold text-xs md:text-sm rounded border border-[#27272A] hover:bg-[#27272A] transition-all uppercase tracking-tight"
-                        >
-                          {isAuthenticated ? (
-                            <>
-                              {t('dashboard.hostDuel', 'Host 1v1 Duel')}
-                            </>
-                          ) : (
-                            <>
-                              <LogIn className="w-4 h-4 inline mr-2" />
-                              {t('dashboard.hostDuel', 'Host 1v1 Duel')}
-                            </>
-                          )}
-                        </button>
-                      </div>
-
-                      <div className="flex flex-row justify-between sm:grid sm:grid-cols-3 gap-2 sm:gap-12 mt-8 md:mt-12 pt-8 md:pt-12 border-t border-[#1F1F23]">
-                        <div className="space-y-0.5 sm:space-y-1 text-center sm:text-left flex-1 border-r border-[#1F1F23] sm:border-0 pr-2 sm:pr-0">
-                          <div className="text-[6px] min-[380px]:text-[8px] md:text-[10px] text-[#71717A] block uppercase font-bold tracking-widest whitespace-nowrap">{t('dashboard.totalVolume', 'Total Volume')}</div>
-                          <div className="text-sm min-[380px]:text-base md:text-2xl font-mono font-bold text-white tracking-tighter">{marketSummary.volume.toFixed(2)} SOL</div>
-                        </div>
-                        <div className="space-y-0.5 sm:space-y-1 text-center sm:text-left flex-1 border-r border-[#1F1F23] sm:border-0 px-2 sm:px-0">
-                          <div className="text-[6px] min-[380px]:text-[8px] md:text-[10px] text-[#71717A] block uppercase font-bold tracking-widest whitespace-nowrap">{t('marketsGrid.title', 'Active Markets')}</div>
-                          <div className="text-sm min-[380px]:text-base md:text-2xl font-mono font-bold text-[#00FFD1] tracking-tighter">{marketSummary.markets}</div>
-                        </div>
-                        <div className="space-y-0.5 sm:space-y-1 text-center sm:text-left flex-1 pl-2 sm:pl-0">
-                          <div className="text-[6px] min-[380px]:text-[8px] md:text-[10px] text-[#71717A] block uppercase font-bold tracking-widest whitespace-nowrap">Network</div>
-                          <div className="text-sm min-[380px]:text-base md:text-2xl font-mono font-bold text-[#9945FF] tracking-tighter">Devnet</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
                 <MarketsGrid onMarketSelect={setSelectedMarket} readOnly={!isAuthenticated} />
               </motion.div>
             ) : activeTab === 'duels' ? (
@@ -273,7 +193,7 @@ export function PublicPage() {
                         Inicia sesión para ver tu portafolio y tus posiciones en mercados.
                       </p>
                       <button 
-                        onClick={() => navigate('/login')}
+                        onClick={() => setShowLoginModal(true)}
                         className="px-6 py-3 bg-[#00FFD1] text-black font-bold rounded hover:bg-[#00E5BC] transition-all"
                       >
                         Registrarse / Login
@@ -291,36 +211,6 @@ export function PublicPage() {
                 transition={{ duration: 0.3 }}
               >
                 <GovernanceView readOnly={!isAuthenticated} />
-              </motion.div>
-            ) : activeTab === 'settings' ? (
-              <motion.div
-                key="settings"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.3 }}
-              >
-                {isAuthenticated ? (
-                  <SettingsView />
-                ) : (
-                  <div className="p-8 flex items-center justify-center h-full min-h-[50vh]">
-                    <div className="text-center p-12 glass-card rounded-[2rem] max-w-md border border-white/5">
-                      <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6">
-                        <LogIn className="w-8 h-8 text-[#00FFD1]" />
-                      </div>
-                      <h3 className="text-2xl font-bold text-white mb-3">Configura tu Cuenta</h3>
-                      <p className="text-slate-400 mb-6">
-                        Inicia sesión para acceder a tu panel de configuración.
-                      </p>
-                      <button 
-                        onClick={() => navigate('/login')}
-                        className="px-6 py-3 bg-[#00FFD1] text-black font-bold rounded hover:bg-[#00E5BC] transition-all"
-                      >
-                        Registrarse / Login
-                      </button>
-                    </div>
-                  </div>
-                )}
               </motion.div>
             ) : activeTab === 'docs' ? (
               <motion.div
@@ -408,13 +298,13 @@ export function PublicPage() {
 
       {/* Transaction toasts */}
       <div className="fixed right-6 top-20 z-[200] flex flex-col gap-3">
-        {txToasts.map((t) => (
-          <div key={t.id} className="bg-[#0D0D0E] border border-[#27272A] rounded p-3 shadow-lg min-w-[260px]">
+        {txToasts.map((toast) => (
+          <div key={toast.id} className="bg-[#0D0D0E] border border-[#27272A] rounded p-3 shadow-lg min-w-[260px]">
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1">
                 <div className="text-sm font-bold text-white">{t('dashboard.txRegistered', 'Transaction registered')}</div>
-                <a href={t.link} target="_blank" rel="noreferrer" className="text-xs text-[#00FFD1] hover:underline">
-                  {t.signature.slice(0, 20)}...
+                <a href={toast.link} target="_blank" rel="noreferrer" className="text-xs text-[#00FFD1] hover:underline">
+                  {toast.signature.slice(0, 20)}...
                 </a>
               </div>
             </div>

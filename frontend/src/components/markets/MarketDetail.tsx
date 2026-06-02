@@ -30,6 +30,7 @@ import { useProgram } from "@/src/hooks/useProgram";
 import { useBlockchainTransaction } from "@/src/hooks/useBlockchainTransaction";
 import { useToast } from "@/src/context/ToastContext";
 import { apiUrl } from "@/src/lib/api";
+import { getTxExplorerUrl } from "@/src/lib/explorer";
 import { useTranslation } from "react-i18next";
 
 interface MarketDetailProps {
@@ -240,7 +241,7 @@ export function MarketDetail({
           }),
           successMessage: t("marketDetail.tradeSuccess", "Trade executed successfully!"),
           errorMessage: t("marketDetail.tradeFailed", "Trade failed"),
-          explorerUrl: () => "https://explorer.solana.com?cluster=devnet",
+          explorerUrl: (txHash) => getTxExplorerUrl(txHash),
         },
       );
     } catch (err: any) {
@@ -277,7 +278,7 @@ export function MarketDetail({
           pendingMessage: t("marketDetail.claimPending", "Claiming payout..."),
           successMessage: t("marketDetail.claimSuccess", "Position claimed successfully!"),
           errorMessage: t("marketDetail.claimFailed", "Failed to claim position"),
-          explorerUrl: () => "https://explorer.solana.com?cluster=devnet",
+          explorerUrl: (txHash) => getTxExplorerUrl(txHash),
         },
       );
     } catch (err: any) {

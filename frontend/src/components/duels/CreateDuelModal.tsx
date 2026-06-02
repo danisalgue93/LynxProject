@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { Market, Position } from "@/src/types";
 import { useProgram } from "@/src/hooks/useProgram";
 import { useBlockchainTransaction } from "@/src/hooks/useBlockchainTransaction";
+import { getTxExplorerUrl } from "@/src/lib/explorer";
 import { X, Sword, Target, ChevronRight, Info, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { formatSOL, cn } from "@/src/lib/utils";
@@ -77,7 +78,7 @@ export function CreateDuelModal({ onClose, onSubmit }: CreateDuelModalProps) {
           }),
           successMessage: t("createDuel.createSuccess", "Duel created successfully!"),
           errorMessage: t("duels.createFailed", "Failed to create duel"),
-          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+          explorerUrl: (txHash) => getTxExplorerUrl(txHash)
         }
       );
       onClose();

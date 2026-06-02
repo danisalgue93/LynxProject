@@ -14,11 +14,13 @@ export function useBlockchainTransaction() {
       successMessage = 'Transaction confirmed!',
       errorMessage = 'Transaction failed',
       explorerUrl,
+      suppressErrorToast = false,
     }: {
       pendingMessage?: string;
       successMessage?: string;
       errorMessage?: string;
       explorerUrl?: (txHash: string) => string;
+      suppressErrorToast?: boolean;
     } = {}
   ) => {
     try {
@@ -29,29 +31,32 @@ export function useBlockchainTransaction() {
         duration: 0, // Don't auto-remove pending toasts
       });
 
-      // Execute transaction
-      const txHash = await transactionFn();
+      try {
+        const txHash = await transactionFn();
 
-      // Remove pending and show success
-      removeToast(toastId);
-      const explorerLink = explorerUrl ? explorerUrl(txHash) : undefined;
-      addToast({
-        type: 'success',
-        message: successMessage,
-        url: explorerLink,
-        duration: 8000,
-      });
+        removeToast(toastId);
+        const explorerLink = explorerUrl ? explorerUrl(txHash) : undefined;
+        addToast({
+          type: 'success',
+          message: successMessage,
+          url: explorerLink,
+          duration: 8000,
+        });
 
-      return txHash;
-    } catch (error: any) {
-      console.error('Transaction error:', error);
-      addToast({
-        type: 'error',
-        message: errorMessage,
-        duration: 6000,
-      });
-      throw error;
-    }
+        return txHash;
+      } catch (error: any) {
+        console.error('Transaction error:', error);
+        removeToast(toastId);
+        const message = typeof error === 'string' ? error : error?.message || errorMessage;
+        if (!suppressErrorToast) {
+          addToast({
+            type: 'error',
+            message,
+            duration: 6000,
+          });
+        }
+        throw error;
+      }
   };
 
   return { executeTransaction };

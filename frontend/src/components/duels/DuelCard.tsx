@@ -7,6 +7,7 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { STATUS_COLORS } from '@/src/constants';
 import { useProgram } from '@/src/hooks/useProgram';
 import { useBlockchainTransaction } from '@/src/hooks/useBlockchainTransaction';
+import { getTxExplorerUrl } from '@/src/lib/explorer';
 import { getManagedWalletAddress, useManagedAuthSession } from '@/src/lib/auth';
 import { useTranslation } from 'react-i18next';
 
@@ -46,7 +47,7 @@ export function DuelCard({ duel }: DuelCardProps) {
           pendingMessage: t('duels.acceptPending', 'Accepting duel...'),
           successMessage: t('duels.acceptSuccess', 'Duel accepted successfully!'),
           errorMessage: t('duels.acceptFailed', 'Failed to accept duel'),
-          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+          explorerUrl: (txHash) => getTxExplorerUrl(txHash)
         }
       );
     } catch (e) {

@@ -1,15 +1,13 @@
-﻿import React, { useState, useEffect } from "react";
-import { Bell, Menu, X, Globe, User, LogOut, Wallet } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Bell, ChevronDown, Globe, LogOut, Menu, User, Wallet, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '@/src/context/AuthContext';
-import { setUserLanguage } from "@/src/i18n";
-import { AuthModal } from "@/src/components/auth/AuthModal";
-import { NotificationsPopover, Notification } from "@/src/components/layout/NotificationsPopover";
+import { useNavigate } from "react-router-dom";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { useWalletModal } from "@solana/wallet-adapter-react-ui";
+import { AuthModal } from "@/src/components/auth/AuthModal";
+import { useAuth } from "@/src/context/AuthContext";
+import { setUserLanguage } from "@/src/i18n";
 import { apiFetch } from "@/src/lib/api";
-import { clearManagedAuthSession, getManagedWalletAddress, useManagedAuthSession } from "@/src/lib/auth";
+import { NotificationsPopover, Notification } from "@/src/components/layout/NotificationsPopover";
 
 interface HeaderProps {
   onMenuToggle: () => void;
@@ -18,55 +16,45 @@ interface HeaderProps {
   showAuthButtons?: boolean;
 }
 
+function compactAddress(value?: string) {
+  if (!value) return "";
+  return value.length > 16 ? `${value.slice(0, 4)}...${value.slice(-6)}` : value;
+}
+
 export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons = false }: HeaderProps) {
   const { i18n, t } = useTranslation();
   const navigate = useNavigate();
-  const { logout, user: jwtUser, isAuthenticated } = useAuth();
+  const { disconnect } = useWallet();
+  const { logout, user, isAuthenticated, changePassword } = useAuth();
   const [showLangMenu, setShowLangMenu] = useState(false);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [showNotifications, setShowNotifications] = useState(false);
-  const [showWalletMenu, setShowWalletMenu] = useState(false);
+  const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "signup" | "change">("login");
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const { connected, disconnect, publicKey } = useWallet();
-  const { setVisible } = useWalletModal();
-  const managedSession = useManagedAuthSession();
-  const connectedWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || "";
-  const walletLabel = connectedWallet && connectedWallet.length > 14 ? `${connectedWallet.slice(0, 4)}...${connectedWallet.slice(-6)}` : connectedWallet;
-  const linkedWallet = jwtUser?.walletAddress;
-  const hasLinkedWallet = Boolean(linkedWallet);
-  const connectedMatchesLinked = connectedWallet && linkedWallet && connectedWallet === linkedWallet;
-  const walletButtonLabel = connected
-    ? walletLabel || 'Connected Wallet'
-    : hasLinkedWallet
-      ? 'Connect account wallet'
-      : 'Link Wallet';
 
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const accountWallet = user?.walletAddress || user?.managedWalletAddress || "";
+  const isWalletAccount = user?.authMethod === "wallet";
+  const unreadCount = notifications.filter((notification) => !notification.read).length;
 
   useEffect(() => {
-    setIsLoggedIn(connected || Boolean(managedSession) || Boolean(jwtUser));
-  }, [connected, managedSession, jwtUser]);
-
-  useEffect(() => {
-    const handleOpenAuth = (e: any) => {
-      setAuthMode(e?.detail?.mode === 'signup' ? 'signup' : 'login');
+    const handleOpenAuth = (event: any) => {
+      setAuthMode(event?.detail?.mode === "signup" ? "signup" : "login");
       setIsAuthModalOpen(true);
     };
-    window.addEventListener('open-auth-modal', handleOpenAuth as EventListener);
-    return () => window.removeEventListener('open-auth-modal', handleOpenAuth as EventListener);
+    window.addEventListener("open-auth-modal", handleOpenAuth as EventListener);
+    return () => window.removeEventListener("open-auth-modal", handleOpenAuth as EventListener);
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     const loadNotifications = async () => {
+      if (!accountWallet) {
+        setNotifications([]);
+        return;
+      }
       try {
-        if (!connectedWallet) {
-          setNotifications([]);
-          return;
-        }
-        const data = await apiFetch<any[]>(`/api/notifications?wallet=${encodeURIComponent(connectedWallet)}`);
+        const data = await apiFetch<any[]>(`/api/notifications?wallet=${encodeURIComponent(accountWallet)}`);
         if (!cancelled) {
           setNotifications(data.map((item) => ({
             ...item,
@@ -83,22 +71,25 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [connectedWallet]);
+  }, [accountWallet]);
 
-  const handleLogout = () => {
-    disconnect();
-    clearManagedAuthSession();
-    logout();
-    setIsLoggedIn(false);
-    setShowWalletMenu(false);
-    if (onLogout) {
-      onLogout();
-    }
-    navigate('/');
+  const openAuth = (mode: "login" | "signup" = "login") => {
+    setAuthMode(mode);
+    setIsAuthModalOpen(true);
   };
 
-  const handleLoginClick = () => {
-    navigate('/login');
+  const handleLogout = async () => {
+    await disconnect().catch(() => undefined);
+    logout();
+    setShowAccountMenu(false);
+    onLogout?.();
+    navigate("/");
+  };
+
+  const openChangePassword = () => {
+    setAuthMode("change");
+    setIsAuthModalOpen(true);
+    setShowAccountMenu(false);
   };
 
   return (
@@ -112,34 +103,26 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
             className="lg:hidden p-2 text-[#71717A] hover:text-white transition-colors"
             id="mobile-menu-toggle"
           >
-            {isSidebarOpen ? (
-              <X className="w-5 h-5" />
-            ) : (
-              <Menu className="w-5 h-5" />
-            )}
+            {isSidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
         </div>
 
         <div className="flex items-center gap-2 md:gap-4">
           <div className="hidden md:flex items-center gap-2 bg-[#18181B] px-3 py-1.5 rounded border border-[#27272A]">
-            <div className="w-2 h-2 rounded-full bg-[#00FFD1] animate-pulse"></div>
-            <span className="text-[10px] font-mono text-[#A1A1AA]">
-              {t("header.solanaMainnet", "SOLANA DEVNET")}
-            </span>
+            <div className="w-2 h-2 rounded-full bg-[#00FFD1] animate-pulse" />
+            <span className="text-[10px] font-mono text-[#A1A1AA]">{t("header.solanaMainnet", "SOLANA DEVNET")}</span>
           </div>
 
           <div className="relative">
             <button
               type="button"
               aria-label={t("header.changeLanguage", "Change language")}
-              onClick={() => setShowLangMenu(!showLangMenu)}
+              onClick={() => setShowLangMenu((value) => !value)}
               className="flex items-center gap-2 p-2 text-[#71717A] hover:text-white transition-colors text-xs font-semibold"
               id="language-switcher"
             >
               <Globe className="w-4 h-4" />
-              <span className="hidden md:inline">
-                {i18n.language.startsWith("en") ? "EN" : "ES"}
-              </span>
+              <span className="hidden md:inline">{i18n.language.startsWith("en") ? "EN" : "ES"}</span>
             </button>
 
             {showLangMenu && (
@@ -149,14 +132,14 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
                   className={`w-full flex justify-between items-center px-4 py-2 text-xs hover:bg-[#27272A] transition-colors ${i18n.language.startsWith("en") ? "text-[#00FFD1]" : "text-white"}`}
                 >
                   <span>English</span>
-                  <span className="text-base">US</span>
+                  <span>EN</span>
                 </button>
                 <button
                   onClick={() => { setUserLanguage("es"); setShowLangMenu(false); }}
                   className={`w-full flex justify-between items-center px-4 py-2 text-xs hover:bg-[#27272A] transition-colors ${i18n.language.startsWith("es") ? "text-[#00FFD1]" : "text-white"}`}
                 >
                   <span>Español</span>
-                  <span className="text-base">ES</span>
+                  <span>ES</span>
                 </button>
               </div>
             )}
@@ -166,103 +149,82 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
             <button
               type="button"
               aria-label={t("notifications.title", "Notifications")}
-              onClick={() => setShowNotifications(!showNotifications)}
+              onClick={() => setShowNotifications((value) => !value)}
               className="flex p-2 text-[#71717A] hover:text-white transition-colors relative"
               id="notifications"
             >
               <Bell className="w-4 h-4" />
-              {unreadCount > 0 && <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-[#FF3D00] rounded-full"></span>}
+              {unreadCount > 0 && <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-[#FF3D00] rounded-full" />}
             </button>
-            {isLoggedIn && (
+            {isAuthenticated && (
               <NotificationsPopover
                 isOpen={showNotifications}
                 onClose={() => setShowNotifications(false)}
-                wallet={connectedWallet}
+                wallet={accountWallet}
                 notifications={notifications}
                 setNotifications={setNotifications}
               />
             )}
           </div>
 
-          <div className="relative flex items-center gap-2 ml-1">
-            {isAuthenticated ? (
-              <>
-                <button
-                  onClick={() => {
-                    if (!connected) {
-                      setVisible(true);
-                      return;
-                    }
-
-                    setShowWalletMenu((prev) => !prev);
-                  }}
-                  className="flex items-center gap-2 bg-[#111827] text-[#E5E7EB] text-xs font-semibold px-3 py-2 rounded uppercase hover:bg-[#1F2937] transition-all"
-                  title={connected ? 'Show wallet info' : walletButtonLabel}
-                >
-                  <Wallet className="w-4 h-4" />
-                  <span>{walletButtonLabel}</span>
-                </button>
-
-                {showWalletMenu && connected && (
-                  <div className="absolute right-0 top-full mt-2 w-72 rounded-2xl border border-[#27272A] bg-[#0D0D0E] shadow-2xl p-4 text-sm text-[#E5E7EB] z-50">
-                    <div className="mb-3">
-                      <div className="text-[10px] uppercase tracking-[0.24em] text-[#71717A]">Wallet connected</div>
-                      <div className="mt-2 font-mono break-all text-xs text-white">{connectedWallet}</div>
-                    </div>
-                    <div className="grid gap-2">
-                      <div className="rounded-2xl bg-[#141417] border border-[#27272A] p-3">
-                        <div className="text-[10px] uppercase tracking-[0.24em] text-[#71717A]">Status</div>
-                        <div className="mt-1 text-xs text-[#A1A1AA]">{connectedMatchesLinked ? 'Connected wallet matches account' : 'Connected wallet differs from linked account'}</div>
-                      </div>
-                      {hasLinkedWallet && (
-                        <div className="rounded-2xl bg-[#141417] border border-[#27272A] p-3">
-                          <div className="text-[10px] uppercase tracking-[0.24em] text-[#71717A]">Account wallet</div>
-                          <div className="mt-1 font-mono break-all text-xs text-white">{linkedWallet}</div>
-                        </div>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          disconnect();
-                          setShowWalletMenu(false);
-                        }}
-                        className="w-full rounded-full bg-[#18181B] border border-[#27272A] px-3 py-2 text-[11px] font-semibold uppercase tracking-widest text-[#F97316] hover:bg-[#27272A] transition"
-                      >
-                        Disconnect Wallet
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : null}
-          </div>
-
-            {isAuthenticated && jwtUser?.walletAddress && (
-              <div className="hidden md:inline-flex items-center gap-2 rounded-full border border-[#27272A] bg-[#0D0D0E] px-3 py-2 text-[10px] uppercase tracking-widest text-[#A1A1AA]">
-                <span className="font-semibold text-[#F8FAFC]">Account wallet:</span>
-                <span>{jwtUser.walletAddress.slice(0, 4)}...{jwtUser.walletAddress.slice(-4)}</span>
-              </div>
-            )}
-
-            {isLoggedIn && !showAuthButtons ? (
+          {isAuthenticated && user ? (
+            <div className="relative">
               <button
                 type="button"
-                aria-label={t("header.logout", "Logout")}
-                className="w-8 h-8 rounded-full bg-[#18181B] border border-[#27272A] flex items-center justify-center cursor-pointer hover:bg-[#27272A] transition-colors group relative"
-                onClick={handleLogout}
-                title={t("header.logout", "Logout")}
+                onClick={() => setShowAccountMenu((value) => !value)}
+                className="flex items-center gap-2 bg-[#111827] text-[#E5E7EB] text-xs font-semibold px-3 py-2 rounded uppercase hover:bg-[#1F2937] transition-all"
               >
-                <LogOut className="w-4 h-4 text-[#A1A1AA] group-hover:text-white" />
-                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[#00FFD1] border-2 border-[#0D0D0E] rounded-full"></span>
+                {isWalletAccount ? <Wallet className="w-4 h-4" /> : <User className="w-4 h-4" />}
+                <span>{isWalletAccount ? compactAddress(user.walletAddress) : user.email}</span>
+                <ChevronDown className="w-3 h-3 text-[#71717A]" />
               </button>
-            ) : showAuthButtons ? (
-              <button
-                onClick={handleLoginClick}
-                className="bg-[#00FFD1] text-black text-xs font-bold px-4 py-2 rounded uppercase cursor-pointer hover:bg-[#00E5BC] transition-all shadow-[0_0_10px_rgba(0,255,209,0.3)]"
-              >
-                Registrarse / Login
-              </button>
-            ) : null}
+
+              {showAccountMenu && (
+                <div className="absolute right-0 top-full mt-2 w-80 rounded-xl border border-[#27272A] bg-[#0D0D0E] shadow-2xl p-4 text-sm text-[#E5E7EB] z-50">
+                  <div className="mb-3">
+                    <div className="text-[10px] uppercase tracking-[0.24em] text-[#71717A]">
+                      {isWalletAccount ? t("auth.walletAccount", "Wallet account") : t("auth.emailAccount", "Email account")}
+                    </div>
+                    <div className="mt-2 font-mono break-all text-xs text-white">
+                      {isWalletAccount ? user.walletAddress : user.email}
+                    </div>
+                    {!isWalletAccount && user.managedWalletAddress && (
+                      <div className="mt-2 text-[10px] text-[#71717A] break-all">
+                        {t("auth.internalWallet", "Internal wallet")}: {compactAddress(user.managedWalletAddress)}
+                      </div>
+                    )}
+                  </div>
+
+                  {!isWalletAccount && (
+                    <button
+                      type="button"
+                      onClick={openChangePassword}
+                      className="mt-3 w-full rounded bg-[#18181B] border border-[#27272A] px-3 py-2 text-[11px] font-semibold uppercase tracking-widest text-[#00FFD1] hover:bg-[#27272A] transition"
+                    >
+                      {t("auth.changePassword", "Change password")}
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="mt-3 w-full rounded bg-[#18181B] border border-[#27272A] px-3 py-2 text-[11px] font-semibold uppercase tracking-widest text-[#F97316] hover:bg-[#27272A] transition flex items-center justify-center gap-2"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    {t("header.logout", "Logout")}
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : showAuthButtons ? (
+            <button
+              type="button"
+              onClick={() => openAuth("login")}
+              className="bg-[#00FFD1] text-black text-xs font-bold px-4 py-2 rounded uppercase hover:bg-[#00E5BC] transition-all shadow-[0_0_10px_rgba(0,255,209,0.3)]"
+            >
+              {t("auth.signIn", "Sign in")}
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -270,7 +232,7 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         defaultMode={authMode}
-        onLoginSuccess={() => { setIsLoggedIn(true); navigate('/dashboard'); }}
+        onLoginSuccess={() => navigate("/dashboard")}
       />
     </>
   );

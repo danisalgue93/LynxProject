@@ -218,6 +218,20 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
   const managedSession = useManagedAuthSession();
   const myWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || '';
   const { fetchMarkets, executeTrade, executeLynxOrder, fetchOrderBook, cancelOrder, isLoading, error } = useProgram();
+  const getOrderbookErrorMessage = (err: any, fallback: string) => {
+    const message = typeof err === 'string' ? err : err?.message || fallback;
+    if (typeof message !== 'string') return fallback;
+    if (message.includes('Insufficient SOL balance')) {
+      return t('orderbook.insufficientSol', 'Not enough SOL to complete this order.');
+    }
+    if (message.includes('Insufficient LYNX balance')) {
+      return t('orderbook.insufficientLynx', 'Not enough LYNX to complete this order.');
+    }
+    if (message.includes('Connect or create an account')) {
+      return t('orderbook.authRequired', 'Please connect a wallet or create an account to trade.');
+    }
+    return message;
+  };
   const [markets, setMarkets] = useState<Market[]>([]);
   const [lynxOrderBook, setLynxOrderBook] = useState<any>(null);
   const [predictionOrderBook, setPredictionOrderBook] = useState<any>(null);
@@ -239,6 +253,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
   const [predAmount, setPredAmount] = useState('5.0');
   
   const [isPending, setIsPending] = useState(false);
+  const [tradeError, setTradeError] = useState<string | null>(null);
   const lynxOrderAmount = parseFloat(lynxAmount);
   const lynxOrderPrice = parseFloat(lynxPrice);
   const isLynxOrderInvalid =
@@ -323,6 +338,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
       });
       return;
     }
+    setTradeError(null);
     setIsPending(true);
     try {
       await executeLynxOrder(
@@ -332,12 +348,16 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
       );
       const data = await fetchOrderBook('LYNX/SOL');
       setLynxOrderBook(data);
+      addToast({
+        type: 'success',
+        message: t('orderbook.orderSuccess', 'Order executed successfully.'),
+      });
     } catch (err: any) {
       console.error(err);
-      addToast({
-        type: 'error',
-        message: err?.message || t('orderbook.orderFailed', 'Order failed'),
-      });
+      const msg = getOrderbookErrorMessage(err, t('orderbook.orderFailed', 'Order failed'));
+      // Show contextual inline error and a single toast for visibility
+      setTradeError(msg);
+      addToast({ type: 'error', message: msg });
     } finally {
       setIsPending(false);
     }
@@ -356,6 +376,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
       });
       return;
     }
+    setTradeError(null);
     setIsPending(true);
     try {
       await executeTrade(
@@ -365,12 +386,15 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
         predTradeType,
         predTradeType === 'limit' ? predOrderPrice : undefined
       );
+      addToast({
+        type: 'success',
+        message: t('orderbook.orderSuccess', 'Order executed successfully.'),
+      });
     } catch (err: any) {
       console.error(err);
-      addToast({
-        type: 'error',
-        message: err?.message || t('orderbook.orderFailed', 'Order failed'),
-      });
+      const msg = getOrderbookErrorMessage(err, t('orderbook.orderFailed', 'Order failed'));
+      setTradeError(msg);
+      addToast({ type: 'error', message: msg });
     } finally {
       setIsPending(false);
     }
@@ -398,12 +422,16 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
     setCancellingId(orderId);
     try {
       await cancelOrder(orderId);
+      addToast({
+        type: 'success',
+        message: t('orderbook.cancelSuccess', 'Order cancelled successfully.'),
+      });
       // Orderbook will refresh via socket event
     } catch (err: any) {
       console.error('Cancel order failed', err);
       addToast({
         type: 'error',
-        message: err?.message || t('orderbook.cancelFailed', 'Failed to cancel order'),
+        message: getOrderbookErrorMessage(err, t('orderbook.cancelFailed', 'Failed to cancel order')),
       });
     } finally {
       setCancellingId(null);
@@ -864,6 +892,14 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
 
                  <div className="mt-auto space-y-3 lg:space-y-6">
                    <div className="bg-[#141417] p-2 lg:p-5 rounded border border-[#1F1F23] space-y-1 lg:space-y-3">
+                     {tradeError && (
+                       <div className="p-3 bg-[#3F1F1F] border border-[#4B1F1F] rounded text-sm text-[#FFD6D6] font-bold">
+                         <div className="flex items-start justify-between gap-3">
+                           <div className="flex-1 text-left">{tradeError}</div>
+                           <button onClick={() => setTradeError(null)} className="text-[#FFB4B4] ml-3">Dismiss</button>
+                         </div>
+                       </div>
+                     )}
                       {isLynxSol ? (
                         <>
                           <div className="flex justify-between text-[7px] lg:text-[11px] font-bold items-center">

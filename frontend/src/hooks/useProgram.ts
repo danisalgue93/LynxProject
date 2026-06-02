@@ -67,8 +67,16 @@ export function useProgram() {
   const ensureApproved = useCallback(async () => {
     const currentWallet = requireWallet();
     const portfolio = await apiFetch<Portfolio>(`/api/portfolio?wallet=${encodeURIComponent(currentWallet)}`);
+    // Managed wallets (created for email accounts) are approved server-side
+    const isManaged = currentWallet.startsWith('MAGIC:');
     if (!portfolio.approvedAt) {
-      await approveWallet();
+      if (isManaged) {
+        // If a managed wallet was not approved, surface a friendly error so
+        // the user can re-check email verification or contact support.
+        throw new Error('Account not approved yet. Verify your email or contact support.');
+      } else {
+        await approveWallet();
+      }
     }
     return currentWallet;
   }, [approveWallet, requireWallet]);

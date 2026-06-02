@@ -9,6 +9,7 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { useBlockchainTransaction } from '@/src/hooks/useBlockchainTransaction';
 import { getTxExplorerUrl } from '@/src/lib/explorer';
 import { useToast } from '@/src/context/ToastContext';
+import { useAuth } from '@/src/context/AuthContext';
 
 async function openSignedMoonPay(walletAddress?: string) {
   const params = new URLSearchParams({ currencyCode: 'sol' });
@@ -36,6 +37,28 @@ export function PortfolioView() {
   const { fetchMarkets, fetchPortfolio, claimRewards, stakeLynx, unstakeLynx, depositSol, withdrawSol, isLoading, error } = useProgram();
   const { executeTransaction } = useBlockchainTransaction();
   const { addToast } = useToast();
+  const { user } = useAuth();
+  const connectionLabel = user?.authMethod === 'wallet'
+    ? t('portfolio.connectedViaWallet', 'Connected via wallet')
+    : t('portfolio.connectedViaEmail', 'Connected via email');
+
+  const getPortfolioErrorMessage = (err: any, fallback: string) => {
+    const message = typeof err === 'string' ? err : err?.message || fallback;
+    if (typeof message !== 'string') return fallback;
+    if (message.includes('Insufficient SOL balance')) {
+      return t('portfolio.insufficientSolBalance', 'Not enough SOL to complete this transaction.');
+    }
+    if (message.includes('Insufficient LYNX balance')) {
+      return t('portfolio.insufficientLynxBalance', 'Not enough LYNX to complete this transaction.');
+    }
+    if (message.includes('Withdrawal exceeds')) {
+      return t('portfolio.withdrawAmountTooHigh', 'Withdrawal exceeds your available SOL balance.');
+    }
+    if (message.includes('Order locked amount exceeded')) {
+      return t('portfolio.orderLockExceeded', 'Order locked amount exceeded.');
+    }
+    return message;
+  };
   const [markets, setMarkets] = useState<Market[]>([]);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [isClaiming, setIsClaiming] = useState(false);
@@ -81,13 +104,15 @@ export function PortfolioView() {
           successMessage: t('portfolio.claimRewardsSuccess', 'Rewards claimed successfully!'),
           errorMessage: t('portfolio.claimRewardsFailed', 'Failed to claim rewards'),
           explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+          ,
+          suppressErrorToast: true
         }
       );
     } catch (err: any) {
       console.error(err);
       addToast({
         type: 'error',
-        message: err?.message || t('portfolio.claimRewardsFailed', 'Failed to claim rewards'),
+        message: getPortfolioErrorMessage(err, t('portfolio.claimRewardsFailed', 'Failed to claim rewards')),
       });
     } finally {
       setIsClaiming(false);
@@ -125,7 +150,8 @@ export function PortfolioView() {
             stakeMode === 'stake' ? 'portfolio.stakeFailed' : 'portfolio.unstakeFailed',
             stakeMode === 'stake' ? 'Failed to stake LYNX' : 'Failed to unstake LYNX'
           ),
-          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+          explorerUrl: (txHash) => getTxExplorerUrl(txHash),
+          suppressErrorToast: true
         }
       );
       setStakeAmount('');
@@ -133,7 +159,7 @@ export function PortfolioView() {
       console.error(err);
       addToast({
         type: 'error',
-        message: err?.message || t('portfolio.stakeActionFailed', 'Failed to update staking'),
+        message: getPortfolioErrorMessage(err, t('portfolio.stakeActionFailed', 'Failed to update staking')),
       });
     } finally {
       setIsStaking(false);
@@ -142,7 +168,21 @@ export function PortfolioView() {
 
   const handleSolLedgerAction = async (mode: 'deposit' | 'withdraw') => {
     const amount = Number(solLedgerAmount);
-    if (!Number.isFinite(amount) || amount <= 0) return;
+    if (!Number.isFinite(amount) || amount <= 0) {
+      addToast({
+        type: 'error',
+        message: t('portfolio.invalidSolAmount', 'Enter a valid SOL amount.'),
+      });
+      return;
+    }
+    if (mode === 'withdraw' && portfolio && amount > portfolio.solBalance) {
+      addToast({
+        type: 'error',
+        message: t('portfolio.withdrawAmountTooHigh', 'Withdrawal exceeds your available SOL balance.'),
+      });
+      return;
+    }
+
     setIsLedgerPending(true);
     try {
       await executeTransaction(
@@ -167,7 +207,8 @@ export function PortfolioView() {
             mode === 'deposit' ? 'portfolio.depositFailed' : 'portfolio.withdrawFailed',
             mode === 'deposit' ? 'Failed to deposit SOL' : 'Failed to withdraw SOL'
           ),
-          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+          explorerUrl: (txHash) => getTxExplorerUrl(txHash),
+          suppressErrorToast: true
         }
       );
       setSolLedgerAmount('');
@@ -175,7 +216,7 @@ export function PortfolioView() {
       console.error(err);
       addToast({
         type: 'error',
-        message: err?.message || t('portfolio.ledgerActionFailed', 'Failed to update SOL balance'),
+        message: getPortfolioErrorMessage(err, t('portfolio.ledgerActionFailed', 'Failed to update SOL balance')),
       });
     } finally {
       setIsLedgerPending(false);
@@ -253,7 +294,7 @@ export function PortfolioView() {
               </div>
               <div>
                 <h3 className="text-sm font-bold text-white tracking-widest uppercase mb-1">{t('portfolio.walletTab', 'Wallet')}</h3>
-                <p className="text-[10px] text-[#A1A1AA] font-mono tracking-tight">{t('portfolio.connectedVia', 'Connected via Google / Email')}</p>
+                <p className="text-[10px] text-[#A1A1AA] font-mono tracking-tight">{connectionLabel}</p>
               </div>
             </div>
 

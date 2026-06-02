@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutGrid, Sword, BarChart3, Wallet, Vote, Info, Settings } from 'lucide-react';
+import { LayoutGrid, Sword, BarChart3, Wallet, Vote, Info } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { useTranslation } from 'react-i18next';
 
@@ -23,7 +23,6 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, onClose }: SidebarPro
 
   const secondaryItems = [
     { id: 'docs', label: t('nav.docs', 'Docs'), icon: Info },
-    { id: 'settings', label: t('nav.settings', 'Settings'), icon: Settings },
   ];
 
   return (

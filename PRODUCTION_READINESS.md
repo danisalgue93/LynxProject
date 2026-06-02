@@ -185,6 +185,12 @@ SOLANA_CLUSTER=devnet
 SOLANA_RPC_URL=https://api.devnet.solana.com
 PROGRAM_ID=CiKuW8r71WnTLkGAKvFyYhtV2UhuJ4j8swDPDc8PEXvu
 ADMIN_API_TOKEN=admin-token-change-in-production
+### Admin Wallets (`ADMIN_WALLETS`)
+
+- Format: comma-separated Solana wallet addresses (no spaces). Example:
+  `ADMIN_WALLETS=AbcDef...123,AnotherAdmin...456`
+- In production `NODE_ENV=production` the backend requires `ADMIN_WALLETS` to contain at least two addresses. The server will auto-create admin user entries for these wallets on startup via `ensureConfiguredAdminWalletUsers()` and persist them via the configured persistence driver.
+- Do not expose `ADMIN_API_TOKEN` in client-side code. Use it only for server-to-server scripts.
 ```
 
 ### Frontend Configuration

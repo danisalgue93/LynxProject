@@ -3,6 +3,7 @@ import 'dotenv/config';
 import express from 'express';
 import helmet from 'helmet';
 import http from 'http';
+import { createHash, randomBytes } from 'crypto';
 import morgan from 'morgan';
 import { Server } from 'socket.io';
 import { z, ZodError } from 'zod';
@@ -143,27 +144,65 @@ const authRateLimit = createSimpleRateLimit({ windowMs: 15 * 60 * 1000, max: 10 
 
 // ==================== AUTH UTILITIES ====================
 
-// In-memory user store (replace with Prisma DB later)
 interface AuthUser {
   id: string;
   email: string;
   passwordHash: string;
   displayName?: string;
   role: 'admin' | 'user';
+  authMethod: 'email' | 'wallet';
+  emailVerified: boolean;
   walletAddress?: string;
   walletLinkedAt?: number;
+  managedWalletAddress?: string;
+  emailVerificationToken?: string;
+  passwordResetToken?: string;
+  passwordResetExpiresAt?: number;
+  createdAt: number;
 }
 
 const users = new Map<string, AuthUser>();
+const adminWallets = (process.env.ADMIN_WALLETS || '')
+  .split(',')
+  .map((wallet) => wallet.trim())
+  .filter(Boolean);
+const adminWalletSet = new Set(adminWallets);
+const requireEmailVerification = process.env.REQUIRE_EMAIL_VERIFICATION !== 'false';
 const configuredAdminPassword = process.env.ADMIN_PASSWORD
   ?? (process.env.NODE_ENV === 'production' ? undefined : process.env.DEV_ADMIN_PASSWORD);
 const adminPassword = configuredAdminPassword ?? (process.env.NODE_ENV === 'test' ? 'admin123' : undefined);
 
-if (process.env.NODE_ENV === 'production' && !adminPassword) {
-  throw new Error('ADMIN_PASSWORD must be set for the default admin user');
+if (process.env.NODE_ENV === 'production' && adminWallets.length < 2) {
+  throw new Error('ADMIN_WALLETS must contain at least two admin wallets in production');
 }
 if (process.env.NODE_ENV === 'production' && adminPassword && !/^(?=.*[A-Z])(?=.*\d).{8,}$/.test(adminPassword)) {
   throw new Error('ADMIN_PASSWORD must be at least 8 characters and include one uppercase letter and one number');
+}
+
+function token(prefix: string) {
+  return `${prefix}_${randomBytes(24).toString('hex')}`;
+}
+
+function managedWalletForUser(userId: string, email: string) {
+  const digest = createHash('sha256').update(`${userId}:${email.toLowerCase()}`).digest('hex').slice(0, 32);
+  return `MAGIC:${digest}`;
+}
+
+function isAdminWallet(wallet?: string) {
+  return Boolean(wallet && adminWalletSet.has(wallet));
+}
+
+function publicUser(user: AuthUser) {
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    role: isAdminWallet(user.walletAddress) ? 'admin' : user.role,
+    authMethod: user.authMethod,
+    emailVerified: user.emailVerified,
+    walletAddress: user.walletAddress,
+    managedWalletAddress: user.managedWalletAddress
+  };
 }
 
 if (adminPassword) {
@@ -172,10 +211,53 @@ if (adminPassword) {
     email: 'admin@lynx.local',
     passwordHash: hashPasswordSync(adminPassword),
     displayName: 'Admin',
-    role: 'admin'
+    role: 'admin',
+    authMethod: 'email',
+    emailVerified: true,
+    managedWalletAddress: managedWalletForUser('admin-1', 'admin@lynx.local'),
+    createdAt: Date.now()
   };
   users.set(adminUser.id, adminUser);
 }
+
+function ensureConfiguredAdminWalletUsers() {
+  for (const wallet of adminWallets) {
+    const existing = [...users.values()].find((user) => user.walletAddress === wallet);
+    if (existing) {
+      existing.role = 'admin';
+      existing.emailVerified = true;
+      continue;
+    }
+    const id = `admin-wallet-${wallet.slice(0, 8)}`;
+    users.set(id, {
+      id,
+      email: `${wallet.slice(0, 8)}@admin-wallet.lynx`,
+      passwordHash: '',
+      displayName: `Admin ${wallet.slice(0, 4)}...${wallet.slice(-4)}`,
+      role: 'admin',
+      authMethod: 'wallet',
+      emailVerified: true,
+      walletAddress: wallet,
+      walletLinkedAt: Date.now(),
+      createdAt: Date.now()
+    });
+  }
+}
+
+async function persistAuthUsers() {
+  await persistence.saveAuthUsers([...users.entries()]);
+}
+
+async function loadPersistedAuthUsers() {
+  const persisted = await persistence.loadAuthUsers<AuthUser>();
+  if (!persisted) return;
+  users.clear();
+  for (const [id, user] of persisted) {
+    users.set(id, user);
+  }
+}
+
+ensureConfiguredAdminWalletUsers();
 
 // Extract JWT from request
 app.use((req: any, _res, next) => {
@@ -198,7 +280,11 @@ function requireAuth(req: any, res: express.Response) {
 }
 
 function currentUser(req: any) {
-  return req.user ? users.get(req.user.userId) : undefined;
+  const user = req.user ? users.get(req.user.userId) : undefined;
+  if (user && isAdminWallet(user.walletAddress)) {
+    user.role = 'admin';
+  }
+  return user;
 }
 
 function requireAdmin(req: any, res: express.Response) {
@@ -210,7 +296,8 @@ function requireAdmin(req: any, res: express.Response) {
     return true;
   }
   if (!requireAuth(req, res)) return false;
-  if (currentUser(req)?.role !== 'admin') {
+  const user = currentUser(req);
+  if (user?.role !== 'admin' && !isAdminWallet(user?.walletAddress)) {
     res.status(403).json({ error: 'Admin role required' });
     return false;
   }
@@ -290,17 +377,36 @@ app.post('/auth/register', authRateLimit, asyncRoute(async (req, res) => {
     email: body.email,
     passwordHash,
     displayName: body.displayName || body.email.split('@')[0],
-    role: 'user'
+    role: 'user',
+    authMethod: 'email',
+    emailVerified: !requireEmailVerification,
+    emailVerificationToken: requireEmailVerification ? token('verify') : undefined,
+    managedWalletAddress: requireEmailVerification ? undefined : managedWalletForUser(userId, body.email),
+    createdAt: Date.now()
   };
 
   users.set(userId, user);
+  if (user.managedWalletAddress) {
+    store.approveWallet(user.managedWalletAddress);
+    await persist();
+  }
+  await persistAuthUsers();
 
-  // Generate token
-  const token = generateToken({ userId, email: user.email, role: user.role });
+  if (requireEmailVerification) {
+    logger.info({
+      email: user.email,
+      verificationToken: process.env.NODE_ENV === 'production' ? '[redacted]' : user.emailVerificationToken
+    }, 'auth:email-verification-required');
+    return res.status(201).json({
+      requiresEmailVerification: true,
+      email: user.email,
+      devVerificationToken: process.env.NODE_ENV === 'production' ? undefined : user.emailVerificationToken
+    });
+  }
 
   res.status(201).json({
-    user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role, walletAddress: user.walletAddress },
-    token
+    user: publicUser(user),
+    token: generateToken({ userId, email: user.email, role: user.role })
   });
 }));
 
@@ -322,13 +428,107 @@ app.post('/auth/login', authRateLimit, asyncRoute(async (req, res) => {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
-  // Generate token
-  const token = generateToken({ userId: user.id, email: user.email, role: user.role });
+  if (!user.emailVerified) {
+    return res.status(403).json({
+      error: 'Email confirmation required before signing in',
+      requiresEmailVerification: true
+    });
+  }
 
   res.json({
-    user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role, walletAddress: user.walletAddress },
-    token
+    user: publicUser(user),
+    token: generateToken({ userId: user.id, email: user.email, role: user.role })
   });
+}));
+
+app.post('/auth/verify-email', authRateLimit, asyncRoute(async (req, res) => {
+  const body = z.object({
+    token: z.string().min(12)
+  }).parse(req.body);
+
+  const user = [...users.values()].find((candidate) => candidate.emailVerificationToken === body.token);
+  if (!user) {
+    return res.status(400).json({ error: 'Invalid or expired verification token' });
+  }
+
+  user.emailVerified = true;
+  user.emailVerificationToken = undefined;
+  if (!user.managedWalletAddress) {
+    user.managedWalletAddress = managedWalletForUser(user.id, user.email);
+  }
+  store.approveWallet(user.managedWalletAddress);
+  await persist();
+  await persistAuthUsers();
+
+  res.json({
+    user: publicUser(user),
+    token: generateToken({ userId: user.id, email: user.email, role: user.role })
+  });
+}));
+
+app.post('/auth/request-password-reset', authRateLimit, asyncRoute(async (req, res) => {
+  const body = z.object({ email: z.string().email() }).parse(req.body);
+  const user = [...users.values()].find((candidate) => candidate.email === body.email);
+  if (user && user.authMethod === 'email') {
+    user.passwordResetToken = token('reset');
+    user.passwordResetExpiresAt = Date.now() + 1000 * 60 * 30;
+    await persistAuthUsers();
+    logger.info({
+      email: user.email,
+      resetToken: process.env.NODE_ENV === 'production' ? '[redacted]' : user.passwordResetToken
+    }, 'auth:password-reset-requested');
+  }
+  res.json({
+    ok: true,
+    devResetToken: process.env.NODE_ENV === 'production' ? undefined : user?.passwordResetToken
+  });
+}));
+
+app.post('/auth/reset-password', authRateLimit, asyncRoute(async (req, res) => {
+  const body = z.object({
+    token: z.string().min(12),
+    password: z.string()
+      .min(8, 'Minimum 8 characters')
+      .regex(/[A-Z]/, 'Must contain uppercase')
+      .regex(/[0-9]/, 'Must contain a number')
+  }).parse(req.body);
+
+  const user = [...users.values()].find((candidate) =>
+    candidate.passwordResetToken === body.token &&
+    (candidate.passwordResetExpiresAt || 0) > Date.now()
+  );
+  if (!user) {
+    return res.status(400).json({ error: 'Invalid or expired password reset token' });
+  }
+
+  user.passwordHash = await hashPassword(body.password);
+  user.passwordResetToken = undefined;
+  user.passwordResetExpiresAt = undefined;
+  await persistAuthUsers();
+  res.json({ ok: true });
+}));
+
+app.post('/auth/change-password', asyncRoute(async (req: any, res) => {
+  if (!requireAuth(req, res)) return;
+  const body = z.object({
+    currentPassword: z.string().min(1),
+    newPassword: z.string()
+      .min(8, 'Minimum 8 characters')
+      .regex(/[A-Z]/, 'Must contain uppercase')
+      .regex(/[0-9]/, 'Must contain a number')
+  }).parse(req.body);
+
+  const user = users.get(req.user.userId);
+  if (!user || user.authMethod !== 'email') {
+    return res.status(400).json({ error: 'Password changes are only available for email accounts' });
+  }
+  const valid = await verifyPassword(body.currentPassword, user.passwordHash);
+  if (!valid) {
+    return res.status(401).json({ error: 'Current password is incorrect' });
+  }
+  user.passwordHash = await hashPassword(body.newPassword);
+  await persistAuthUsers();
+  res.json({ ok: true });
 }));
 
 // Login or auto-register via Phantom/Solflare wallet signature
@@ -353,17 +553,23 @@ app.post('/auth/wallet-login', authRateLimit, asyncRoute(async (req, res) => {
       email: `${body.wallet.slice(0, 8)}@wallet.lynx`,
       passwordHash: '',
       displayName: `${body.wallet.slice(0, 4)}...${body.wallet.slice(-4)}`,
-      role: 'user',
+      role: isAdminWallet(body.wallet) ? 'admin' : 'user',
+      authMethod: 'wallet',
+      emailVerified: true,
       walletAddress: body.wallet,
       walletLinkedAt: Date.now(),
+      createdAt: Date.now()
     };
     users.set(userId, user);
+  } else if (isAdminWallet(body.wallet)) {
+    user.role = 'admin';
   }
+  await persistAuthUsers();
 
   const token = generateToken({ userId: user.id, email: user.email, role: user.role });
 
   res.json({
-    user: { id: user.id, email: user.email, displayName: user.displayName, role: user.role, walletAddress: user.walletAddress },
+    user: publicUser(user),
     token,
   });
 }));
@@ -376,13 +582,7 @@ app.get('/auth/me', (req: any, res) => {
     return res.status(404).json({ error: 'User not found' });
   }
 
-  res.json({
-    id: user.id,
-    email: user.email,
-    displayName: user.displayName,
-    role: user.role,
-    walletAddress: user.walletAddress,
-  });
+  res.json(publicUser(user));
 });
 
 app.post('/auth/link-wallet', asyncRoute(async (req: any, res) => {
@@ -422,34 +622,15 @@ app.post('/auth/link-wallet', asyncRoute(async (req: any, res) => {
 
   currentUser.walletAddress = body.wallet;
   currentUser.walletLinkedAt = Date.now();
+  if (isAdminWallet(body.wallet)) currentUser.role = 'admin';
+  await persistAuthUsers();
 
-  res.json({
-    id: currentUser.id,
-    email: currentUser.email,
-    displayName: currentUser.displayName,
-    role: currentUser.role,
-    walletAddress: currentUser.walletAddress,
-  });
+  res.json(publicUser(currentUser));
 }));
 
 app.delete('/auth/unlink-wallet', (req: any, res) => {
   if (!requireAuth(req, res)) return;
-
-  const currentUser = users.get(req.user.userId);
-  if (!currentUser) {
-    return res.status(404).json({ error: 'Authenticated user not found' });
-  }
-
-  currentUser.walletAddress = undefined;
-  currentUser.walletLinkedAt = undefined;
-
-  res.json({
-    id: currentUser.id,
-    email: currentUser.email,
-    displayName: currentUser.displayName,
-    role: currentUser.role,
-    walletAddress: currentUser.walletAddress,
-  });
+  res.status(400).json({ error: 'Wallet unlink is disabled. Log out to use another wallet.' });
 });
 
 // ==================== API ENDPOINTS ====================
@@ -814,7 +995,7 @@ app.get('/api/proposals', (_req, res) => {
 });
 
 app.post('/api/proposals', asyncRoute(async (req, res) => {
-  if (!requireAuth(req, res)) return;
+  if (!requireAdmin(req, res)) return;
   const body = z.object({
     title: z.string().min(4),
     description: z.string().optional(),
@@ -942,6 +1123,9 @@ async function start() {
     throw new Error('STORE_DRIVER must be "prisma" in production');
   }
   await persistence.load(store);
+  await loadPersistedAuthUsers();
+  ensureConfiguredAdminWalletUsers();
+  await persistAuthUsers();
   httpServer.listen(port, '0.0.0.0', () => {
     console.log(`Lynx backend listening on http://0.0.0.0:${port}`);
   });

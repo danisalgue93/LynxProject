@@ -33,7 +33,7 @@ export function ExampleComponentOption1() {
           pendingMessage: 'Voting on proposal...',
           successMessage: 'Vote cast successfully!',
           errorMessage: 'Failed to cast vote',
-          explorerUrl: (txHash) => getTxExplorerUrl(txHash, 'devnet')
+          explorerUrl: (txHash) => getTxExplorerUrl(txHash)
         }
       );
     } catch (error) {
@@ -70,7 +70,7 @@ export function ExampleComponentOption2() {
       addToast({
         type: 'success',
         message: 'Tokens staked successfully!',
-        url: getTxExplorerUrl(data.txHash, 'devnet'),
+        url: getTxExplorerUrl(data.txHash),
         duration: 8000,
       });
     } catch (error) {

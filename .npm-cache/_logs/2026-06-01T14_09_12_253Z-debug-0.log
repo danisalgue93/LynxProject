@@ -1,0 +1,18 @@
+0 verbose cli C:\nvm4w\nodejs\node.exe C:\nvm4w\nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@10.9.4
+2 info using node@v22.22.0
+3 silly config load:file:C:\Users\danisalgue\AppData\Local\nvm\v22.22.0\node_modules\npm\npmrc
+4 silly config load:file:C:\Users\danisalgue\Desktop\LynxProject\frontend\.npmrc
+5 silly config load:file:C:\Users\danisalgue\.npmrc
+6 silly config load:file:C:\Users\danisalgue\Desktop\LynxProject\frontend\etc\npmrc
+7 verbose title npm run build
+8 verbose argv "run" "build" "--prefix" "frontend"
+9 verbose logfile logs-max:10 dir:C:\Users\danisalgue\Desktop\LynxProject\.npm-cache\_logs\2026-06-01T14_09_12_253Z-
+10 verbose logfile C:\Users\danisalgue\Desktop\LynxProject\.npm-cache\_logs\2026-06-01T14_09_12_253Z-debug-0.log
+11 silly logfile done cleaning log files
+12 verbose cwd C:\Users\danisalgue\Desktop\LynxProject
+13 verbose os Windows_NT 10.0.19045
+14 verbose node v22.22.0
+15 verbose npm  v10.9.4
+16 verbose exit 0
+17 info ok

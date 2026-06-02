@@ -30,9 +30,12 @@ export interface Persistence {
   driver: 'memory' | 'prisma';
   load(store: LynxState): Promise<void>;
   save(store: LynxState): Promise<void>;
+  loadAuthUsers<T>(): Promise<[string, T][] | undefined>;
+  saveAuthUsers<T>(users: [string, T][]): Promise<void>;
 }
 
 const STATE_ID = 'default';
+const AUTH_STATE_ID = 'auth-users';
 
 function snapshot(store: LynxState): StateSnapshot {
   return JSON.parse(JSON.stringify({
@@ -63,7 +66,9 @@ export function createPersistence(): Persistence {
     return {
       driver: 'memory',
       load: async () => undefined,
-      save: async () => undefined
+      save: async () => undefined,
+      loadAuthUsers: async () => undefined,
+      saveAuthUsers: async () => undefined
     };
   }
 
@@ -104,6 +109,18 @@ export function createPersistence(): Persistence {
         where: { id: STATE_ID },
         create: { id: STATE_ID, data: jsonSnapshot(store) },
         update: { data: jsonSnapshot(store) }
+      });
+    },
+    async loadAuthUsers<T>() {
+      const row = await prisma.appState.findUnique({ where: { id: AUTH_STATE_ID } });
+      if (!row) return undefined;
+      return row.data as unknown as [string, T][];
+    },
+    async saveAuthUsers<T>(users: [string, T][]) {
+      await prisma.appState.upsert({
+        where: { id: AUTH_STATE_ID },
+        create: { id: AUTH_STATE_ID, data: users as unknown as Prisma.InputJsonValue },
+        update: { data: users as unknown as Prisma.InputJsonValue }
       });
     }
   };

@@ -1,19 +1,27 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { apiUrl } from '../lib/api';
+import { clearManagedAuthSession, saveManagedAuthSession } from '../lib/auth';
 
 export interface AuthUser {
   id: string;
   email: string;
   displayName?: string;
   role?: 'admin' | 'user';
+  authMethod?: 'email' | 'wallet';
+  emailVerified?: boolean;
   walletAddress?: string;
+  managedWalletAddress?: string;
 }
 
 interface AuthContextType {
   user: AuthUser | null;
   token: string | null;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, displayName?: string) => Promise<void>;
+  register: (email: string, password: string) => Promise<{ requiresEmailVerification?: boolean; devVerificationToken?: string; email?: string } | void>;
+  verifyEmail: (verificationToken: string) => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<{ devResetToken?: string }>;
+  resetPassword: (resetToken: string, password: string) => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   loginWithWallet: (wallet: string, signatureMessage: string, signature: string) => Promise<void>;
   logout: () => void;
   linkWallet: (wallet: string, signatureMessage: string, signature: string) => Promise<void>;
@@ -33,6 +41,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const applySession = (data: { user: AuthUser; token: string }) => {
+    setToken(data.token);
+    setUser(data.user);
+    localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
+    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data.user));
+    if (data.user.authMethod === 'email' && data.user.managedWalletAddress) {
+      saveManagedAuthSession({
+        provider: 'email-password',
+        email: data.user.email,
+        walletAddress: data.user.managedWalletAddress,
+        loginAt: Date.now(),
+      });
+    } else {
+      clearManagedAuthSession();
+    }
+  };
 
   const refreshUser = async () => {
     const storedToken = localStorage.getItem(STORAGE_KEY_TOKEN);
@@ -54,6 +79,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const data = await response.json();
       setUser(data);
       localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data));
+      if (data.authMethod === 'email' && data.managedWalletAddress) {
+        saveManagedAuthSession({
+          provider: 'email-password',
+          email: data.email,
+          walletAddress: data.managedWalletAddress,
+          loginAt: Date.now(),
+        });
+      }
     } catch {
       setUser(null);
       setToken(null);
@@ -89,18 +122,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const data = await response.json();
-    setToken(data.token);
-    setUser(data.user);
-
-    localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
-    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data.user));
+    applySession(data);
   };
 
-  const register = async (email: string, password: string, displayName?: string) => {
+  const register = async (email: string, password: string): Promise<{ requiresEmailVerification?: boolean; devVerificationToken?: string; email?: string } | void> => {
     const response = await fetch(apiUrl('/auth/register'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, displayName })
+      body: JSON.stringify({ email, password })
     });
 
     if (!response.ok) {
@@ -109,11 +138,67 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const data = await response.json();
-    setToken(data.token);
-    setUser(data.user);
+    if (data.requiresEmailVerification) {
+      return data;
+    }
+    applySession(data);
+  };
 
-    localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
-    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data.user));
+  const verifyEmail = async (verificationToken: string) => {
+    const response = await fetch(apiUrl('/auth/verify-email'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: verificationToken })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Email verification failed');
+    }
+
+    const data = await response.json();
+    applySession(data);
+  };
+
+  const requestPasswordReset = async (email: string) => {
+    const response = await fetch(apiUrl('/auth/request-password-reset'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Password reset request failed');
+    }
+    return await response.json();
+  };
+
+  const resetPassword = async (resetToken: string, password: string) => {
+    const response = await fetch(apiUrl('/auth/reset-password'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: resetToken, password })
+    });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Password reset failed');
+    }
+  };
+
+  const changePassword = async (currentPassword: string, newPassword: string) => {
+    if (!token) throw new Error('Authentication required');
+    const response = await fetch(apiUrl('/auth/change-password'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Password change failed');
+    }
   };
 
   const loginWithWallet = async (wallet: string, signatureMessage: string, signature: string) => {
@@ -129,10 +214,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const data = await response.json();
-    setToken(data.token);
-    setUser(data.user);
-    localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
-    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data.user));
+    applySession(data);
   };
 
   const linkWallet = async (wallet: string, signatureMessage: string, signature: string) => {
@@ -186,6 +268,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(null);
     localStorage.removeItem(STORAGE_KEY_TOKEN);
     localStorage.removeItem(STORAGE_KEY_USER);
+    clearManagedAuthSession();
   };
 
   return (
@@ -195,6 +278,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         token,
         login,
         register,
+        verifyEmail,
+        requestPasswordReset,
+        resetPassword,
+        changePassword,
         loginWithWallet,
         logout,
         linkWallet,

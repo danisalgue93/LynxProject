@@ -6,7 +6,6 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
-import { LoginPage } from './pages/LoginPage';
 import { Dashboard } from './pages/Dashboard';
 import { PublicPage } from './pages/PublicPage';
 import { ToastContainer } from './components/layout/ToastContainer';
@@ -32,11 +31,11 @@ export default function App() {
       {/* Public route - accessible to everyone */}
       <Route path="/" element={<PublicPage />} />
       
-      {/* Login page */}
-      <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" /> : <LoginPage />} />
+      {/* Login is handled only through AuthModal. */}
+      <Route path="/login" element={<Navigate to="/" />} />
       
       {/* Protected dashboard - only for authenticated users */}
-      <Route path="/dashboard" element={isAuthenticated ? <Dashboard /> : <Navigate to="/login" />} />
+      <Route path="/dashboard" element={isAuthenticated ? <Dashboard /> : <Navigate to="/" />} />
       
       {/* Catch all */}
       <Route path="*" element={<Navigate to="/" />} />

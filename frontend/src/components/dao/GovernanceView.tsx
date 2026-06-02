@@ -10,12 +10,14 @@ import StakeModal from './StakeModal';
 import { useBlockchainTransaction } from '@/src/hooks/useBlockchainTransaction';
 import { getTxExplorerUrl } from '@/src/lib/explorer';
 import { useToast } from '@/src/context/ToastContext';
+import { useAuth } from '@/src/context/AuthContext';
 
 export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
   const { t } = useTranslation();
   const { fetchProposals, fetchDaoStats, castVote, createProposal, stakeLynx, isLoading, error } = useProgram();
   const { executeTransaction } = useBlockchainTransaction();
   const { addToast } = useToast();
+  const { isAdmin } = useAuth();
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [activeCategory, setActiveCategory] = useState<string>('all');
@@ -42,14 +44,14 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
     try {
       await executeTransaction(
         async () => {
-          await castVote(proposalId, voteType);
-          return `vote-${proposalId}-${voteType}-${Date.now()}`;
+          const result = await castVote(proposalId, voteType);
+          return typeof result === 'string' ? result : `vote-${proposalId}-${voteType}-${Date.now()}`;
         },
         {
           pendingMessage: t('governance.votePending', 'Casting {{voteType}} vote...', { voteType }),
           successMessage: t('governance.voteSuccess', 'Vote cast successfully!'),
           errorMessage: t('governance.voteFailed', 'Failed to cast vote'),
-          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+          explorerUrl: (txHash) => getTxExplorerUrl(txHash)
         }
       );
       setVotedProposalIds((prev) => new Set(prev).add(proposalId));
@@ -75,14 +77,14 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
     try {
       await executeTransaction(
         async () => {
-          await stakeLynx(amount);
-          return `stake-${amount}-${Date.now()}`;
+          const result = await stakeLynx(amount);
+          return typeof result === 'string' ? result : `stake-${amount}-${Date.now()}`;
         },
         {
           pendingMessage: t('governance.stakePending', 'Staking {{amount}} LYNX...', { amount }),
           successMessage: t('governance.stakeSuccess', 'Successfully staked {{amount}} LYNX!', { amount }),
           errorMessage: t('governance.stakeFailed', 'Failed to stake LYNX'),
-          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+          explorerUrl: (txHash) => getTxExplorerUrl(txHash)
         }
       );
       const statsData = await fetchDaoStats();
@@ -105,14 +107,14 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
     try {
       await executeTransaction(
         async () => {
-          await createProposal(input);
-          return `proposal-${Date.now()}`;
+          const result = await createProposal(input);
+          return typeof result === 'string' ? result : `proposal-${Date.now()}`;
         },
         {
           pendingMessage: t('governance.createProposalPending', 'Creating proposal: "{{title}}"...', { title: input.title }),
           successMessage: t('governance.createProposalSuccess', 'Proposal created successfully!'),
           errorMessage: t('governance.createProposalFailed', 'Failed to create proposal'),
-          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
+          explorerUrl: (txHash) => getTxExplorerUrl(txHash)
         }
       );
       const [proposalsData, statsData] = await Promise.all([fetchProposals(), fetchDaoStats()]);
@@ -165,7 +167,12 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
           </p>
         </div>
 
-        <button onClick={() => handleCreateProposal()} disabled={readOnly} className="flex items-center gap-2 px-6 py-3 bg-[#00FFD1] text-black font-black text-sm rounded uppercase tracking-tight hover:scale-[1.02] transition-all shadow-[0_0_20px_rgba(0,255,209,0.2)] disabled:opacity-50 disabled:cursor-not-allowed">
+        <button
+          onClick={() => handleCreateProposal()}
+          disabled={readOnly || !isAdmin}
+          title={!isAdmin ? t('governance.adminsOnly', 'Admins only') : undefined}
+          className="flex items-center gap-2 px-6 py-3 bg-[#00FFD1] text-black font-black text-sm rounded uppercase tracking-tight hover:scale-[1.02] transition-all shadow-[0_0_20px_rgba(0,255,209,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
+        >
           <PlusCircle className="w-4 h-4" />
           {t('governance.createProposal', 'Create Proposal')}
         </button>

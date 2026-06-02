@@ -20,6 +20,30 @@
     "processing": "Procesando",
     "error": "Error"
   },
+  "auth": {
+    "resetEmailSent": "Instrucciones para restablecer la contraseña enviadas.",
+    "passwordResetDone": "Contraseña actualizada. Ahora puedes iniciar sesión.",
+    "passwordChanged": "Contraseña cambiada correctamente.",
+    "forgotPassword": "¿Olvidaste tu contraseña?",
+    "sendReset": "Enviar enlace de restablecimiento",
+    "changePassword": "Cambiar contraseña",
+    "verificationToken": "Código de verificación",
+    "resetToken": "Código de restablecimiento"
+    ,"walletLoginFailed":"Error de inicio con billetera",
+    "walletCannotSign":"Esta billetera no puede firmar mensajes de inicio de sesión.",
+    "modalSubtitle":"Usa primero una billetera, o usa email y contraseña con una billetera interna gestionada.",
+    "signInWithWallet":"Iniciar sesión con billetera",
+    "emailPassword":"Email y contraseña",
+    "displayName":"Nombre a mostrar",
+    "email":"Email",
+    "password":"Contraseña",
+    "currentPassword":"Contraseña actual",
+    "newPassword":"Nueva contraseña",
+    "updatePassword":"Actualizar contraseña",
+    "authFailed":"Autenticación fallida",
+    "backToLogin":"Volver al inicio",
+    "needAccount":"Crear cuenta"
+  },
   "status": {
     "OPEN": "ABIERTO",
     "MATCHED": "EMPAREJADO",
@@ -293,6 +317,10 @@
     "unlinkWalletFailed": "No se pudo desvincular la wallet"
   },
   "orderbook": {
+    "orderSuccess": "Orden ejecutada correctamente.",
+    "insufficientSol": "No hay suficiente SOL para completar esta orden.",
+    "insufficientLynx": "No hay suficiente LYNX para completar esta orden.",
+    "authRequired": "Conecta una wallet o crea una cuenta para tradear.",
     "loadingMechanics": "Cargando mecánicas del libro de órdenes...",
     "noMarkets": "No hay mercados disponibles",
     "orderBook": "Libro de Órdenes",
@@ -327,6 +355,11 @@
     "submit": "Enviar"
   },
   "portfolio": {
+    "invalidSolAmount": "Introduce una cantidad de SOL válida.",
+    "withdrawAmountTooHigh": "El retiro excede tu saldo disponible de SOL.",
+    "insufficientSolBalance": "No hay suficiente SOL para completar esta transacción.",
+    "insufficientLynxBalance": "No hay suficiente LYNX para completar esta transacción.",
+    "orderLockExceeded": "El monto bloqueado de la orden ha sido excedido.",
     "loading": "Cargando portafolio on-chain...",
     "title": "Mi Cuenta",
     "subtitle": "Gestiona tus posiciones, balances y recompensas en $LYNX.",

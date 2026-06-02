@@ -20,6 +20,30 @@
     "processing": "Processing",
     "error": "Error"
   },
+  "auth": {
+    "resetEmailSent": "Password reset instructions sent.",
+    "passwordResetDone": "Password updated. You can log in now.",
+    "passwordChanged": "Password changed successfully.",
+    "forgotPassword": "Forgot password?",
+    "sendReset": "Send reset link",
+    "changePassword": "Change password",
+    "verificationToken": "Verification token",
+    "resetToken": "Reset token"
+    ,"walletLoginFailed":"Wallet login failed",
+    "walletCannotSign":"This wallet cannot sign login messages.",
+    "modalSubtitle":"Use a wallet first, or use email and password with an internal managed wallet.",
+    "signInWithWallet":"Sign in with wallet",
+    "emailPassword":"Email and password",
+    "displayName":"Display name",
+    "email":"Email",
+    "password":"Password",
+    "currentPassword":"Current password",
+    "newPassword":"New password",
+    "updatePassword":"Update password",
+    "authFailed":"Authentication failed",
+    "backToLogin":"Back to login",
+    "needAccount":"Create account"
+  },
   "status": {
     "OPEN": "OPEN",
     "MATCHED": "MATCHED",
@@ -293,6 +317,10 @@
     "unlinkWalletFailed": "Failed to unlink wallet"
   },
   "orderbook": {
+    "orderSuccess": "Order executed successfully.",
+    "insufficientSol": "Not enough SOL to complete this order.",
+    "insufficientLynx": "Not enough LYNX to complete this order.",
+    "authRequired": "Please connect a wallet or create an account to trade.",
     "loadingMechanics": "Loading orderbook mechanics...",
     "noMarkets": "No markets available",
     "orderBook": "Order Book",
@@ -327,6 +355,11 @@
     "submit": "Submit"
   },
   "portfolio": {
+    "invalidSolAmount": "Enter a valid SOL amount.",
+    "withdrawAmountTooHigh": "Withdrawal exceeds your available SOL balance.",
+    "insufficientSolBalance": "Not enough SOL to complete this transaction.",
+    "insufficientLynxBalance": "Not enough LYNX to complete this transaction.",
+    "orderLockExceeded": "Order locked amount exceeded.",
     "loading": "Loading on-chain portfolio...",
     "title": "My Account",
     "subtitle": "Manage your positions, balances and $LYNX rewards.",
