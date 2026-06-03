@@ -28,21 +28,28 @@
     "sendReset": "Send reset link",
     "changePassword": "Change password",
     "verificationToken": "Verification token",
-    "resetToken": "Reset token"
-    ,"walletLoginFailed":"Wallet login failed",
-    "walletCannotSign":"This wallet cannot sign login messages.",
-    "modalSubtitle":"Use a wallet first, or use email and password with an internal managed wallet.",
-    "signInWithWallet":"Sign in with wallet",
-    "emailPassword":"Email and password",
-    "displayName":"Display name",
-    "email":"Email",
-    "password":"Password",
-    "currentPassword":"Current password",
-    "newPassword":"New password",
-    "updatePassword":"Update password",
-    "authFailed":"Authentication failed",
-    "backToLogin":"Back to login",
-    "needAccount":"Create account"
+    "resetToken": "Reset token",
+    "walletLoginFailed": "Wallet login failed",
+    "walletCannotSign": "This wallet cannot sign login messages.",
+    "modalSubtitle": "Use a wallet first, or use email and password with an internal managed wallet.",
+    "signInWithWallet": "Sign in with wallet",
+    "emailPassword": "Email and password",
+    "displayName": "Display name",
+    "email": "Email",
+    "password": "Password",
+    "currentPassword": "Current password",
+    "newPassword": "New password",
+    "updatePassword": "Update password",
+    "authFailed": "Authentication failed",
+    "backToLogin": "Back to login",
+    "needAccount": "Create account",
+    "invalidEmailOrPassword": "Invalid email or password",
+    "confirmNewPassword": "Confirm new password",
+    "createAccount": "Create account",
+    "confirmEmail": "Confirm email",
+    "recoverPassword": "Recover password",
+    "signIn": "Sign in",
+    "connectedViaEmail": "Connected via email"
   },
   "status": {
     "OPEN": "OPEN",
@@ -352,7 +359,8 @@
     "stake": "Stake",
     "fees": "Fees",
     "payout": "Payout",
-    "submit": "Submit"
+    "submit": "Submit",
+    "dismiss": "Dismiss"
   },
   "portfolio": {
     "invalidSolAmount": "Enter a valid SOL amount.",
@@ -460,7 +468,8 @@
     "stakeFailed": "Failed to stake LYNX",
     "createProposalPending": "Creating proposal: \"{{title}}\"...",
     "createProposalSuccess": "Proposal created successfully!",
-    "createProposalFailed": "Failed to create proposal"
+    "createProposalFailed": "Failed to create proposal",
+    "adminsOnly": "Admins only"
   },
   "header": {
     "solanaMainnet": "SOLANA MAINNET: 12.4ms",

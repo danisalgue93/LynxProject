@@ -1,9 +1,15 @@
 import { useToast } from '@/src/context/ToastContext';
 
 /**
- * Hook para ejecutar transacciones blockchain y mostrar toast de estado
- * Soporta mostrar explorer URL automáticamente
+ * Devuelve true si el string tiene pinta de ser una firma real de Solana
+ * (base58, entre 86 y 88 caracteres). Los hashes sintéticos como
+ * "deposit-sol-1-1780487318470" no pasan este filtro y no generan
+ * enlace al explorador.
  */
+function isRealTxSignature(hash: string): boolean {
+  return /^[1-9A-HJ-NP-Za-km-z]{86,88}$/.test(hash);
+}
+
 export function useBlockchainTransaction() {
   const { addToast, removeToast } = useToast();
 
@@ -23,40 +29,45 @@ export function useBlockchainTransaction() {
       suppressErrorToast?: boolean;
     } = {}
   ) => {
+    const toastId = addToast({
+      type: 'pending',
+      message: pendingMessage,
+      duration: 0,
+    });
+
     try {
-      // Show pending toast
-      const toastId = addToast({
-        type: 'pending',
-        message: pendingMessage,
-        duration: 0, // Don't auto-remove pending toasts
+      const txHash = await transactionFn();
+
+      removeToast(toastId);
+
+      // Solo mostramos el enlace al explorador cuando el hash es una firma real
+      const explorerLink =
+        explorerUrl && isRealTxSignature(txHash)
+          ? explorerUrl(txHash)
+          : undefined;
+
+      addToast({
+        type: 'success',
+        message: successMessage,
+        url: explorerLink,
+        duration: 8000,
       });
 
-      try {
-        const txHash = await transactionFn();
-
-        removeToast(toastId);
-        const explorerLink = explorerUrl ? explorerUrl(txHash) : undefined;
+      return txHash;
+    } catch (error: any) {
+      console.error('Transaction error:', error);
+      removeToast(toastId);
+      const message =
+        typeof error === 'string' ? error : error?.message || errorMessage;
+      if (!suppressErrorToast) {
         addToast({
-          type: 'success',
-          message: successMessage,
-          url: explorerLink,
-          duration: 8000,
+          type: 'error',
+          message,
+          duration: 6000,
         });
-
-        return txHash;
-      } catch (error: any) {
-        console.error('Transaction error:', error);
-        removeToast(toastId);
-        const message = typeof error === 'string' ? error : error?.message || errorMessage;
-        if (!suppressErrorToast) {
-          addToast({
-            type: 'error',
-            message,
-            duration: 6000,
-          });
-        }
-        throw error;
       }
+      throw error;
+    }
   };
 
   return { executeTransaction };

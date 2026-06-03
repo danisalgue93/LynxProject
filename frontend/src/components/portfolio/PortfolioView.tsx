@@ -38,9 +38,9 @@ export function PortfolioView() {
   const { executeTransaction } = useBlockchainTransaction();
   const { addToast } = useToast();
   const { user } = useAuth();
-  const connectionLabel = user?.authMethod === 'wallet'
-    ? t('portfolio.connectedViaWallet', 'Connected via wallet')
-    : t('portfolio.connectedViaEmail', 'Connected via email');
+  const connectionLabel = user?.authMethod === 'email'
+    ? t('portfolio.connectedViaEmail', 'Connected via email')
+    : null;
 
   const getPortfolioErrorMessage = (err: any, fallback: string) => {
     const message = typeof err === 'string' ? err : err?.message || fallback;
@@ -65,6 +65,7 @@ export function PortfolioView() {
   const [isStaking, setIsStaking] = useState(false);
   const [stakeMode, setStakeMode] = useState<'stake'|'unstake'>('stake');
   const [stakeAmount, setStakeAmount] = useState('');
+  const [stakeError, setStakeError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'wallet' | 'portfolio' | 'staking'>('wallet');
   const [moonPayError, setMoonPayError] = useState<string | null>(null);
   const [solLedgerAmount, setSolLedgerAmount] = useState('');
@@ -103,8 +104,7 @@ export function PortfolioView() {
           pendingMessage: t('portfolio.claimRewardsPending', 'Claiming staking rewards...'),
           successMessage: t('portfolio.claimRewardsSuccess', 'Rewards claimed successfully!'),
           errorMessage: t('portfolio.claimRewardsFailed', 'Failed to claim rewards'),
-          explorerUrl: () => 'https://explorer.solana.com?cluster=devnet'
-          ,
+          explorerUrl: (txHash) => getTxExplorerUrl(txHash),
           suppressErrorToast: true
         }
       );
@@ -122,6 +122,7 @@ export function PortfolioView() {
   const handleStakeAction = async () => {
     if (!stakeAmount || isNaN(Number(stakeAmount))) return;
     setIsStaking(true);
+    setStakeError(null);
     try {
       const amount = Number(stakeAmount);
       await executeTransaction(
@@ -157,10 +158,8 @@ export function PortfolioView() {
       setStakeAmount('');
     } catch (err: any) {
       console.error(err);
-      addToast({
-        type: 'error',
-        message: getPortfolioErrorMessage(err, t('portfolio.stakeActionFailed', 'Failed to update staking')),
-      });
+      const msg = getPortfolioErrorMessage(err, t('portfolio.stakeActionFailed', 'Failed to update staking'));
+      setStakeError(msg);
     } finally {
       setIsStaking(false);
     }
@@ -294,7 +293,7 @@ export function PortfolioView() {
               </div>
               <div>
                 <h3 className="text-sm font-bold text-white tracking-widest uppercase mb-1">{t('portfolio.walletTab', 'Wallet')}</h3>
-                <p className="text-[10px] text-[#A1A1AA] font-mono tracking-tight">{connectionLabel}</p>
+                {connectionLabel && <p className="text-[10px] text-[#A1A1AA] font-mono tracking-tight">{connectionLabel}</p>}
               </div>
             </div>
 
@@ -639,6 +638,12 @@ export function PortfolioView() {
               </div>
                   
               <div className="mt-auto shrink-0">
+                {stakeError && (
+                  <div className="mb-3 p-3 bg-[#3F1F1F] border border-[#4B1F1F] rounded text-sm text-[#FFD6D6] font-bold flex items-start justify-between gap-3">
+                    <div className="flex-1 text-left text-[11px]">{stakeError}</div>
+                    <button onClick={() => setStakeError(null)} className="text-[#FFB4B4] text-[10px] shrink-0">{t('orderbook.dismiss', 'Dismiss')}</button>
+                  </div>
+                )}
                 <button 
                   onClick={handleStakeAction}
                   disabled={isStaking || !stakeAmount || isNaN(Number(stakeAmount)) || Number(stakeAmount) <= 0}

@@ -28,21 +28,28 @@
     "sendReset": "Enviar enlace de restablecimiento",
     "changePassword": "Cambiar contraseña",
     "verificationToken": "Código de verificación",
-    "resetToken": "Código de restablecimiento"
-    ,"walletLoginFailed":"Error de inicio con billetera",
-    "walletCannotSign":"Esta billetera no puede firmar mensajes de inicio de sesión.",
-    "modalSubtitle":"Usa primero una billetera, o usa email y contraseña con una billetera interna gestionada.",
-    "signInWithWallet":"Iniciar sesión con billetera",
-    "emailPassword":"Email y contraseña",
-    "displayName":"Nombre a mostrar",
-    "email":"Email",
-    "password":"Contraseña",
-    "currentPassword":"Contraseña actual",
-    "newPassword":"Nueva contraseña",
-    "updatePassword":"Actualizar contraseña",
-    "authFailed":"Autenticación fallida",
-    "backToLogin":"Volver al inicio",
-    "needAccount":"Crear cuenta"
+    "resetToken": "Código de restablecimiento",
+    "walletLoginFailed": "Error de inicio con billetera",
+    "walletCannotSign": "Esta billetera no puede firmar mensajes de inicio de sesión.",
+    "modalSubtitle": "Usa primero una billetera, o usa email y contraseña con una billetera interna gestionada.",
+    "signInWithWallet": "Iniciar sesión con billetera",
+    "emailPassword": "Email y contraseña",
+    "displayName": "Nombre a mostrar",
+    "email": "Email",
+    "password": "Contraseña",
+    "currentPassword": "Contraseña actual",
+    "newPassword": "Nueva contraseña",
+    "updatePassword": "Actualizar contraseña",
+    "authFailed": "Autenticación fallida",
+    "backToLogin": "Volver al inicio",
+    "needAccount": "Crear cuenta",
+    "invalidEmailOrPassword": "Email o contraseña incorrectos",
+    "confirmNewPassword": "Confirmar nueva contraseña",
+    "createAccount": "Crear cuenta",
+    "confirmEmail": "Confirmar email",
+    "recoverPassword": "Recuperar contraseña",
+    "signIn": "Iniciar sesión",
+    "connectedViaEmail": "Conectado vía email"
   },
   "status": {
     "OPEN": "ABIERTO",
@@ -352,7 +359,8 @@
     "stake": "Monto",
     "fees": "Comisiones",
     "payout": "Pago",
-    "submit": "Enviar"
+    "submit": "Enviar",
+    "dismiss": "Cerrar"
   },
   "portfolio": {
     "invalidSolAmount": "Introduce una cantidad de SOL válida.",
@@ -460,7 +468,8 @@
     "stakeFailed": "No se pudo hacer staking de LYNX",
     "createProposalPending": "Creando propuesta: \"{{title}}\"...",
     "createProposalSuccess": "Propuesta creada correctamente",
-    "createProposalFailed": "No se pudo crear la propuesta"
+    "createProposalFailed": "No se pudo crear la propuesta",
+    "adminsOnly": "Solo administradores"
   },
   "header": {
     "solanaMainnet": "MAINNET SOLANA: 12.4ms",

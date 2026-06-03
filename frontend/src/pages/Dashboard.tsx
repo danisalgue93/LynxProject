@@ -142,58 +142,6 @@ export function Dashboard() {
                 exit={{ opacity: 0, y: -20 }}
                 transition={{ duration: 0.3 }}
               >
-                <div className="p-4 md:p-8 pb-0">
-                  <div className="overflow-hidden rounded-xl bg-[#0D0D0E] border border-[#1F1F23] p-6 md:p-8">
-                    <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-                      <div className="max-w-2xl">
-                        <div className="flex items-center gap-2 mb-4">
-                          <span className="text-[9px] md:text-[10px] bg-[#18181B] text-[#A1A1AA] px-2 py-0.5 rounded border border-[#27272A] tracking-widest uppercase font-bold">
-                            {t('dashboard.mainnetBadge', 'DEVNET')}
-                          </span>
-                          <span className="text-[#71717A] text-[9px] md:text-[10px] font-bold uppercase tracking-[0.2em]">
-                            {t('dashboard.daoSubtitle', 'DEX PROTOCOL DAO')}
-                          </span>
-                        </div>
-                        <h1 className="text-3xl md:text-4xl font-bold text-white mb-3">
-                          {t('dashboard.heroTitle1', 'Predict. Duel.')} <span className="text-gradient">{t('dashboard.heroTitle2', 'Dominate.')}</span>
-                        </h1>
-                        <p className="text-sm md:text-base text-[#71717A] leading-relaxed max-w-xl">
-                          {t('dashboard.heroDescription', 'The definitive P2P prediction ecosystem on Solana. Trade real-world outcomes, duel with high leverage, and shape the protocol through our Dex Protocol DAO.')}
-                        </p>
-                      </div>
-                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                        <button 
-                          onClick={launchFirstMarket}
-                          className="px-5 py-3 bg-[#00FFD1] text-black font-black rounded uppercase tracking-tight hover:bg-[#00E5BC] transition-all"
-                        >
-                          {t('dashboard.launchMarkets', 'Launch Markets')}
-                        </button>
-                        <button 
-                          onClick={() => setIsCreateDuelOpen(true)}
-                          className="px-5 py-3 bg-[#18181B] text-white font-bold rounded border border-[#27272A] hover:bg-[#27272A] transition-all uppercase tracking-tight"
-                        >
-                          {t('dashboard.hostDuel', 'Host 1v1 Duel')}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8 pt-6 border-t border-[#1F1F23]">
-                      <div className="rounded-xl bg-[#09090A] p-4 border border-[#1F1F23]">
-                        <div className="text-[9px] uppercase tracking-[0.3em] text-[#71717A] mb-2">{t('dashboard.totalVolume', 'Total Volume')}</div>
-                        <div className="text-2xl font-mono font-bold text-white">{marketSummary.volume.toFixed(2)} SOL</div>
-                      </div>
-                      <div className="rounded-xl bg-[#09090A] p-4 border border-[#1F1F23]">
-                        <div className="text-[9px] uppercase tracking-[0.3em] text-[#71717A] mb-2">{t('marketsGrid.title', 'Active Markets')}</div>
-                        <div className="text-2xl font-mono font-bold text-[#00FFD1]">{marketSummary.markets}</div>
-                      </div>
-                      <div className="rounded-xl bg-[#09090A] p-4 border border-[#1F1F23]">
-                        <div className="text-[9px] uppercase tracking-[0.3em] text-[#71717A] mb-2">Network</div>
-                        <div className="text-2xl font-mono font-bold text-[#9945FF]">Devnet</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
                 <MarketsGrid onMarketSelect={setSelectedMarket} canCreateMarket={isAdmin} onCreateMarket={() => setIsCreateMarketOpen(true)} />
               </motion.div>
             ) : activeTab === 'duels' ? (

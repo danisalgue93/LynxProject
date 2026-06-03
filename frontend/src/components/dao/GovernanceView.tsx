@@ -25,6 +25,7 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
   const [votedProposalIds, setVotedProposalIds] = useState<Set<string>>(() => new Set());
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showStakeModal, setShowStakeModal] = useState(false);
+  const [stakeError, setStakeError] = useState<string | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -60,7 +61,14 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
       setStats(statsData);
     } catch (e: any) {
       console.error(e);
-      addToast({ type: 'error', message: e?.message || t('governance.voteFailed', 'Failed to cast vote') });
+      const msg: string = e?.message || '';
+      if (msg.includes('already voted') || msg.includes('already_voted')) {
+        // Mark as voted so buttons disable immediately
+        setVotedProposalIds((prev) => new Set(prev).add(proposalId));
+        addToast({ type: 'info', message: t('governance.alreadyVoted', 'You already voted on this proposal'), duration: 5000 });
+      } else {
+        addToast({ type: 'error', message: msg || t('governance.voteFailed', 'Failed to cast vote') });
+      }
     } finally {
       setIsPendingAct(false);
     }
@@ -74,6 +82,7 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
     }
     if (!amount || amount <= 0) return;
     setIsPendingAct(true);
+    setStakeError(null);
     try {
       await executeTransaction(
         async () => {
@@ -91,7 +100,12 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
       setStats(statsData);
     } catch (e: any) {
       console.error(e);
-      addToast({ type: 'error', message: e?.message || t('governance.stakeFailed', 'Failed to stake LYNX') });
+      const msg: string = e?.message || '';
+      if (msg.includes('Insufficient LYNX') || msg.includes('insufficient_lynx')) {
+        setStakeError(t('portfolio.insufficientLynxBalance', 'Not enough LYNX to complete this transaction.'));
+      } else {
+        setStakeError(msg || t('governance.stakeFailed', 'Failed to stake LYNX'));
+      }
     } finally {
       setIsPendingAct(false);
     }
@@ -361,6 +375,13 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
                   {t('governance.voiceDesc', 'Stake your $LYNX tokens to participate in governance. Active voters earn a "Governance Multiplier" on their trading fee rebates.')}
                 </p>
              </div>
+             <div className="flex flex-col items-start gap-3">
+             {stakeError && (
+               <div className="w-full p-3 bg-[#3F1F1F] border border-[#4B1F1F] rounded text-sm text-[#FFD6D6] font-bold flex items-start justify-between gap-3">
+                 <div className="flex-1 text-left text-[11px]">{stakeError}</div>
+                 <button onClick={() => setStakeError(null)} className="text-[#FFB4B4] text-[10px] shrink-0">{t('orderbook.dismiss', 'Dismiss')}</button>
+               </div>
+             )}
              <button 
                 onClick={() => handleStakeAction()}
                 disabled={isPendingAct || readOnly}
@@ -369,6 +390,7 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
                 )}>
                 {t('governance.stakeLynx', 'Stake $LYNX')}
              </button>
+             </div>
           </div>
       </div>
       {showCreateModal && (

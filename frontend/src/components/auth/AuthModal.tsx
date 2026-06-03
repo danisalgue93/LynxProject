@@ -221,9 +221,11 @@ export function AuthModal({ isOpen, onClose, defaultMode, onLoginSuccess }: Auth
               )}
             </div>
             <h2 className="text-xl md:text-2xl font-bold text-white mb-2">{title}</h2>
-            <p className="text-xs text-[#A1A1AA]">
-              {t("auth.modalSubtitle", "Use a wallet first, or use email and password with an internal managed wallet.")}
-            </p>
+            {mode !== 'change' && (
+              <p className="text-xs text-[#A1A1AA]">
+                {t("auth.modalSubtitle", "Use a wallet first, or use email and password with an internal managed wallet.")}
+              </p>
+            )}
           </div>
 
           {error && (

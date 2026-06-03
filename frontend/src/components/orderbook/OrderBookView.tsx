@@ -896,7 +896,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                        <div className="p-3 bg-[#3F1F1F] border border-[#4B1F1F] rounded text-sm text-[#FFD6D6] font-bold">
                          <div className="flex items-start justify-between gap-3">
                            <div className="flex-1 text-left">{tradeError}</div>
-                           <button onClick={() => setTradeError(null)} className="text-[#FFB4B4] ml-3">Dismiss</button>
+                           <button onClick={() => setTradeError(null)} className="text-[#FFB4B4] ml-3">{t('orderbook.dismiss', 'Dismiss')}</button>
                          </div>
                        </div>
                      )}
