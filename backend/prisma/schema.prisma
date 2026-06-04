@@ -7,13 +7,167 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// The current backend persists the live exchange state as versioned JSON so
-// the in-memory engine and the Prisma-backed engine stay behaviorally equal.
-// Normalized reporting/indexer tables can be added later without changing the
-// trading API contract.
-model AppState {
+model Market {
+  id               String    @id
+  title            String
+  description      String
+  category         String
+  imageUrl         String?
+  status           String
+  poolAmount       Float     @default(0)
+  yesAmount        Float     @default(0)
+  noAmount         Float     @default(0)
+  drawAmount       Float?
+  burnedAmount     Float     @default(0)
+  isTernary        Boolean   @default(false)
+  currency         String
+  oracleId         String
+  oracleMode       String    @default("SWITCHBOARD")
+  onChainMarket    String?
+  onChainSignature String?
+  createdBy        String?
+  createdAt        DateTime  @default(now())
+  cutoffAt         DateTime
+  resolveAt        DateTime?
+  oracleDeadline   DateTime?
+  resolvedAt       DateTime?
+  result           String?
+}
+
+model UserPosition {
+  id         String   @id
+  marketId   String
+  wallet     String
+  position   String
+  amount     Float
+  entryPrice Float
+  currency   String
+  claimed    Boolean  @default(false)
+  createdAt  DateTime  @default(now())
+}
+
+model WalletState {
+  wallet           String    @id
+  solBalance       Float     @default(0)
+  lynxBalance      Float     @default(0)
+  stakedLynx       Float     @default(0)
+  rewardsSol       Float     @default(0)
+  totalVolume      Float     @default(0)
+  wins             Int       @default(0)
+  losses           Int       @default(0)
+  approvedAt       DateTime?
+  approvalNonce    String?
+  connectedWallets Json?
+}
+
+model Order {
+  id             String   @id
+  marketId       String?
+  pair           String
+  owner          String
+  side           String
+  position       String?
+  amount         Float
+  remaining      Float
+  price          Float
+  currency       String
+  status         String
+  createdAt      DateTime  @default(now())
+  lockedCurrency String?
+  lockedAmount   Float?
+  spentAmount    Float?
+}
+
+model Trade {
   id        String   @id
-  data      Json
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  marketId  String?
+  pair      String
+  maker     String?
+  taker     String
+  side      String
+  position  String?
+  amount    Float
+  price     Float
+  feeAmount Float
+  currency  String
+  createdAt DateTime  @default(now())
+}
+
+model Duel {
+  id             String    @id
+  parentMarketId String
+  creator        String
+  rival          String?
+  amount         Float
+  grossAmount    Float?
+  burnedAmount   Float?
+  currency       String
+  status         String
+  positionA      String
+  positionB      String?
+  isTernary      Boolean?
+  type           String
+  protocolSide   String?
+  createdAt      DateTime  @default(now())
+  acceptedAt     DateTime?
+  resolvedAt     DateTime?
+  winner         String?
+}
+
+model Proposal {
+  id          String @id
+  title       String
+  description String
+  status      String
+  votesYes    Float  @default(0)
+  votesNo     Float  @default(0)
+  endTime     String
+  category    String
+  author      String
+  voters      Json?
+}
+
+model Notification {
+  id        String   @id
+  wallet    String
+  type      String
+  title     String
+  message   String
+  timestamp DateTime  @default(now())
+  read      Boolean  @default(false)
+}
+
+model Transaction {
+  id        String   @id
+  signature String
+  wallet    String?
+  intent    Json?
+  timestamp DateTime  @default(now())
+}
+
+model LedgerEntry {
+  id        String   @id
+  wallet    String
+  type      String
+  currency  String?
+  amount    Float?
+  provider  String?
+  status    String
+  reference String?
+  metadata  Json?
+  createdAt DateTime  @default(now())
+}
+
+model Treasury {
+  id                 String @id @default("default")
+  sol                Float  @default(0)
+  lynx               Float  @default(0)
+  lynxForInitialSale Float  @default(0)
+  lynxBurned         Float  @default(0)
+  protocolDuelSol    Float  @default(0)
+}
+
+model AuthState {
+  id   String @id
+  data Json
 }

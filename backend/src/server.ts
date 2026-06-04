@@ -14,7 +14,6 @@ import { createPersistence } from './persistence.js';
 import { LynxState } from './state.js';
 import type { Currency, OrderSide, Position } from './types.js';
 import { generateToken, verifyToken, hashPassword, hashPasswordSync, verifyPassword, extractToken } from './auth.js';
-import { calculateSettlement, validateSettlement } from './settlement.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -895,7 +894,7 @@ app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
     reference: z.string().optional()
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
-  if (!wallet) return;
+  if (!wallet || !requireApprovedWallet(res, wallet)) return;
   const result = store.deposit({
     wallet,
     currency: body.currency,
@@ -999,7 +998,7 @@ app.post('/api/proposals', asyncRoute(async (req, res) => {
   const body = z.object({
     title: z.string().min(4),
     description: z.string().optional(),
-    category: z.string().optional(),
+    category: z.enum(['protocol', 'markets', 'fees', 'community']).optional(),
     author: z.string().optional()
   }).parse(req.body);
   const proposal = store.createProposal({ title: body.title, description: body.description, category: body.category, author: body.author });
@@ -1042,7 +1041,12 @@ app.get('/api/notifications', (req, res) => {
 
 app.post('/api/notifications/read', asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
-  const wallet = typeof req.body.wallet === 'string' ? req.body.wallet : DEV_WALLET;
+  const user = currentUser(req as any);
+  const wallet = user?.walletAddress ?? user?.managedWalletAddress;
+  if (!wallet) {
+    res.status(400).json({ error: 'No wallet associated with this account' });
+    return;
+  }
   const id = typeof req.body.id === 'string' ? req.body.id : undefined;
   const notifications = store.markNotificationsRead(wallet, id);
   await persist();
@@ -1050,6 +1054,7 @@ app.post('/api/notifications/read', asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/transactions', asyncRoute(async (req, res) => {
+  if (!requireAuth(req, res)) return;
   const intent = req.body || {};
   try { (req as any).log && (req as any).log.info({ intent }, 'tx:intent'); } catch (e) { logger.info({ intent }, 'tx:intent'); }
   if (intent.signature) {

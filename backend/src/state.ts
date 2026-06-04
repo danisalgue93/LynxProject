@@ -661,7 +661,7 @@ export class LynxState {
       votesYes: 0,
       votesNo: 0,
       endTime: new Date(now + 1000 * 60 * 60 * 24 * 7).toISOString(),
-      category: input.category || 'general',
+      category: input.category || 'community',
       author: input.author || 'Anonymous',
       voters: {}
     };
@@ -756,6 +756,7 @@ export class LynxState {
   }
 
   addTransaction(tx: { signature: string; wallet?: string; intent?: any }) {
+    if (this.transactions.has(tx.signature)) return;
     const ts = Date.now();
     this.transactions.set(tx.signature, { signature: tx.signature, wallet: tx.wallet, intent: tx.intent, timestamp: ts });
   }
@@ -908,8 +909,9 @@ export class LynxState {
     this.treasury.lynxForInitialSale = roundAmount(this.treasury.lynxForInitialSale + initialSaleEmission);
 
     if (initialSaleEmission > 0) {
-      this.orders.set(id('order'), {
-        id: id('order'),
+      const orderId = id('order');
+      this.orders.set(orderId, {
+        id: orderId,
         pair: 'LYNX/SOL',
         owner: TREASURY_WALLET,
         side: 'SELL',
@@ -977,15 +979,27 @@ export class LynxState {
       if (creatorWins && !rivalWins) {
         const wallet = this.getWallet(duel.creator);
         this.credit(wallet, duel.currency, payout);
-        this.treasury.sol = roundAmount(this.treasury.sol + fee);
+        if (duel.currency === 'LYNX') {
+          this.treasury.lynx = roundAmount(this.treasury.lynx + fee);
+        } else {
+          this.treasury.sol = roundAmount(this.treasury.sol + fee);
+        }
         duel.winner = duel.creator;
       } else if (rivalWins && duel.rival) {
         const wallet = this.getWallet(duel.rival);
         this.credit(wallet, duel.currency, payout);
-        this.treasury.sol = roundAmount(this.treasury.sol + fee);
+        if (duel.currency === 'LYNX') {
+          this.treasury.lynx = roundAmount(this.treasury.lynx + fee);
+        } else {
+          this.treasury.sol = roundAmount(this.treasury.sol + fee);
+        }
         duel.winner = duel.rival;
       } else {
-        this.treasury.sol = roundAmount(this.treasury.sol + total);
+        if (duel.currency === 'LYNX') {
+          this.treasury.lynx = roundAmount(this.treasury.lynx + total);
+        } else {
+          this.treasury.sol = roundAmount(this.treasury.sol + total);
+        }
         duel.winner = TREASURY_WALLET;
       }
     }
@@ -1036,8 +1050,9 @@ export class LynxState {
       ['SELL', 0.0053, 37500]
     ] as const;
     for (const [side, price, amount] of levels) {
-      this.orders.set(id('order'), {
-        id: id('order'),
+      const orderId = id('order');
+      this.orders.set(orderId, {
+        id: orderId,
         pair: 'LYNX/SOL',
         owner: TREASURY_WALLET,
         side,
