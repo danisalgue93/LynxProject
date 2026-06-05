@@ -105,7 +105,6 @@ export function useProgram() {
     limitPrice?: number
   ) => {
     setIsLoading(true);
-    setError(null);
     try {
       const currentWallet = await ensureApproved();
       const position = typeof side === 'boolean' ? (side ? 'YES' : 'NO') : side;
@@ -114,7 +113,6 @@ export function useProgram() {
         body: JSON.stringify({ wallet: currentWallet, amount, position, tradeType, limitPrice }),
       });
     } catch (err: any) {
-      setError(err.message || 'Failed to execute trade');
       throw err;
     } finally {
       setIsLoading(false);
@@ -123,22 +121,13 @@ export function useProgram() {
 
   const executeLynxOrder = useCallback(async (side: 'BUY' | 'SELL', amount: number, price: number) => {
     setIsLoading(true);
-    setError(null);
     try {
       const currentWallet = await ensureApproved();
       return await apiFetch('/api/orders', {
         method: 'POST',
-        body: JSON.stringify({
-          wallet: currentWallet,
-          pair: 'LYNX/SOL',
-          side,
-          amount,
-          price,
-          currency: 'LYNX',
-        }),
+        body: JSON.stringify({ wallet: currentWallet, pair: 'LYNX/SOL', side, amount, price, currency: 'LYNX' }),
       });
     } catch (err: any) {
-      setError(err.message || 'Failed to place LYNX order');
       throw err;
     } finally {
       setIsLoading(false);
@@ -157,14 +146,13 @@ export function useProgram() {
     try {
       return await apiFetch<Duel[]>('/api/duels');
     } catch (err: any) {
-      setError(err.message || 'Failed to fetch duels');
+      console.error('Failed to fetch duels', err);
       return [];
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  // Example: Create a new 1v1 Duel
   const createDuel = useCallback(async (duelParams: any) => {
     setIsLoading(true);
     try {
@@ -174,7 +162,6 @@ export function useProgram() {
         body: JSON.stringify({ wallet: currentWallet, ...duelParams }),
       });
     } catch (err: any) {
-      setError(err.message || 'Failed to create duel');
       throw err;
     } finally {
       setIsLoading(false);
@@ -190,7 +177,6 @@ export function useProgram() {
         body: JSON.stringify({ ...marketParams, ...signed }),
       });
     } catch (err: any) {
-      setError(err.message || 'Failed to create market');
       throw err;
     } finally {
       setIsLoading(false);
@@ -259,7 +245,6 @@ export function useProgram() {
     }
   }, []);
 
-  // Example: Cast a vote on a DAO proposal
   const castVote = useCallback(async (proposalId: string, voteType: 'yes' | 'no') => {
     setIsLoading(true);
     try {
@@ -269,14 +254,12 @@ export function useProgram() {
         body: JSON.stringify({ wallet: currentWallet, voteType }),
       });
     } catch (err: any) {
-      setError(err.message || 'Failed to vote');
       throw err;
     } finally {
       setIsLoading(false);
     }
   }, [ensureApproved]);
 
-  // Example: Stake LYNX tokens
   const stakeLynx = useCallback(async (amount: number) => {
     setIsLoading(true);
     try {
@@ -286,7 +269,120 @@ export function useProgram() {
         body: JSON.stringify({ wallet: currentWallet, amount }),
       });
     } catch (err: any) {
-      setError(err.message || 'Failed to stake');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [ensureApproved]);
+
+  const unstakeLynx = useCallback(async (amount: number) => {
+    setIsLoading(true);
+    try {
+      const currentWallet = await ensureApproved();
+      return await apiFetch<Portfolio>('/api/staking/unstake', {
+        method: 'POST',
+        body: JSON.stringify({ wallet: currentWallet, amount }),
+      });
+    } catch (err: any) {
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [ensureApproved]);
+
+  const claimRewards = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const currentWallet = await ensureApproved();
+      return await apiFetch<{ claimed: number; portfolio: Portfolio }>('/api/staking/claim', {
+        method: 'POST',
+        body: JSON.stringify({ wallet: currentWallet }),
+      });
+    } catch (err: any) {
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [ensureApproved]);
+
+  const acceptDuel = useCallback(async (duelId: string, position?: string) => {
+    setIsLoading(true);
+    try {
+      const currentWallet = await ensureApproved();
+      return await apiFetch(`/api/duels/${duelId}/accept`, {
+        method: 'POST',
+        body: JSON.stringify({ wallet: currentWallet, side: position }),
+      });
+    } catch (err: any) {
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [ensureApproved]);
+
+  const depositSol = useCallback(async (amount: number, onChainSignature?: string) => {
+    setIsLoading(true);
+    try {
+      const currentWallet = await ensureApproved();
+      const result = await apiFetch<{ portfolio: Portfolio }>('/api/ledger/deposit', {
+        method: 'POST',
+        body: JSON.stringify({
+          wallet: currentWallet,
+          currency: 'SOL',
+          amount,
+          provider: 'EXTERNAL_WALLET',
+          signature: onChainSignature,
+        }),
+      });
+      return result.portfolio;
+    } catch (err: any) {
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [ensureApproved]);
+
+  const withdrawSol = useCallback(async (amount: number) => {
+    setIsLoading(true);
+    try {
+      const currentWallet = await ensureApproved();
+      const result = await apiFetch<{ portfolio: Portfolio }>('/api/ledger/withdraw', {
+        method: 'POST',
+        body: JSON.stringify({ wallet: currentWallet, currency: 'SOL', amount }),
+      });
+      return result.portfolio;
+    } catch (err: any) {
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [ensureApproved]);
+
+  const claimPosition = useCallback(async (positionId: string) => {
+    setIsLoading(true);
+    try {
+      const currentWallet = await ensureApproved();
+      return await apiFetch<{ payout: number; currency: string; portfolio: Portfolio }>(
+        `/api/positions/${positionId}/claim`,
+        { method: 'POST', body: JSON.stringify({ wallet: currentWallet }) }
+      );
+    } catch (err: any) {
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [ensureApproved]);
+
+  // Cancel an open order — wallet goes in body (H-02 fix applied server-side)
+  const cancelOrder = useCallback(async (orderId: string) => {
+    setIsLoading(true);
+    try {
+      const currentWallet = await ensureApproved();
+      return await apiFetch<{ cancelled: string; portfolio: Portfolio }>(
+        `/api/orders/${orderId}`,
+        { method: 'DELETE', body: JSON.stringify({ wallet: currentWallet }) }
+      );
+    } catch (err: any) {
       throw err;
     } finally {
       setIsLoading(false);
@@ -302,100 +398,6 @@ export function useProgram() {
     }
   }, []);
 
-  // Example: Claim rewards
-  const claimRewards = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const currentWallet = await ensureApproved();
-      return await apiFetch<{ claimed: number; portfolio: Portfolio }>('/api/staking/claim', {
-        method: 'POST',
-        body: JSON.stringify({ wallet: currentWallet }),
-      });
-    } catch (err: any) {
-      setError(err.message || 'Failed to claim rewards');
-      throw err;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [ensureApproved]);
-
-  // Example: Accept a duel
-  const acceptDuel = useCallback(async (duelId: string, position?: string) => {
-    setIsLoading(true);
-    try {
-      const currentWallet = await ensureApproved();
-      return await apiFetch(`/api/duels/${duelId}/accept`, {
-        method: 'POST',
-        body: JSON.stringify({ wallet: currentWallet, side: position }),
-      });
-    } catch (err: any) {
-      setError(err.message || 'Failed to accept duel');
-      throw err;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [ensureApproved]);
-
-  // Example: Unstake LYNX tokens
-  const unstakeLynx = useCallback(async (amount: number) => {
-    setIsLoading(true);
-    try {
-      const currentWallet = await ensureApproved();
-      return await apiFetch<Portfolio>('/api/staking/unstake', {
-        method: 'POST',
-        body: JSON.stringify({ wallet: currentWallet, amount }),
-      });
-    } catch (err: any) {
-      setError(err.message || 'Failed to unstake');
-      throw err;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [ensureApproved]);
-
-  const depositSol = useCallback(async (amount: number) => {
-    setIsLoading(true);
-    try {
-      const currentWallet = await ensureApproved();
-      const result = await apiFetch<{ portfolio: Portfolio }>('/api/ledger/deposit', {
-        method: 'POST',
-        body: JSON.stringify({
-          wallet: currentWallet,
-          currency: 'SOL',
-          amount,
-          provider: 'EXTERNAL_WALLET',
-        }),
-      });
-      return result.portfolio;
-    } catch (err: any) {
-      setError(err.message || 'Failed to deposit SOL');
-      throw err;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [ensureApproved]);
-
-  const withdrawSol = useCallback(async (amount: number) => {
-    setIsLoading(true);
-    try {
-      const currentWallet = await ensureApproved();
-      const result = await apiFetch<{ portfolio: Portfolio }>('/api/ledger/withdraw', {
-        method: 'POST',
-        body: JSON.stringify({
-          wallet: currentWallet,
-          currency: 'SOL',
-          amount,
-        }),
-      });
-      return result.portfolio;
-    } catch (err: any) {
-      setError(err.message || 'Failed to withdraw SOL');
-      throw err;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [ensureApproved]);
-
   // Fetch positions for the current wallet
   const fetchPositions = useCallback(async () => {
     try {
@@ -406,40 +408,6 @@ export function useProgram() {
       return [];
     }
   }, [requireWallet]);
-
-  // Claim a winning position payout
-  const claimPosition = useCallback(async (positionId: string) => {
-    setIsLoading(true);
-    try {
-      const currentWallet = await ensureApproved();
-      return await apiFetch<{ payout: number; currency: string; portfolio: Portfolio }>(
-        `/api/positions/${positionId}/claim`,
-        { method: 'POST', body: JSON.stringify({ wallet: currentWallet }) }
-      );
-    } catch (err: any) {
-      setError(err.message || 'Failed to claim position');
-      throw err;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [ensureApproved]);
-
-  // Cancel an open order and get refunded
-  const cancelOrder = useCallback(async (orderId: string) => {
-    setIsLoading(true);
-    try {
-      const currentWallet = await ensureApproved();
-      return await apiFetch<{ cancelled: string; portfolio: Portfolio }>(
-        `/api/orders/${orderId}?wallet=${encodeURIComponent(currentWallet)}`,
-        { method: 'DELETE' }
-      );
-    } catch (err: any) {
-      setError(err.message || 'Failed to cancel order');
-      throw err;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [ensureApproved]);
 
   return {
     isLoading,

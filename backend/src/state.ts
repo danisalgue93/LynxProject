@@ -264,9 +264,36 @@ export class LynxState {
     return state;
   }
 
+  /**
+   * Reconciles in-memory statuses against real wall-clock time.
+   * Called on startup (after loading from DB) and can be called anytime.
+   * - Markets with cutoffAt in the past and status OPEN/ACTIVE → CUT_OFF
+   * - Proposals with endTime in the past and status active → passed or rejected
+   */
+  reconcileStatuses() {
+    const now = nowMs();
+    for (const market of this.markets.values()) {
+      if ((market.status === 'OPEN' || market.status === 'ACTIVE') && now >= market.cutoffAt) {
+        market.status = 'CUT_OFF';
+      }
+    }
+    for (const proposal of this.proposals.values()) {
+      if (proposal.status === 'active' && new Date(proposal.endTime).getTime() <= now) {
+        proposal.status = proposal.votesYes > proposal.votesNo ? 'passed' : 'rejected';
+      }
+    }
+  }
+
   listMarkets(includeFinished = false) {
+    const now = nowMs();
     return [...this.markets.values()]
-      .filter(m => includeFinished || (m.status !== 'RESOLVED' && m.status !== 'CUT_OFF'))
+      .filter(m => {
+        if (includeFinished) return true;
+        if (m.status === 'RESOLVED' || m.status === 'CUT_OFF' || m.status === 'EXPIRED') return false;
+        // Belt-and-suspenders: also exclude by timestamp even if status wasn't updated
+        if (now >= m.cutoffAt) return false;
+        return true;
+      })
       .sort((a, b) => b.createdAt - a.createdAt);
   }
 
@@ -293,7 +320,14 @@ export class LynxState {
   }
 
   listProposals() {
-    return [...this.proposals.values()];
+    const now = nowMs();
+    return [...this.proposals.values()].map(p => {
+      // Auto-close proposals whose endTime has passed
+      if (p.status === 'active' && new Date(p.endTime).getTime() <= now) {
+        p.status = p.votesYes > p.votesNo ? 'passed' : 'rejected';
+      }
+      return p;
+    });
   }
 
   getDaoStats() {

@@ -14,7 +14,7 @@ import { useAuth } from '@/src/context/AuthContext';
 
 export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
   const { t } = useTranslation();
-  const { fetchProposals, fetchDaoStats, castVote, createProposal, stakeLynx, isLoading, error } = useProgram();
+  const { fetchProposals, fetchDaoStats, castVote, createProposal, stakeLynx, isLoading } = useProgram();
   const { executeTransaction } = useBlockchainTransaction();
   const { addToast } = useToast();
   const { isAdmin } = useAuth();
@@ -25,7 +25,6 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
   const [votedProposalIds, setVotedProposalIds] = useState<Set<string>>(() => new Set());
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showStakeModal, setShowStakeModal] = useState(false);
-  const [stakeError, setStakeError] = useState<string | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -82,7 +81,6 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
     }
     if (!amount || amount <= 0) return;
     setIsPendingAct(true);
-    setStakeError(null);
     try {
       await executeTransaction(
         async () => {
@@ -102,9 +100,9 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
       console.error(e);
       const msg: string = e?.message || '';
       if (msg.includes('Insufficient LYNX') || msg.includes('insufficient_lynx')) {
-        setStakeError(t('portfolio.insufficientLynxBalance', 'Not enough LYNX to complete this transaction.'));
+        addToast({ type: 'error', message: t('portfolio.insufficientLynxBalance', 'Not enough LYNX to complete this transaction.'), duration: 6000 });
       } else {
-        setStakeError(msg || t('governance.stakeFailed', 'Failed to stake LYNX'));
+        addToast({ type: 'error', message: msg || t('governance.stakeFailed', 'Failed to stake LYNX'), duration: 6000 });
       }
     } finally {
       setIsPendingAct(false);
@@ -152,16 +150,6 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
       <div className="flex flex-col items-center justify-center min-h-[500px]">
         <Loader2 className="w-8 h-8 text-[#00FFD1] animate-spin mb-4" />
         <span className="font-mono text-[#71717A] text-sm uppercase tracking-widest">{t('governance.loading', 'Loading governance data...')}</span>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[500px]">
-        <div className="text-red-400 font-mono text-sm border-dashed border border-red-400/20 bg-red-400/5 p-4 rounded-xl">
-          {t('common.error', 'Error')}: {error}
-        </div>
       </div>
     );
   }
@@ -376,12 +364,6 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
                 </p>
              </div>
              <div className="flex flex-col items-start gap-3">
-             {stakeError && (
-               <div className="w-full p-3 bg-[#3F1F1F] border border-[#4B1F1F] rounded text-sm text-[#FFD6D6] font-bold flex items-start justify-between gap-3">
-                 <div className="flex-1 text-left text-[11px]">{stakeError}</div>
-                 <button onClick={() => setStakeError(null)} className="text-[#FFB4B4] text-[10px] shrink-0">{t('orderbook.dismiss', 'Dismiss')}</button>
-               </div>
-             )}
              <button 
                 onClick={() => handleStakeAction()}
                 disabled={isPendingAct || readOnly}

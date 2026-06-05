@@ -279,12 +279,7 @@ export function PublicPage() {
           <CreateDuelModal 
             onClose={() => setIsCreateDuelOpen(false)} 
             onSubmit={async (data) => {
-              try {
-                await createDuel(data);
-                setIsCreateDuelOpen(false);
-              } catch (e) {
-                console.error(e);
-              }
+              await createDuel(data);
             }} 
           />
         )}

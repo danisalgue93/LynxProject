@@ -7,31 +7,137 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum MarketStatus {
+  OPEN
+  ACTIVE
+  CUT_OFF
+  RESOLVED
+  EXPIRED
+  CANCELLED
+}
+
+enum Position {
+  YES
+  NO
+  A
+  B
+  DRAW
+}
+
+enum Currency {
+  SOL
+  LYNX
+  USD
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderStatus {
+  OPEN
+  PARTIAL_FILLED
+  FILLED
+  CANCELLED
+}
+
+enum DuelStatus {
+  OPEN
+  ACCEPTED
+  RESOLVED
+  CANCELLED
+  EXPIRED
+}
+
+enum ProposalStatus {
+  ACTIVE
+  PASSED
+  REJECTED
+  CANCELLED
+}
+
+enum ProposalCategory {
+  PROTOCOL
+  MARKETS
+  FEES
+  COMMUNITY
+}
+
+enum LedgerType {
+  DEPOSIT
+  WITHDRAWAL
+  TRADE_BUY
+  TRADE_SELL
+  SETTLEMENT_WIN
+  SETTLEMENT_LOSS
+  FEE
+  REWARD
+  STAKE
+  UNSTAKE
+  APPROVE
+}
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+
+// One row per user — replaces the old AuthState JSON blob.
+model User {
+  id                     String    @id
+  email                  String    @unique
+  passwordHash           String    @default("")
+  displayName            String?
+  role                   String    @default("user")   // 'user' | 'admin'
+  authMethod             String    @default("email")  // 'email' | 'wallet'
+  emailVerified          Boolean   @default(false)
+  walletAddress          String?   @unique
+  walletLinkedAt         DateTime?
+  managedWalletAddress   String?
+  emailVerificationToken String?
+  passwordResetToken     String?
+  passwordResetExpiresAt DateTime?
+  createdAt              DateTime  @default(now())
+
+  @@index([walletAddress])
+}
+
+// ─── Trading state ────────────────────────────────────────────────────────────
+
 model Market {
-  id               String    @id
-  title            String
-  description      String
-  category         String
-  imageUrl         String?
-  status           String
-  poolAmount       Float     @default(0)
-  yesAmount        Float     @default(0)
-  noAmount         Float     @default(0)
-  drawAmount       Float?
-  burnedAmount     Float     @default(0)
-  isTernary        Boolean   @default(false)
-  currency         String
-  oracleId         String
-  oracleMode       String    @default("SWITCHBOARD")
-  onChainMarket    String?
-  onChainSignature String?
-  createdBy        String?
-  createdAt        DateTime  @default(now())
-  cutoffAt         DateTime
-  resolveAt        DateTime?
-  oracleDeadline   DateTime?
-  resolvedAt       DateTime?
-  result           String?
+  id                String        @id
+  title             String
+  description       String
+  category          String
+  imageUrl          String?
+  status            String        @default("OPEN")
+  poolAmount        Decimal       @default(0)   @db.Decimal(28, 9)
+  yesAmount         Decimal       @default(0)   @db.Decimal(28, 9)
+  noAmount          Decimal       @default(0)   @db.Decimal(28, 9)
+  drawAmount        Decimal?      @db.Decimal(28, 9)
+  burnedAmount      Decimal       @default(0)   @db.Decimal(28, 9)
+  isTernary         Boolean       @default(false)
+  currency          String        @default("SOL")
+  oracleId          String?
+  oracleMode        String        @default("MANUAL_DEV")
+  onChainMarket     String?
+  onChainSignature  String?
+  createdBy         String?
+  createdAt         DateTime      @default(now())
+  cutoffAt          DateTime
+  resolveAt         DateTime?
+  oracleDeadline    DateTime?
+  resolvedAt        DateTime?
+  result            String?
+
+  positions  UserPosition[]
+  orders     Order[]
+  duels      Duel[]
+  candles    Candle[]
+
+  @@index([status])
+  @@index([cutoffAt])
+  @@index([currency])
 }
 
 model UserPosition {
@@ -39,25 +145,34 @@ model UserPosition {
   marketId   String
   wallet     String
   position   String
-  amount     Float
-  entryPrice Float
+  amount     Decimal  @db.Decimal(28, 9)
+  entryPrice Decimal  @default(1) @db.Decimal(28, 9)
   currency   String
   claimed    Boolean  @default(false)
-  createdAt  DateTime  @default(now())
+  createdAt  DateTime @default(now())
+
+  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@index([wallet])
+  @@index([marketId])
 }
 
 model WalletState {
-  wallet           String    @id
-  solBalance       Float     @default(0)
-  lynxBalance      Float     @default(0)
-  stakedLynx       Float     @default(0)
-  rewardsSol       Float     @default(0)
-  totalVolume      Float     @default(0)
-  wins             Int       @default(0)
-  losses           Int       @default(0)
+  wallet           String   @id
+  solBalance       Decimal  @default(100)   @db.Decimal(28, 9)
+  lynxBalance      Decimal  @default(10000) @db.Decimal(28, 9)
+  stakedLynx       Decimal  @default(0)     @db.Decimal(28, 9)
+  rewardsSol       Decimal  @default(0)     @db.Decimal(28, 9)
+  totalVolume      Decimal  @default(0)     @db.Decimal(28, 9)
+  wins             Int      @default(0)
+  losses           Int      @default(0)
   approvedAt       DateTime?
   approvalNonce    String?
   connectedWallets Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([approvedAt])
 }
 
 model Order {
@@ -67,15 +182,21 @@ model Order {
   owner          String
   side           String
   position       String?
-  amount         Float
-  remaining      Float
-  price          Float
+  amount         Decimal  @db.Decimal(28, 9)
+  remaining      Decimal  @db.Decimal(28, 9)
+  price          Decimal  @db.Decimal(28, 9)
   currency       String
-  status         String
-  createdAt      DateTime  @default(now())
+  status         String   @default("OPEN")
   lockedCurrency String?
-  lockedAmount   Float?
-  spentAmount    Float?
+  lockedAmount   Decimal? @db.Decimal(28, 9)
+  spentAmount    Decimal? @db.Decimal(28, 9)
+  createdAt      DateTime @default(now())
+
+  market Market? @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@index([pair, status])
+  @@index([marketId])
+  @@index([owner])
 }
 
 model Trade {
@@ -86,11 +207,18 @@ model Trade {
   taker     String
   side      String
   position  String?
-  amount    Float
-  price     Float
-  feeAmount Float
+  amount    Decimal  @db.Decimal(28, 9)
+  price     Decimal  @db.Decimal(28, 9)
+  feeAmount Decimal  @default(0) @db.Decimal(28, 9)
   currency  String
-  createdAt DateTime  @default(now())
+  createdAt DateTime @default(now())
+
+  market Market? @relation(fields: [marketId], references: [id], onDelete: SetNull)
+
+  @@index([pair])
+  @@index([taker])
+  @@index([marketId])
+  @@index([createdAt])
 }
 
 model Duel {
@@ -98,34 +226,61 @@ model Duel {
   parentMarketId String
   creator        String
   rival          String?
-  amount         Float
-  grossAmount    Float?
-  burnedAmount   Float?
+  amount         Decimal   @db.Decimal(28, 9)
+  grossAmount    Decimal?  @db.Decimal(28, 9)
+  burnedAmount   Decimal?  @db.Decimal(28, 9)
   currency       String
-  status         String
+  status         String    @default("OPEN")
   positionA      String
   positionB      String?
   isTernary      Boolean?
-  type           String
+  type           String    @default("1v1")
   protocolSide   String?
   createdAt      DateTime  @default(now())
   acceptedAt     DateTime?
   resolvedAt     DateTime?
   winner         String?
+
+  market Market @relation(fields: [parentMarketId], references: [id], onDelete: Cascade)
+
+  @@index([parentMarketId])
+  @@index([status])
+  @@index([creator])
 }
 
+// ─── Governance ───────────────────────────────────────────────────────────────
+
 model Proposal {
-  id          String @id
+  id          String   @id
   title       String
   description String
-  status      String
-  votesYes    Float  @default(0)
-  votesNo     Float  @default(0)
-  endTime     String
-  category    String
+  status      String   @default("active")
+  votesYes    Decimal  @default(0) @db.Decimal(28, 9)
+  votesNo     Decimal  @default(0) @db.Decimal(28, 9)
+  endTime     DateTime
+  category    String   @default("community")
   author      String
-  voters      Json?
+
+  votes ProposalVote[]
+
+  @@index([status])
 }
+
+model ProposalVote {
+  id         String   @id
+  proposalId String
+  wallet     String
+  voteType   String
+  weight     Decimal  @db.Decimal(28, 9)
+  createdAt  DateTime @default(now())
+
+  proposal Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  @@unique([proposalId, wallet])
+  @@index([proposalId])
+}
+
+// ─── Notifications & Ledger ───────────────────────────────────────────────────
 
 model Notification {
   id        String   @id
@@ -133,16 +288,11 @@ model Notification {
   type      String
   title     String
   message   String
-  timestamp DateTime  @default(now())
   read      Boolean  @default(false)
-}
+  timestamp DateTime @default(now())
 
-model Transaction {
-  id        String   @id
-  signature String
-  wallet    String?
-  intent    Json?
-  timestamp DateTime  @default(now())
+  @@index([wallet, read])
+  @@index([timestamp])
 }
 
 model LedgerEntry {
@@ -150,37 +300,59 @@ model LedgerEntry {
   wallet    String
   type      String
   currency  String?
-  amount    Float?
+  amount    Decimal? @db.Decimal(28, 9)
   provider  String?
   status    String
   reference String?
   metadata  Json?
-  createdAt DateTime  @default(now())
+  createdAt DateTime @default(now())
+
+  @@index([wallet])
+  @@index([type])
+  @@index([createdAt])
 }
+
+// ─── Crypto / Transactions ────────────────────────────────────────────────────
+
+model Transaction {
+  id        String   @id
+  signature String   @unique
+  wallet    String?
+  intent    Json?
+  timestamp DateTime @default(now())
+
+  @@index([wallet])
+  @@index([timestamp])
+}
+
+// ─── Price history ────────────────────────────────────────────────────────────
+
+model Candle {
+  id       String   @id
+  symbol   String
+  interval String
+  marketId String?
+  time     DateTime
+  open     Decimal  @db.Decimal(28, 9)
+  high     Decimal  @db.Decimal(28, 9)
+  low      Decimal  @db.Decimal(28, 9)
+  close    Decimal  @db.Decimal(28, 9)
+  volume   Decimal  @db.Decimal(28, 9)
+
+  market Market? @relation(fields: [marketId], references: [id], onDelete: SetNull)
+
+  @@unique([symbol, interval, time])
+  @@index([symbol, interval])
+  @@index([marketId])
+}
+
+// ─── Protocol treasury ────────────────────────────────────────────────────────
 
 model Treasury {
-  id                 String @id @default("default")
-  sol                Float  @default(0)
-  lynx               Float  @default(0)
-  lynxForInitialSale Float  @default(0)
-  lynxBurned         Float  @default(0)
-  protocolDuelSol    Float  @default(0)
-}
-
-// User table replaces the old AuthState JSON blob — one row per user, fully queryable
-model User {
-  id                     String    @id
-  email                  String    @unique
-  passwordHash           String    @default("")
-  displayName            String?
-  role                   String    @default("user")
-  authMethod             String    @default("email")
-  emailVerified          Boolean   @default(false)
-  walletAddress          String?   @unique
-  walletLinkedAt         DateTime?
-  managedWalletAddress   String?
-  emailVerificationToken String?
-  passwordResetToken     String?
-  passwordResetExpiresAt DateTime?
-  createdAt              DateTime  @default(now())
+  id                  String  @id
+  sol                 Decimal @default(0) @db.Decimal(28, 9)
+  lynx                Decimal @default(0) @db.Decimal(28, 9)
+  lynxForInitialSale  Decimal @default(0) @db.Decimal(28, 9)
+  lynxBurned          Decimal @default(0) @db.Decimal(28, 9)
+  protocolDuelSol     Decimal @default(0) @db.Decimal(28, 9)
 }

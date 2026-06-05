@@ -447,6 +447,9 @@ export function createPersistence(): Persistence {
           protocolDuelSol:    treasury.protocolDuelSol,
         };
       }
+
+      // Fix any stale statuses that weren't updated before the last shutdown
+      store.reconcileStatuses();
     },
 
     async save(store) {
