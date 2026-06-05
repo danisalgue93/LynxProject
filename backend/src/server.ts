@@ -72,7 +72,7 @@ app.use((req, _res, next) => {
 io.on('connection', (socket) => {
   socket.emit('lynx:hello', {
     ok: true,
-    markets: store.listMarkets().length
+    markets: store.listMarkets(true).length
   });
   socket.on('identify', (wallet: unknown) => {
     if (typeof wallet === 'string' && wallet.trim()) {
@@ -125,6 +125,7 @@ function createSimpleRateLimit({ windowMs, max }: { windowMs: number; max: numbe
     const now = Date.now();
     const current = attempts.get(key);
     if (!current || current.resetAt <= now) {
+      if (attempts.size > 50_000) attempts.clear();
       attempts.set(key, { count: 1, resetAt: now + windowMs });
       next();
       return;
@@ -256,7 +257,7 @@ async function loadPersistedAuthUsers() {
   }
 }
 
-ensureConfiguredAdminWalletUsers();
+// Admin wallet users are configured during start() after persistence is loaded
 
 // Extract JWT from request
 app.use((req: any, _res, next) => {
@@ -560,6 +561,8 @@ app.post('/auth/wallet-login', authRateLimit, asyncRoute(async (req, res) => {
       createdAt: Date.now()
     };
     users.set(userId, user);
+    store.approveWallet(user.walletAddress!);
+    await persist();
   } else if (isAdminWallet(body.wallet)) {
     user.role = 'admin';
   }
@@ -622,6 +625,8 @@ app.post('/auth/link-wallet', asyncRoute(async (req: any, res) => {
   currentUser.walletAddress = body.wallet;
   currentUser.walletLinkedAt = Date.now();
   if (isAdminWallet(body.wallet)) currentUser.role = 'admin';
+  store.approveWallet(body.wallet);
+  await persist();
   await persistAuthUsers();
 
   res.json(publicUser(currentUser));
@@ -654,8 +659,9 @@ app.get('/api/config', (_req, res) => {
   });
 });
 
-app.get('/api/markets', (_req, res) => {
-  res.json(store.listMarkets());
+app.get('/api/markets', (req, res) => {
+  const includeFinished = req.query.includeFinished === 'true';
+  res.json(store.listMarkets(includeFinished));
 });
 
 app.get('/api/markets/:id', (req, res) => {
@@ -781,7 +787,8 @@ app.post('/api/admin/markets/:id/cutoff', asyncRoute(async (req, res) => {
 
 app.get('/api/duels', (req, res) => {
   const parentMarketId = typeof req.query.marketId === 'string' ? req.query.marketId : undefined;
-  res.json(store.listDuels(parentMarketId));
+  const includeFinished = req.query.includeFinished === 'true';
+  res.json(store.listDuels(parentMarketId, includeFinished));
 });
 
 app.post('/api/duels', asyncRoute(async (req, res) => {
@@ -947,8 +954,9 @@ app.post('/api/positions/:id/claim', asyncRoute(async (req, res) => {
 
 app.delete('/api/orders/:id', asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
-  const wallet = walletFromQuery(req.query.wallet);
-  if (!requireApprovedWallet(res, wallet)) return;
+  const body = z.object({ wallet: z.string() }).parse(req.body);
+  const wallet = requireWalletBody(req, res, body.wallet);
+  if (!wallet || !requireApprovedWallet(res, wallet)) return;
   const result = store.cancelOrder(wallet, req.params.id);
   await persist();
   emit('orderbook:updated', store.getOrderBook('LYNX/SOL'));
@@ -998,10 +1006,12 @@ app.post('/api/proposals', asyncRoute(async (req, res) => {
   const body = z.object({
     title: z.string().min(4),
     description: z.string().optional(),
-    category: z.enum(['protocol', 'markets', 'fees', 'community']).optional(),
+    category: z.enum(['protocol', 'markets', 'fees', 'community', 'general']).optional(),
     author: z.string().optional()
   }).parse(req.body);
-  const proposal = store.createProposal({ title: body.title, description: body.description, category: body.category, author: body.author });
+  // 'general' is a legacy alias for 'community'
+  const category = body.category === 'general' ? 'community' : body.category;
+  const proposal = store.createProposal({ title: body.title, description: body.description, category, author: body.author });
   await persist();
   emit('dao:proposal-created', proposal);
   res.status(201).json(proposal);
@@ -1086,11 +1096,12 @@ app.get('/api/transactions', (req, res) => {
   }
 });
 
-app.post('/api/dev/reset', asyncRoute(async (_req, res) => {
+app.post('/api/dev/reset', asyncRoute(async (req, res) => {
   if (process.env.NODE_ENV === 'production') {
     res.status(403).json({ error: 'Development reset is disabled in production' });
     return;
   }
+  if (!requireAdmin(req, res)) return;
   store.seed();
   await persist();
   emit('dev:reset', { ok: true });

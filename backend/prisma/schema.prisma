@@ -167,7 +167,20 @@ model Treasury {
   protocolDuelSol    Float  @default(0)
 }
 
-model AuthState {
-  id   String @id
-  data Json
+// User table replaces the old AuthState JSON blob — one row per user, fully queryable
+model User {
+  id                     String    @id
+  email                  String    @unique
+  passwordHash           String    @default("")
+  displayName            String?
+  role                   String    @default("user")
+  authMethod             String    @default("email")
+  emailVerified          Boolean   @default(false)
+  walletAddress          String?   @unique
+  walletLinkedAt         DateTime?
+  managedWalletAddress   String?
+  emailVerificationToken String?
+  passwordResetToken     String?
+  passwordResetExpiresAt DateTime?
+  createdAt              DateTime  @default(now())
 }

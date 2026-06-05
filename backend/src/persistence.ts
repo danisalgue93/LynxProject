@@ -20,7 +20,6 @@ export interface Persistence {
   saveAuthUsers<T>(users: [string, T][]): Promise<void>;
 }
 
-const AUTH_STATE_ID = 'auth-users';
 const TREASURY_ID = 'default';
 
 // ── DateTime helpers ──────────────────────────────────────────────────────────
@@ -531,18 +530,68 @@ export function createPersistence(): Persistence {
       });
     },
 
-    async loadAuthUsers<T>() {
-      const row = await prisma.authState.findUnique({ where: { id: AUTH_STATE_ID } });
-      if (!row) return undefined;
-      return row.data as unknown as [string, T][];
+  async loadAuthUsers<T>() {
+      const rows = await prisma.user.findMany();
+      if (rows.length === 0) return undefined;
+      return rows.map((r): [string, T] => [r.id, {
+        id:                     r.id,
+        email:                  r.email,
+        passwordHash:           r.passwordHash,
+        displayName:            r.displayName ?? undefined,
+        role:                   r.role as 'admin' | 'user',
+        authMethod:             r.authMethod as 'email' | 'wallet',
+        emailVerified:          r.emailVerified,
+        walletAddress:          r.walletAddress ?? undefined,
+        walletLinkedAt:         r.walletLinkedAt ? r.walletLinkedAt.getTime() : undefined,
+        managedWalletAddress:   r.managedWalletAddress ?? undefined,
+        emailVerificationToken: r.emailVerificationToken ?? undefined,
+        passwordResetToken:     r.passwordResetToken ?? undefined,
+        passwordResetExpiresAt: r.passwordResetExpiresAt ? r.passwordResetExpiresAt.getTime() : undefined,
+        createdAt:              r.createdAt.getTime(),
+      } as T]);
     },
 
     async saveAuthUsers<T>(users: [string, T][]) {
-      await prisma.authState.upsert({
-        where:  { id: AUTH_STATE_ID },
-        create: { id: AUTH_STATE_ID, data: users as unknown as Prisma.InputJsonValue },
-        update: { data: users as unknown as Prisma.InputJsonValue },
-      });
+      // Upsert each user individually so we never wipe the whole table at once.
+      // Using a transaction keeps it atomic.
+      const rows = users.map(([, u]) => u as any);
+      await prisma.$transaction(
+        rows.map((u) =>
+          prisma.user.upsert({
+            where:  { id: u.id },
+            create: {
+              id:                     u.id,
+              email:                  u.email,
+              passwordHash:           u.passwordHash ?? '',
+              displayName:            u.displayName ?? null,
+              role:                   u.role ?? 'user',
+              authMethod:             u.authMethod ?? 'email',
+              emailVerified:          u.emailVerified ?? false,
+              walletAddress:          u.walletAddress ?? null,
+              walletLinkedAt:         u.walletLinkedAt ? new Date(u.walletLinkedAt) : null,
+              managedWalletAddress:   u.managedWalletAddress ?? null,
+              emailVerificationToken: u.emailVerificationToken ?? null,
+              passwordResetToken:     u.passwordResetToken ?? null,
+              passwordResetExpiresAt: u.passwordResetExpiresAt ? new Date(u.passwordResetExpiresAt) : null,
+              createdAt:              u.createdAt ? new Date(u.createdAt) : new Date(),
+            },
+            update: {
+              email:                  u.email,
+              passwordHash:           u.passwordHash ?? '',
+              displayName:            u.displayName ?? null,
+              role:                   u.role ?? 'user',
+              authMethod:             u.authMethod ?? 'email',
+              emailVerified:          u.emailVerified ?? false,
+              walletAddress:          u.walletAddress ?? null,
+              walletLinkedAt:         u.walletLinkedAt ? new Date(u.walletLinkedAt) : null,
+              managedWalletAddress:   u.managedWalletAddress ?? null,
+              emailVerificationToken: u.emailVerificationToken ?? null,
+              passwordResetToken:     u.passwordResetToken ?? null,
+              passwordResetExpiresAt: u.passwordResetExpiresAt ? new Date(u.passwordResetExpiresAt) : null,
+            },
+          })
+        )
+      );
     }
   };
 }

@@ -63,7 +63,7 @@ function opposingPosition(position: Position, ternary?: boolean): Position {
   if (ternary) {
     if (normalized === 'A') return 'B';
     if (normalized === 'B') return 'A';
-    return 'YES';
+    throw new Error('DRAW has no single opposing position in a ternary market');
   }
   return normalized === 'YES' ? 'NO' : 'YES';
 }
@@ -264,8 +264,10 @@ export class LynxState {
     return state;
   }
 
-  listMarkets() {
-    return [...this.markets.values()].sort((a, b) => b.createdAt - a.createdAt);
+  listMarkets(includeFinished = false) {
+    return [...this.markets.values()]
+      .filter(m => includeFinished || (m.status !== 'RESOLVED' && m.status !== 'CUT_OFF'))
+      .sort((a, b) => b.createdAt - a.createdAt);
   }
 
   getMarket(id: string) {
@@ -283,9 +285,10 @@ export class LynxState {
     return market;
   }
 
-  listDuels(parentMarketId?: string) {
+  listDuels(parentMarketId?: string, includeFinished = false) {
     return [...this.duels.values()]
       .filter((duel) => !parentMarketId || duel.parentMarketId === parentMarketId)
+      .filter((duel) => includeFinished || (duel.status !== 'RESOLVED' && duel.status !== 'CANCELLED'))
       .sort((a, b) => b.createdAt - a.createdAt);
   }
 
@@ -338,7 +341,7 @@ export class LynxState {
       totalVolume: roundAmount(wallet.totalVolume),
       winRate: wallet.wins + wallet.losses === 0 ? 0 : roundAmount((wallet.wins / (wallet.wins + wallet.losses)) * 100),
       totalProfit: roundAmount(wallet.rewardsSol),
-      feeShare: this.getDaoStats().totalLynxStaked > 0 ? roundAmount((wallet.stakedLynx / this.getDaoStats().totalLynxStaked) * 100) : 0,
+      feeShare: (() => { const s = this.getDaoStats(); return s.totalLynxStaked > 0 ? roundAmount((wallet.stakedLynx / s.totalLynxStaked) * 100) : 0; })(),
       payments,
       holdings,
       history: [...this.trades.values()].filter((trade) => trade.taker === wallet.wallet || trade.maker === wallet.wallet)
@@ -602,7 +605,7 @@ export class LynxState {
       const protocolFee = roundAmount(market.poolAmount * EVENT_PROTOCOL_FEE);
       const stakerFee = roundAmount(market.poolAmount * STAKER_REWARD_FEE);
       const treasuryFee = roundAmount(market.poolAmount * TREASURY_EVENT_FEE);
-      this.treasury.sol = roundAmount(this.treasury.sol + treasuryFee + (protocolFee - stakerFee - treasuryFee));
+      this.treasury.sol = roundAmount(this.treasury.sol + treasuryFee);
       this.distributeStakingRewards(stakerFee);
       this.mintLynxForSolvedSolMarket(market);
     }
@@ -644,7 +647,8 @@ export class LynxState {
     const wallet = this.getWallet(input.wallet);
     proposal.voters ??= {};
     if (proposal.voters[wallet.wallet]) throw new Error('Wallet already voted on this proposal');
-    const weight = Math.max(wallet.stakedLynx, 1);
+    if (wallet.stakedLynx === 0) throw new Error('Requires a staked LYNX balance to vote');
+    const weight = wallet.stakedLynx;
     if (input.voteType === 'yes') proposal.votesYes = roundAmount(proposal.votesYes + weight);
     else proposal.votesNo = roundAmount(proposal.votesNo + weight);
     proposal.voters[wallet.wallet] = input.voteType;
@@ -710,7 +714,7 @@ export class LynxState {
           : trade.pair.includes(symbol.toUpperCase()))
       .sort((a, b) => a.createdAt - b.createdAt);
 
-    if (trades.length === 0) return [];
+    if (trades.length === 0) return this.syntheticCandles(symbol, ms, safeLimit);
 
     const buckets = new Map<number, Trade[]>();
     const end = Math.ceil(Date.now() / ms) * ms;
