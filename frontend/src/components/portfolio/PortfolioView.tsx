@@ -525,7 +525,7 @@ export function PortfolioView() {
                           {isProfit ? '+' : ''}{pnl.toFixed(2)} SOL
                         </div>
                         <div className="text-[8px] md:text-[9px] text-[#52525B] font-bold uppercase tracking-widest">
-                          {t('portfolio.roi', 'ROI: {{value}}%', { value: ((pnl / (holding.entryPrice * holding.amount)) * 100).toFixed(1) })}
+                          {t('portfolio.roi', 'ROI: {{value}}%', { value: (holding.entryPrice * holding.amount !== 0 ? (pnl / (holding.entryPrice * holding.amount)) * 100 : 0).toFixed(1) })}
                         </div>
                       </div>
                     </div>

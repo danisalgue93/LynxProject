@@ -362,7 +362,7 @@ app.post('/auth/register', authRateLimit, asyncRoute(async (req, res) => {
   }).parse(req.body);
 
   // Check if user already exists
-  const exists = [...users.values()].some(u => u.email === body.email);
+  const exists = [...users.values()].some(u => u.email.toLowerCase() === body.email.toLowerCase());
   if (exists) {
     return res.status(400).json({ error: 'User already exists' });
   }
@@ -417,7 +417,7 @@ app.post('/auth/login', authRateLimit, asyncRoute(async (req, res) => {
   }).parse(req.body);
 
   // Find user by email
-  const user = [...users.values()].find(u => u.email === body.email);
+  const user = [...users.values()].find(u => u.email.toLowerCase() === body.email.toLowerCase());
   if (!user) {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
@@ -468,7 +468,7 @@ app.post('/auth/verify-email', authRateLimit, asyncRoute(async (req, res) => {
 
 app.post('/auth/request-password-reset', authRateLimit, asyncRoute(async (req, res) => {
   const body = z.object({ email: z.string().email() }).parse(req.body);
-  const user = [...users.values()].find((candidate) => candidate.email === body.email);
+  const user = [...users.values()].find((candidate) => candidate.email.toLowerCase() === body.email.toLowerCase());
   if (user && user.authMethod === 'email') {
     user.passwordResetToken = token('reset');
     user.passwordResetExpiresAt = Date.now() + 1000 * 60 * 30;

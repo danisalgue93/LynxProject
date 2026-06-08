@@ -77,13 +77,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       const data = await response.json();
-      setUser(data);
-      localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data));
-      if (data.authMethod === 'email' && data.managedWalletAddress) {
+      // Backend currently returns a bare user object; a future token-rotation
+      // response would look like { user, token }. Handle both shapes.
+      const userData = data.user ?? data;
+      const newToken = data.token ?? null;
+      setUser(userData);
+      localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(userData));
+      if (newToken) {
+        setToken(newToken);
+        localStorage.setItem(STORAGE_KEY_TOKEN, newToken);
+      }
+      if (userData.authMethod === 'email' && userData.managedWalletAddress) {
         saveManagedAuthSession({
           provider: 'email-password',
-          email: data.email,
-          walletAddress: data.managedWalletAddress,
+          email: userData.email,
+          walletAddress: userData.managedWalletAddress,
           loginAt: Date.now(),
         });
       }
