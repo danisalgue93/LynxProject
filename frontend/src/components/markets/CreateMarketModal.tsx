@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Loader2, ShieldCheck } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useTranslation } from 'react-i18next';
 
 type CreateMarketModalProps = {
   onClose: () => void;
@@ -17,6 +18,7 @@ type CreateMarketModalProps = {
 };
 
 export function CreateMarketModal({ onClose, onSubmit }: CreateMarketModalProps) {
+  const { t } = useTranslation();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('Sports');
@@ -33,7 +35,7 @@ export function CreateMarketModal({ onClose, onSubmit }: CreateMarketModalProps)
     const cutoffAt = cutoffLocal ? new Date(cutoffLocal).getTime() : Date.now() + 60 * 60 * 1000;
     const resolveAt = resolveLocal ? new Date(resolveLocal).getTime() : cutoffAt + 60 * 60 * 1000;
     if (!title.trim()) {
-      setError('El evento necesita un titulo.');
+      setError(t('createMarket.errorTitleRequired', 'The event needs a title.'));
       return;
     }
     setIsSubmitting(true);
@@ -50,7 +52,7 @@ export function CreateMarketModal({ onClose, onSubmit }: CreateMarketModalProps)
       });
       onClose();
     } catch (err: any) {
-      setError(err.message || 'No se pudo crear el mercado.');
+      setError(err.message || t('createMarket.errorGeneric', 'Could not create the market.'));
     } finally {
       setIsSubmitting(false);
     }
@@ -66,27 +68,27 @@ export function CreateMarketModal({ onClose, onSubmit }: CreateMarketModalProps)
               <ShieldCheck className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-sm font-black uppercase tracking-widest">Crear mercado</h2>
-              <p className="text-[10px] text-[#71717A] uppercase tracking-widest">Solo administrador + firma wallet</p>
+              <h2 className="text-sm font-black uppercase tracking-widest">{t('createMarket.title', 'Create Market')}</h2>
+              <p className="text-[10px] text-[#71717A] uppercase tracking-widest">{t('createMarket.subtitle', 'Admin only + wallet signature')}</p>
             </div>
           </div>
-          <button type="button" aria-label="Cerrar modal" onClick={onClose} className="p-2 text-[#71717A] hover:text-white"><X className="w-5 h-5" /></button>
+          <button type="button" aria-label={t('createMarket.closeModal', 'Close modal')} onClick={onClose} className="p-2 text-[#71717A] hover:text-white"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="p-6 space-y-4">
-          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Titulo del evento" className="w-full bg-[#18181B] border border-[#27272A] rounded p-3 text-sm outline-none focus:border-[#00FFD1]" />
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Reglas de settlement" rows={3} className="w-full bg-[#18181B] border border-[#27272A] rounded p-3 text-sm outline-none focus:border-[#00FFD1] resize-none" />
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t('createMarket.titlePlaceholder', 'Event title')} className="w-full bg-[#18181B] border border-[#27272A] rounded p-3 text-sm outline-none focus:border-[#00FFD1]" />
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder={t('createMarket.descriptionPlaceholder', 'Settlement rules')} rows={3} className="w-full bg-[#18181B] border border-[#27272A] rounded p-3 text-sm outline-none focus:border-[#00FFD1] resize-none" />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Categoria" className="bg-[#18181B] border border-[#27272A] rounded p-3 text-sm outline-none focus:border-[#00FFD1]" />
-            <input value={oracleId} onChange={(e) => setOracleId(e.target.value)} placeholder="Oracle / fuente" className="bg-[#18181B] border border-[#27272A] rounded p-3 text-sm outline-none focus:border-[#00FFD1]" />
+            <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder={t('createMarket.categoryPlaceholder', 'Category')} className="bg-[#18181B] border border-[#27272A] rounded p-3 text-sm outline-none focus:border-[#00FFD1]" />
+            <input value={oracleId} onChange={(e) => setOracleId(e.target.value)} placeholder={t('createMarket.oraclePlaceholder', 'Oracle / source')} className="bg-[#18181B] border border-[#27272A] rounded p-3 text-sm outline-none focus:border-[#00FFD1]" />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="text-[10px] text-[#71717A] uppercase font-bold tracking-widest">
-              Cut-off
+              {t('createMarket.cutoff', 'Cut-off')}
               <input type="datetime-local" value={cutoffLocal} onChange={(e) => setCutoffLocal(e.target.value)} className="mt-2 w-full bg-[#18181B] border border-[#27272A] rounded p-3 text-sm text-white outline-none focus:border-[#00FFD1]" />
             </label>
             <label className="text-[10px] text-[#71717A] uppercase font-bold tracking-widest">
-              Resolucion
+              {t('createMarket.resolution', 'Resolution')}
               <input type="datetime-local" value={resolveLocal} onChange={(e) => setResolveLocal(e.target.value)} className="mt-2 w-full bg-[#18181B] border border-[#27272A] rounded p-3 text-sm text-white outline-none focus:border-[#00FFD1]" />
             </label>
           </div>
@@ -96,13 +98,13 @@ export function CreateMarketModal({ onClose, onSubmit }: CreateMarketModalProps)
               <option value="LYNX">LYNX</option>
             </select>
             <button onClick={() => setIsTernary((v) => !v)} className="bg-[#18181B] border border-[#27272A] rounded p-3 text-sm font-bold uppercase tracking-widest hover:border-[#00FFD1]">
-              {isTernary ? 'Ternario A/B/Draw' : 'Binario Si/No'}
+              {isTernary ? t('createMarket.ternary', 'Ternary A/B/Draw') : t('createMarket.binary', 'Binary Yes/No')}
             </button>
           </div>
           {error && <div className="text-red-400 text-xs font-mono bg-red-400/10 border border-red-400/20 rounded p-3">{error}</div>}
           <button onClick={submit} disabled={isSubmitting} className="w-full py-4 rounded bg-[#00FFD1] text-black font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 disabled:opacity-60">
             {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
-            Firmar y registrar mercado
+            {t('createMarket.submit', 'Sign and Register Market')}
           </button>
         </div>
       </motion.div>

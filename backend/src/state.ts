@@ -313,9 +313,17 @@ export class LynxState {
   }
 
   listDuels(parentMarketId?: string, includeFinished = false) {
+    const now = nowMs();
     return [...this.duels.values()]
       .filter((duel) => !parentMarketId || duel.parentMarketId === parentMarketId)
-      .filter((duel) => includeFinished || (duel.status !== 'RESOLVED' && duel.status !== 'CANCELLED'))
+      .filter((duel) => {
+        if (includeFinished) return true;
+        if (duel.status === 'RESOLVED' || duel.status === 'CANCELLED') return false;
+        const market = this.markets.get(duel.parentMarketId);
+        if (!market) return false;
+        if (market.status === 'RESOLVED' || market.status === 'CUT_OFF' || market.status === 'EXPIRED') return false;
+        return now < market.cutoffAt;
+      })
       .sort((a, b) => b.createdAt - a.createdAt);
   }
 
@@ -599,7 +607,10 @@ export class LynxState {
     const wallet = this.getWallet(input.wallet);
     if (wallet.wallet === duel.creator) throw new Error('Creator cannot accept their own duel');
     const market = this.getMarket(duel.parentMarketId);
-    assertMarketAcceptsEntries(market);
+    // A duel can be accepted as long as the market has not been fully resolved yet.
+    // assertMarketAcceptsEntries is intentionally NOT used here: it blocks the moment
+    // the market cutoff passes, but a duel can legitimately still be OPEN and waiting.
+    if (market.status === 'RESOLVED') throw new Error('The market for this duel has already been resolved');
     const positionB = normalizePosition(input.side ?? opposingPosition(duel.positionA, duel.isTernary), duel.isTernary);
     assertPositionAllowed(positionB, duel.isTernary);
     if (positionB === duel.positionA) throw new Error('Rival must choose a different side');
@@ -624,6 +635,31 @@ export class LynxState {
     duel.status = 'ACTIVE';
     duel.acceptedAt = nowMs();
     return duel;
+  }
+
+  cancelDuel(input: { wallet: string; duelId: string }) {
+    const duel = this.duels.get(input.duelId);
+    if (!duel) throw new Error('Duel not found');
+    if (duel.status !== 'OPEN') throw new Error('Only OPEN duels can be cancelled');
+    if (duel.creator !== input.wallet) throw new Error('Only the creator can cancel their duel');
+    // Refund the gross amount the creator deposited (the burn is forfeit — consistent with LYNX burn semantics)
+    const refundAmount = duel.grossAmount ?? duel.amount;
+    const wallet = this.getWallet(input.wallet);
+    if (duel.currency === 'SOL') {
+      wallet.solBalance = roundAmount(wallet.solBalance + refundAmount);
+    } else {
+      wallet.lynxBalance = roundAmount(wallet.lynxBalance + refundAmount);
+    }
+    this.addLedgerEntry({
+      wallet: input.wallet,
+      type: 'REFUND',
+      currency: duel.currency,
+      amount: refundAmount,
+      status: 'COMPLETED',
+      metadata: { duelId: duel.id, mode: 'duel:cancel' }
+    });
+    duel.status = 'CANCELLED';
+    return { duel, portfolio: this.getPortfolio(input.wallet) };
   }
 
   resolveMarket(input: { marketId: string; result: Position; source?: 'oracle' | 'manual' }) {

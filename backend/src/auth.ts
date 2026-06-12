@@ -1,8 +1,14 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET: string = process.env.JWT_SECRET || 'dev-secret-key-change-in-production';
+const DEFAULT_JWT_SECRET = 'dev-secret-key-change-in-production';
+const JWT_SECRET: string = process.env.JWT_SECRET || DEFAULT_JWT_SECRET;
 const JWT_EXPIRY: string = process.env.JWT_EXPIRY || '7d';
+
+// Fail fast in production if the secret is the insecure default or missing
+if (process.env.NODE_ENV === 'production' && JWT_SECRET === DEFAULT_JWT_SECRET) {
+  throw new Error('JWT_SECRET must be set to a secure value in production. Do not use the default.');
+}
 
 export interface AuthPayload {
   userId: string;

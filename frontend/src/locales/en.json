@@ -18,7 +18,15 @@
     "cancel": "Cancel",
     "saving": "Saving",
     "processing": "Processing",
-    "error": "Error"
+    "error": "Error",
+    "loading": "Loading...",
+    "lynxLogo": "Lynx Logo",
+    "closeNotification": "Close notification",
+    "viewOnExplorer": "View on Explorer →",
+    "emptyPortfolioTitle": "Empty Portfolio",
+    "emptyPortfolioDescription": "Log in to see your portfolio and your positions in markets.",
+    "signUpLogin": "Sign Up / Log In",
+    "processingEllipsis": "Processing..."
   },
   "auth": {
     "resetEmailSent": "Password reset instructions sent.",
@@ -87,7 +95,10 @@
     "acceptPending": "Accepting duel...",
     "acceptSuccess": "Duel accepted successfully!",
     "acceptFailed": "Failed to accept duel",
-    "createFailed": "Failed to create duel"
+    "createFailed": "Failed to create duel",
+    "system": "System",
+    "lynxParen": "(LYNX)",
+    "noAutoEmission": "(NO AUTO EMISSION)"
   },
   "createDuel": {
     "title": "Forge 1v1 Duel",
@@ -174,7 +185,8 @@
     "youWonMarket": "You won this market!",
     "claiming": "Claiming...",
     "claimPayout": "Claim Payout",
-    "marketResolvedWon": "Market resolved - {{result}} won"
+    "marketResolvedWon": "Market resolved - {{result}} won",
+    "userEmissionShare": "30% User Emission Share"
   },
   "marketCard": {
     "special": "Special",
@@ -360,7 +372,26 @@
     "fees": "Fees",
     "payout": "Payout",
     "submit": "Submit",
-    "dismiss": "Dismiss"
+    "dismiss": "Dismiss",
+    "noLynxTrades": "No LYNX trades yet",
+    "noMarketTrades": "No market trades yet",
+    "orderBookFallback": "Order Book",
+    "lynxDexProtocol": "LYNX DEX Protocol",
+    "lynxDex": "LYNX DEX",
+    "lynxSolToken": "LYNX / SOL Token",
+    "predictionMarkets": "Prediction Markets",
+    "range": "Range",
+    "interval": "Interval",
+    "noAsks": "No asks",
+    "noBids": "No bids",
+    "total": "Total",
+    "partial": "Partial",
+    "lynxSolLiveChart": "LYNX / SOL - Live Chart",
+    "marketConfidenceChart": "Market Confidence Chart",
+    "market": "Market",
+    "optA": "OPT A",
+    "optB": "OPT B",
+    "myOpenOrders": "My Open Orders"
   },
   "portfolio": {
     "invalidSolAmount": "Enter a valid SOL amount.",
@@ -420,7 +451,21 @@
     "withdrawSuccess": "Withdrawal completed!",
     "depositFailed": "Failed to deposit SOL",
     "withdrawFailed": "Failed to withdraw SOL",
-    "ledgerActionFailed": "Failed to update SOL balance"
+    "ledgerActionFailed": "Failed to update SOL balance",
+    "walletAddress": "Wallet Address",
+    "solBalance": "SOL Balance",
+    "lynxBalance": "LYNX Balance",
+    "solLedger": "SOL Ledger",
+    "solLedgerPlaceholder": "0.00 SOL",
+    "buyCryptoTitle": "Buy Crypto",
+    "buyCryptoDesc": "Instantly purchase crypto using your credit card, debit card, or bank account via MoonPay.",
+    "manageStake": "Manage Stake",
+    "amountOfLynx": "Amount of LYNX...",
+    "max": "MAX",
+    "stakeLynx": "Stake LYNX",
+    "unstakeLynx": "Unstake LYNX",
+    "stakeTabLabel": "Stake",
+    "unstakeTabLabel": "Unstake"
   },
   "governance": {
     "loading": "Loading governance data...",
@@ -486,6 +531,23 @@
   "sidebar": {
     "ecosystemAsset": "Ecosystem Asset",
     "lynxStaking": "$LYNX Staking",
-    "stakingDesc": "Accrue protocol fees in SOL by holding $LYNX."
+    "stakingDesc": "Accrue protocol fees in SOL by holding $LYNX.",
+    "marketProtocol": "MARKET PROTOCOL"
+  },
+  "createMarket": {
+    "title": "Create Market",
+    "subtitle": "Admin only + wallet signature",
+    "closeModal": "Close modal",
+    "titlePlaceholder": "Event title",
+    "descriptionPlaceholder": "Settlement rules",
+    "categoryPlaceholder": "Category",
+    "oraclePlaceholder": "Oracle / source",
+    "cutoff": "Cut-off",
+    "resolution": "Resolution",
+    "ternary": "Ternary A/B/Draw",
+    "binary": "Binary Yes/No",
+    "submit": "Sign and Register Market",
+    "errorTitleRequired": "The event needs a title.",
+    "errorGeneric": "Could not create the market."
   }
 }

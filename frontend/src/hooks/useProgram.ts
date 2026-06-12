@@ -323,6 +323,22 @@ export function useProgram() {
     }
   }, [ensureApproved]);
 
+  const cancelDuel = useCallback(async (duelId: string) => {
+    setLoadingCount(c => c + 1);
+    try {
+      const currentWallet = await ensureApproved();
+      return await apiFetch(`/api/duels/${duelId}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ wallet: currentWallet }),
+      });
+    } catch (err: any) {
+      throw err;
+    } finally {
+      setLoadingCount(c => Math.max(0, c - 1));
+    }
+  }, [ensureApproved]);
+
+
   const depositSol = useCallback(async (amount: number, onChainSignature?: string) => {
     setLoadingCount(c => c + 1);
     try {
@@ -430,6 +446,7 @@ export function useProgram() {
     createDuel,
     createMarket,
     acceptDuel,
+    cancelDuel,
     fetchPortfolio,
     fetchPositions,
     fetchProposals,

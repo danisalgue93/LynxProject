@@ -43,7 +43,7 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, onClose }: SidebarPro
           <div className="flex items-center gap-3 mb-10">
             <img 
               src="https://res.cloudinary.com/demeahktg/image/upload/v1778961729/logo_plataforma_sin_fondo_xlkpa9.png" 
-              alt="Lynx Logo" 
+              alt={t("common.lynxLogo", "Lynx Logo")} 
               className="w-12 h-12 object-contain rounded-sm"
             />
             <div className="flex flex-col justify-center gap-0.5">
@@ -51,7 +51,7 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, onClose }: SidebarPro
                 LYNX
               </span>
               <span className="text-[9px] font-black uppercase tracking-[0.25em] text-transparent bg-clip-text bg-gradient-to-r from-[#00FFD1] from-[25%] to-[#8219FF] to-[55%] drop-shadow-[0_0_8px_rgba(130,25,255,0.3)] -mt-1 ml-0.5">
-                MARKET PROTOCOL
+                {t('sidebar.marketProtocol', 'MARKET PROTOCOL')}
               </span>
             </div>
           </div>

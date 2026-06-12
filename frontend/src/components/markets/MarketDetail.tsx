@@ -957,7 +957,7 @@ export function MarketDetail({
                             +{lynxDrop.toFixed(2)}
                           </span>
                           <span className="text-[6px] md:text-[7px] text-[#9945FF]/70 uppercase tracking-widest">
-                            30% User Emission Share
+                            {t('marketDetail.userEmissionShare', '30% User Emission Share')}
                           </span>
                         </div>
                       </div>

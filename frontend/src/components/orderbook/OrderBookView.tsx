@@ -13,6 +13,7 @@ import { getManagedWalletAddress, useManagedAuthSession } from '@/src/lib/auth';
 import { useToast } from '@/src/context/ToastContext';
 
 function MarketChart({ isLynxSol, market, chartType = 'line', chartRange = '1M', chartInterval = '1D', chartSize }: { isLynxSol: boolean; market: Market | null; chartType?: 'line' | 'candle'; chartRange?: string; chartInterval?: string; chartSize?: 'minimized' | 'normal' | 'expanded' }) {
+  const { t } = useTranslation();
   const [tokenData, setTokenData] = useState<any[]>([]);
 
   useEffect(() => {
@@ -72,7 +73,7 @@ function MarketChart({ isLynxSol, market, chartType = 'line', chartRange = '1M',
 
   if (isLynxSol) {
     if (tokenData.length === 0) {
-       return <div className={cn("w-full min-w-0 min-h-0 flex items-center justify-center text-[#A1A1AA] uppercase text-[10px] font-bold tracking-widest", heightClass)}>No LYNX trades yet</div>;
+       return <div className={cn("w-full min-w-0 min-h-0 flex items-center justify-center text-[#A1A1AA] uppercase text-[10px] font-bold tracking-widest", heightClass)}>{t('orderbook.noLynxTrades', 'No LYNX trades yet')}</div>;
     }
     
     if (chartType === 'candle') {
@@ -186,7 +187,7 @@ function MarketChart({ isLynxSol, market, chartType = 'line', chartRange = '1M',
   }
 
   if (marketData.length === 0) {
-    return <div className={cn("w-full min-w-0 min-h-0 flex items-center justify-center text-[#A1A1AA] uppercase text-[10px] font-bold tracking-widest", heightClass)}>No market trades yet</div>;
+    return <div className={cn("w-full min-w-0 min-h-0 flex items-center justify-center text-[#A1A1AA] uppercase text-[10px] font-bold tracking-widest", heightClass)}>{t('orderbook.noMarketTrades', 'No market trades yet')}</div>;
   }
 
   return (
@@ -449,10 +450,10 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
         </div>
         <div className="flex-1 min-w-0">
           <h2 className="text-lg lg:text-3xl font-bold text-white tracking-tight leading-none truncate">
-            {isLynxSol ? 'LYNX/SOL' : selectedMarket?.title || 'Order Book'} {t('orderbook.orderBook', 'Order Book')}
+            {isLynxSol ? 'LYNX/SOL' : selectedMarket?.title || t('orderbook.orderBookFallback', 'Order Book')} {t('orderbook.orderBook', 'Order Book')}
           </h2>
           <p className="text-[#71717A] text-[8px] lg:text-[10px] font-bold uppercase tracking-widest mt-1 truncate">
-            {isLynxSol ? 'LYNX DEX Protocol' : selectedMarket?.category || t('orderbook.daoGovernance', "DAO Pool Governance")}
+            {isLynxSol ? t('orderbook.lynxDexProtocol', 'LYNX DEX Protocol') : selectedMarket?.category || t('orderbook.daoGovernance', "DAO Pool Governance")}
           </p>
         </div>
       </div>
@@ -478,10 +479,10 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
               >
                 <div className="pointer-events-none relative flex-1 min-w-0 w-full mb-1 lg:mb-2">
                   <div className={cn("text-[7px] lg:text-[9px] font-bold uppercase mb-0.5 lg:mb-1 tracking-widest transition-opacity line-clamp-1 flex items-center gap-1", isLynxSol ? "opacity-100 text-[#9945FF]" : "opacity-40")}>
-                    <Coins className="w-2.5 h-2.5" /> LYNX DEX
+                    <Coins className="w-2.5 h-2.5" /> {t('orderbook.lynxDex', 'LYNX DEX')}
                   </div>
                   <div className={cn("text-[10px] lg:text-[13px] font-black mb-0.5 lg:mb-2 transition-colors leading-tight", isLynxSol ? "text-white" : "text-[#A1A1AA]")}>
-                    LYNX / SOL Token
+                    {t('orderbook.lynxSolToken', 'LYNX / SOL Token')}
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 mt-auto bg-black/20 p-1 lg:p-1.5 rounded w-full justify-between">
@@ -499,7 +500,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
 
               <div className="hidden lg:flex items-center gap-2 px-2 py-3 mt-2">
                  <div className="h-px bg-[#27272A] flex-1" />
-                 <span className="text-[8px] font-bold text-[#52525B] uppercase tracking-widest">Prediction Markets</span>
+                 <span className="text-[8px] font-bold text-[#52525B] uppercase tracking-widest">{t('orderbook.predictionMarkets', 'Prediction Markets')}</span>
                  <div className="h-px bg-[#27272A] flex-1" />
               </div>
 
@@ -560,7 +561,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                  <div className="flex flex-wrap justify-between items-center gap-3 mb-2 lg:mb-4 shrink-0">
                    <div className="flex items-center gap-2">
                      <TrendingUp className="w-3 h-3 lg:w-4 lg:h-4 text-[#52525B] shrink-0" />
-                     <span className="text-[8px] sm:text-[9px] lg:text-[10px] font-bold text-white uppercase tracking-widest whitespace-normal md:whitespace-nowrap">{isLynxSol ? 'LYNX / SOL - Live Chart' : 'Market Confidence Chart'}</span>
+                     <span className="text-[8px] sm:text-[9px] lg:text-[10px] font-bold text-white uppercase tracking-widest whitespace-normal md:whitespace-nowrap">{isLynxSol ? t('orderbook.lynxSolLiveChart', 'LYNX / SOL - Live Chart') : t('orderbook.marketConfidenceChart', 'Market Confidence Chart')}</span>
                    </div>
                    
                    <div className="flex flex-wrap items-center gap-2 lg:gap-3 justify-end flex-grow sm:flex-grow-0">
@@ -568,7 +569,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                        <div className="flex flex-wrap items-center justify-end gap-2 xl:gap-3">
                          {/* Range */}
                          <div className="flex bg-[#141417] p-0.5 rounded border border-[#27272A] items-center">
-                           <span className="text-[#52525B] text-[8px] font-bold uppercase mx-2 hidden xl:inline">Range</span>
+                           <span className="text-[#52525B] text-[8px] font-bold uppercase mx-2 hidden xl:inline">{t('orderbook.range', 'Range')}</span>
                            {(['1D', '1W', '1M', '6M', '1Y', 'ALL'] as const).map(tr => (
                              <button
                                key={tr}
@@ -582,7 +583,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
 
                          {/* Interval */}
                          <div className="flex bg-[#141417] p-0.5 rounded border border-[#27272A] items-center">
-                           <span className="text-[#52525B] text-[8px] font-bold uppercase mx-2 hidden xl:inline">Interval</span>
+                           <span className="text-[#52525B] text-[8px] font-bold uppercase mx-2 hidden xl:inline">{t('orderbook.interval', 'Interval')}</span>
                            {(['15m', '1H', '4H', '1D', '1W'] as const).map(ti => (
                              <button
                                key={ti}
@@ -689,7 +690,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                   <div className="space-y-[1px] lg:space-y-1 font-mono text-[9px] lg:text-[11px] flex flex-col-reverse lg:flex-col">
                     {isLynxSol ? (
                       lynxAsks.length === 0 ? (
-                        <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">No asks</div>
+                        <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">{t('orderbook.noAsks', 'No asks')}</div>
                       ) : lynxAsks.map((order: any, i: number) => (
                         <button 
                           key={`ask-${i}`} 
@@ -702,7 +703,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                       ))
                     ) : (
                       predAsks.length === 0 ? (
-                        <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">No asks</div>
+                        <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">{t('orderbook.noAsks', 'No asks')}</div>
                       ) : predAsks.map((order: any, i: number) => (
                         <button 
                           key={`ask-${i}`} 
@@ -731,7 +732,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                   <div className="space-y-[1px] lg:space-y-1 font-mono text-[9px] lg:text-[11px]">
                     {isLynxSol ? (
                       lynxBids.length === 0 ? (
-                        <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">No bids</div>
+                        <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">{t('orderbook.noBids', 'No bids')}</div>
                       ) : lynxBids.map((order: any, i: number) => (
                         <button 
                           key={`bid-${i}`} 
@@ -744,7 +745,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                       ))
                     ) : (
                       predBids.length === 0 ? (
-                        <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">No bids</div>
+                        <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">{t('orderbook.noBids', 'No bids')}</div>
                       ) : predBids.map((order: any, i: number) => (
                         <button 
                           key={`bid-${i}`} 
@@ -788,7 +789,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                     (isLynxSol ? lynxTradeType : predTradeType) === (isLynxSol ? 'market' : 'swap') ? "bg-[#3F3F46] text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]" : "text-[#52525B] hover:text-[#A1A1AA]"
                   )}
                  >
-                   {isLynxSol ? 'Market' : 'Swap'}
+                   {isLynxSol ? t('orderbook.market', 'Market') : t('orderbook.swap', 'Swap')}
                  </button>
               </div>
 
@@ -832,7 +833,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                                   : "bg-[#18181B] border-[#27272A] text-[#52525B]"
                               )}
                             >
-                              {selectedMarket?.isTernary ? 'OPT A' : 'YES'}
+                              {selectedMarket?.isTernary ? t('orderbook.optA', 'OPT A') : t('orderbook.yes', 'YES')}
                             </button>
                             <button 
                               onClick={() => setPredSide(selectedMarket?.isTernary ? Position.B : Position.NO)}
@@ -843,7 +844,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                                   : "bg-[#18181B] border-red-900/20 text-red-400/40 hover:text-red-400 hover:border-red-400/40"
                               )}
                             >
-                              {selectedMarket?.isTernary ? 'OPT B' : 'NO'}
+                              {selectedMarket?.isTernary ? t('orderbook.optB', 'OPT B') : t('orderbook.no', 'NO')}
                             </button>
                             {selectedMarket?.isTernary && (
                               <button 
@@ -903,7 +904,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                       {isLynxSol ? (
                         <>
                           <div className="flex justify-between text-[7px] lg:text-[11px] font-bold items-center">
-                            <span className="text-[#52525B] uppercase tracking-widest">Total</span>
+                            <span className="text-[#52525B] uppercase tracking-widest">{t('orderbook.total', 'Total')}</span>
                             <span className="text-white font-mono">{(parseFloat(lynxPrice) * parseFloat(lynxAmount) || 0).toFixed(4)} SOL</span>
                           </div>
                           <div className="flex justify-between text-[7px] lg:text-[11px] font-bold items-center">
@@ -957,7 +958,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
           <div className="mt-4 lg:mt-6 bg-[#0D0D0E] border border-[#1F1F23] rounded-xl overflow-hidden">
             <div className="px-4 lg:px-6 py-3 border-b border-[#1F1F23] flex items-center justify-between">
               <span className="text-[10px] lg:text-xs font-black text-white uppercase tracking-widest">
-                My Open Orders
+                {t('orderbook.myOpenOrders', 'My Open Orders')}
               </span>
               <span className="text-[10px] text-[#52525B] font-bold">{allOpenOrders.length} active</span>
             </div>
@@ -981,7 +982,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                         @ {Number(order.price).toFixed(5)} SOL
                       </span>
                       {isPartial && (
-                        <span className="text-[9px] text-amber-400 font-bold uppercase">Partial</span>
+                        <span className="text-[9px] text-amber-400 font-bold uppercase">{t('orderbook.partial', 'Partial')}</span>
                       )}
                     </div>
                     <div className="flex items-center gap-2 lg:gap-3 shrink-0">

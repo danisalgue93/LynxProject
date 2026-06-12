@@ -20,7 +20,9 @@ export default defineConfig(({mode}) => {
       })
     ],
     define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+      // GEMINI_API_KEY intentionally NOT included here.
+      // Embedding API keys in the client bundle exposes them in public JS.
+      // If you need Gemini, proxy calls through the backend (frontend/server.ts).
     },
     resolve: {
       alias: {

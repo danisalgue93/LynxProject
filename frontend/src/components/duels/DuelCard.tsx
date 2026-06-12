@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Duel, DuelStatus, Market, Position } from '@/src/types';
 import { formatSOL, cn } from '@/src/lib/utils';
-import { Sword, User, Timer, ArrowRight, Shield } from 'lucide-react';
+import { Sword, User, Timer, ArrowRight, Shield, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { STATUS_COLORS } from '@/src/constants';
@@ -18,18 +18,29 @@ interface DuelCardProps {
 
 export function DuelCard({ duel }: DuelCardProps) {
   const { t } = useTranslation();
-  const { fetchMarkets, acceptDuel } = useProgram();
+  const { fetchMarkets, acceptDuel, cancelDuel } = useProgram();
   const { executeTransaction } = useBlockchainTransaction();
   const { publicKey } = useWallet();
   const managedSession = useManagedAuthSession();
   const [parentMarket, setParentMarket] = useState<Market | null>(null);
   const [isAccepting, setIsAccepting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   useEffect(() => {
     const loadMarket = async () => {
+      // fetchMarkets() filters out resolved/cut-off markets, so we fetch ALL markets
+      // (includeFinished=true) to always find the parent market of a duel.
       const markets = await fetchMarkets();
-      const market = markets.find(m => m.id === duel.parentMarketId);
-      if (market) setParentMarket(market);
+      const market = markets.find((m: Market) => m.id === duel.parentMarketId);
+      if (market) {
+        setParentMarket(market);
+      } else {
+        // Fallback: fetch the specific market directly so resolved markets are found too
+        try {
+          const res = await fetch(`/api/markets/${duel.parentMarketId}`);
+          if (res.ok) setParentMarket(await res.json());
+        } catch { /* ignore */ }
+      }
     };
     loadMarket();
   }, [duel.parentMarketId, fetchMarkets]);
@@ -54,6 +65,28 @@ export function DuelCard({ duel }: DuelCardProps) {
       console.error(e);
     } finally {
       setIsAccepting(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!isCreator || duel.status !== DuelStatus.OPEN) return;
+    setIsCancelling(true);
+    try {
+      await executeTransaction(
+        async () => {
+          await cancelDuel(duel.id);
+          return `cancel-duel-${duel.id}-${Date.now()}`;
+        },
+        {
+          pendingMessage: t('duels.cancelPending', 'Cancelling duel...'),
+          successMessage: t('duels.cancelSuccess', 'Duel cancelled. Your funds have been refunded.'),
+          errorMessage: t('duels.cancelFailed', 'Failed to cancel duel'),
+        }
+      );
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -139,9 +172,9 @@ export function DuelCard({ duel }: DuelCardProps) {
                     <Shield className="w-3 h-3 md:w-4 md:h-4 text-[#9945FF]" />
                  </div>
                  <div className="flex flex-col items-center mt-1">
-                   <div className="text-[6px] md:text-[7px] font-mono text-[#52525B] uppercase tracking-tight">System</div>
+                   <div className="text-[6px] md:text-[7px] font-mono text-[#52525B] uppercase tracking-tight">{t('duels.system', 'System')}</div>
                    <div className="text-[7px] md:text-[9px] font-black text-[#9945FF] uppercase tracking-[0.2em] leading-none my-0.5">{t('duels.protocol', 'PROTOCOL')}</div>
-                   <div className="text-[5px] md:text-[6px] text-[#9945FF] uppercase tracking-wider">(LYNX)</div>
+                   <div className="text-[5px] md:text-[6px] text-[#9945FF] uppercase tracking-wider">{t('duels.lynxParen', '(LYNX)')}</div>
                  </div>
               </>
             ) : (
@@ -193,7 +226,7 @@ export function DuelCard({ duel }: DuelCardProps) {
                 ) : (
                   <>
                     <span className="whitespace-nowrap">P2P</span>
-                    <span className="opacity-70 text-[6px] md:text-[7px] whitespace-nowrap">(NO AUTO EMISSION)</span>
+                    <span className="opacity-70 text-[6px] md:text-[7px] whitespace-nowrap">{t('duels.noAutoEmission', '(NO AUTO EMISSION)')}</span>
                   </>
                 )}
              </div>
@@ -202,25 +235,34 @@ export function DuelCard({ duel }: DuelCardProps) {
              <div className="text-[7px] md:text-[8px] uppercase font-bold text-[#71717A] tracking-widest leading-none mb-1">{isLynx ? t('duels.burn', 'Burn') : t('duels.endReward', 'End Reward')}</div>
              <div className={cn("text-[8px] md:text-[9px] font-bold tracking-widest flex flex-col items-end", isLynx ? "text-red-400" : "text-[#9945FF]")}>
                 {isLynx ? (
-                  <>
-                    <span className="whitespace-nowrap leading-none">-{(duel.amount * 2) * 0.15} LYNX</span>
-                  </>
+                  <span className="whitespace-nowrap leading-none">-{(duel.amount * 2) * 0.15} LYNX</span>
                 ) : duel.isTernary ? (
-                  <>
-                    <span className="whitespace-nowrap leading-none">+{duel.amount} LYNX</span>
-                  </>
+                  <span className="whitespace-nowrap leading-none">+{duel.amount} LYNX</span>
                 ) : (
-                  <>
-                    <span className="whitespace-nowrap leading-none">P2P</span>
-                  </>
+                  <span className="whitespace-nowrap leading-none">P2P</span>
                 )}
              </div>
           </div>
         </div>
 
-        <div className="mt-auto hidden" />
         <div className="mt-auto shrink-0">
-          {duel.isTernary && isOpen ? (
+          {/* Creator sees a cancel/refund button while the duel is still OPEN */}
+          {isCreator && isOpen ? (
+            <div className="h-10 md:h-12">
+              <button
+                onClick={handleCancel}
+                disabled={isCancelling}
+                className={cn(
+                  "w-full h-full rounded font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2",
+                  "bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:border-red-500/60",
+                  isCancelling && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                <X className="w-3 h-3 shrink-0" />
+                <span>{isCancelling ? t('duels.cancelling', 'Cancelling...') : t('duels.cancelRefund', 'Cancel & Refund')}</span>
+              </button>
+            </div>
+          ) : duel.isTernary && isOpen ? (
             <div className={cn(
               "grid gap-2 h-10 md:h-12",
               acceptableTernaryPositions.length === 3 ? "grid-cols-3" : "grid-cols-2"
@@ -229,16 +271,15 @@ export function DuelCard({ duel }: DuelCardProps) {
                   <button
                     key={pos}
                     onClick={() => handleAccept(pos)}
-                    disabled={isAccepting || isCreator}
-                    title={isCreator ? cannotAcceptOwnDuelLabel : undefined}
+                    disabled={isAccepting}
                     className={cn(
                       "w-full h-full rounded font-black text-[8px] md:text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden",
                       "bg-[#00FFD1] text-black hover:bg-[#00E5BC] shadow-[0_0_15px_rgba(0,255,209,0.2)]",
-                      (isAccepting || isCreator) && "opacity-50 cursor-not-allowed hover:bg-[#00FFD1]"
+                      isAccepting && "opacity-50 cursor-not-allowed hover:bg-[#00FFD1]"
                     )}
                   >
                     <span className="truncate">
-                      {isCreator ? ownDuelButtonLabel : isAccepting ? t('duels.accepting', "...") : (
+                      {isAccepting ? t('duels.accepting', '...') : (
                         pos === Position.YES ? t('marketDetail.optA', 'OPT A') : 
                         pos === Position.NO ? t('marketDetail.optB', 'OPT B') : 
                         t('marketDetail.draw', 'DRAW')
@@ -251,18 +292,18 @@ export function DuelCard({ duel }: DuelCardProps) {
             <div className="h-10 md:h-12">
               <button 
                 onClick={() => handleAccept()}
-                 disabled={isAccepting || isCreator || (!isOpen && duel.status !== DuelStatus.OPEN)}
-                 title={isCreator ? cannotAcceptOwnDuelLabel : undefined}
-                 className={cn(
-                 "w-full h-full rounded font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 whitespace-nowrap",
-                 isOpen 
-                   ? "bg-[#00FFD1] text-black hover:bg-[#00E5BC] shadow-[0_0_15px_rgba(0,255,209,0.2)]" 
-                   : "bg-[#18181B] text-[#71717A] border border-[#27272A] hover:text-white",
-                 (isAccepting || isCreator) && "opacity-50 cursor-not-allowed hover:bg-[#00FFD1]"
-               )}>
-                 <span className="truncate">{isCreator ? ownDuelButtonLabel : isAccepting ? t('duels.accepting', "Accepting...") : (isOpen ? t('duels.acceptDuel', "Accept Duel") : t('duels.matchProgress', "Match Progress"))}</span>
-                 <ArrowRight className="w-2.5 h-2.5 md:w-3 md:h-3 shrink-0" />
-               </button>
+                disabled={isAccepting || isCreator || !isOpen}
+                title={isCreator ? cannotAcceptOwnDuelLabel : undefined}
+                className={cn(
+                "w-full h-full rounded font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 whitespace-nowrap",
+                isOpen 
+                  ? "bg-[#00FFD1] text-black hover:bg-[#00E5BC] shadow-[0_0_15px_rgba(0,255,209,0.2)]" 
+                  : "bg-[#18181B] text-[#71717A] border border-[#27272A] hover:text-white",
+                (isAccepting || isCreator) && "opacity-50 cursor-not-allowed hover:bg-[#00FFD1]"
+              )}>
+                <span className="truncate">{isCreator ? ownDuelButtonLabel : isAccepting ? t('duels.accepting', 'Accepting...') : (isOpen ? t('duels.acceptDuel', 'Accept Duel') : t('duels.matchProgress', 'Match Progress'))}</span>
+                <ArrowRight className="w-2.5 h-2.5 md:w-3 md:h-3 shrink-0" />
+              </button>
             </div>
           )}
         </div>

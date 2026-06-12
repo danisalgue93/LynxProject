@@ -10,7 +10,26 @@ async function startServer() {
   const PORT = Number(process.env.PORT || 3000);
   const BACKEND_URL = (process.env.BACKEND_URL || process.env.VITE_API_URL || 'http://127.0.0.1:4000').replace(/\/$/, '');
 
-  app.use(cors());
+  const allowedOrigins = (process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map(o => o.trim())
+    .filter(Boolean);
+
+  app.use(cors(
+    allowedOrigins.length > 0
+      ? {
+          origin: (origin, callback) => {
+            // Allow requests with no origin (same-origin, curl, mobile apps)
+            if (!origin || allowedOrigins.includes(origin)) {
+              callback(null, true);
+            } else {
+              callback(new Error(`CORS: origin ${origin} not allowed`));
+            }
+          },
+          credentials: true,
+        }
+      : undefined // no CORS_ORIGIN set → open (dev only)
+  ));
   app.use(express.json());
 
   app.get('/integrations/moonpay/onramp-url', (req, res) => {

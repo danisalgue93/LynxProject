@@ -138,7 +138,7 @@ export interface Notification {
 export interface LedgerEntry {
   id: string;
   wallet: string;
-  type: 'DEPOSIT' | 'WITHDRAWAL' | 'APPROVE' | 'TRADE' | 'SETTLEMENT' | 'FEE' | 'EMISSION' | 'BURN';
+  type: 'DEPOSIT' | 'WITHDRAWAL' | 'APPROVE' | 'TRADE' | 'SETTLEMENT' | 'FEE' | 'EMISSION' | 'BURN' | 'REFUND';
   currency?: Currency;
   amount?: number;
   provider?: 'CARD' | 'EXTERNAL_WALLET' | 'INTERNAL';

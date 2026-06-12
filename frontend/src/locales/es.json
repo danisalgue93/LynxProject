@@ -18,7 +18,15 @@
     "cancel": "Cancelar",
     "saving": "Guardando",
     "processing": "Procesando",
-    "error": "Error"
+    "error": "Error",
+    "loading": "Cargando...",
+    "lynxLogo": "Logo de Lynx",
+    "closeNotification": "Cerrar notificación",
+    "viewOnExplorer": "Ver en el Explorador →",
+    "emptyPortfolioTitle": "Portafolio Vacío",
+    "emptyPortfolioDescription": "Inicia sesión para ver tu portafolio y tus posiciones en mercados.",
+    "signUpLogin": "Registrarse / Iniciar sesión",
+    "processingEllipsis": "Procesando..."
   },
   "auth": {
     "resetEmailSent": "Instrucciones para restablecer la contraseña enviadas.",
@@ -87,7 +95,10 @@
     "acceptPending": "Aceptando duelo...",
     "acceptSuccess": "Duelo aceptado correctamente",
     "acceptFailed": "No se pudo aceptar el duelo",
-    "createFailed": "No se pudo crear el duelo"
+    "createFailed": "No se pudo crear el duelo",
+    "system": "Sistema",
+    "lynxParen": "(LYNX)",
+    "noAutoEmission": "(SIN EMISIÓN AUTOMÁTICA)"
   },
   "createDuel": {
     "title": "Forjar Duelo 1v1",
@@ -174,7 +185,8 @@
     "youWonMarket": "Has ganado este mercado",
     "claiming": "Reclamando...",
     "claimPayout": "Reclamar payout",
-    "marketResolvedWon": "Mercado resuelto - gano {{result}}"
+    "marketResolvedWon": "Mercado resuelto - gano {{result}}",
+    "userEmissionShare": "30% de Emisión para Usuarios"
   },
   "marketCard": {
     "special": "Especial",
@@ -360,7 +372,26 @@
     "fees": "Comisiones",
     "payout": "Pago",
     "submit": "Enviar",
-    "dismiss": "Cerrar"
+    "dismiss": "Cerrar",
+    "noLynxTrades": "Aún no hay operaciones de LYNX",
+    "noMarketTrades": "Aún no hay operaciones del mercado",
+    "orderBookFallback": "Libro de Órdenes",
+    "lynxDexProtocol": "Protocolo LYNX DEX",
+    "lynxDex": "LYNX DEX",
+    "lynxSolToken": "Token LYNX / SOL",
+    "predictionMarkets": "Mercados de Predicción",
+    "range": "Rango",
+    "interval": "Intervalo",
+    "noAsks": "Sin ventas",
+    "noBids": "Sin compras",
+    "total": "Total",
+    "partial": "Parcial",
+    "lynxSolLiveChart": "LYNX / SOL - Gráfico en Vivo",
+    "marketConfidenceChart": "Gráfico de Confianza del Mercado",
+    "market": "Mercado",
+    "optA": "OPC A",
+    "optB": "OPC B",
+    "myOpenOrders": "Mis Órdenes Abiertas"
   },
   "portfolio": {
     "invalidSolAmount": "Introduce una cantidad de SOL válida.",
@@ -420,7 +451,21 @@
     "withdrawSuccess": "Retiro completado",
     "depositFailed": "No se pudo depositar SOL",
     "withdrawFailed": "No se pudo retirar SOL",
-    "ledgerActionFailed": "No se pudo actualizar el balance SOL"
+    "ledgerActionFailed": "No se pudo actualizar el balance SOL",
+    "walletAddress": "Dirección de Wallet",
+    "solBalance": "Saldo de SOL",
+    "lynxBalance": "Saldo de LYNX",
+    "solLedger": "Libro Mayor de SOL",
+    "solLedgerPlaceholder": "0.00 SOL",
+    "buyCryptoTitle": "Comprar cripto",
+    "buyCryptoDesc": "Compra cripto al instante con tu tarjeta de crédito, débito o cuenta bancaria a través de MoonPay.",
+    "manageStake": "Gestionar Staking",
+    "amountOfLynx": "Cantidad de LYNX...",
+    "max": "MÁX",
+    "stakeLynx": "Stakear LYNX",
+    "unstakeLynx": "Quitar Stake de LYNX",
+    "stakeTabLabel": "Stake",
+    "unstakeTabLabel": "Quitar Stake"
   },
   "governance": {
     "loading": "Cargando datos de gobernanza...",
@@ -486,6 +531,23 @@
   "sidebar": {
     "ecosystemAsset": "Activo del Ecosistema",
     "lynxStaking": "Staking $LYNX",
-    "stakingDesc": "Acumula comisiones del protocolo en SOL holdeando $LYNX."
+    "stakingDesc": "Acumula comisiones del protocolo en SOL holdeando $LYNX.",
+    "marketProtocol": "PROTOCOLO DE MERCADO"
+  },
+  "createMarket": {
+    "title": "Crear mercado",
+    "subtitle": "Solo administrador + firma wallet",
+    "closeModal": "Cerrar modal",
+    "titlePlaceholder": "Título del evento",
+    "descriptionPlaceholder": "Reglas de settlement",
+    "categoryPlaceholder": "Categoría",
+    "oraclePlaceholder": "Oracle / fuente",
+    "cutoff": "Cierre",
+    "resolution": "Resolución",
+    "ternary": "Ternario A/B/Empate",
+    "binary": "Binario Sí/No",
+    "submit": "Firmar y registrar mercado",
+    "errorTitleRequired": "El evento necesita un título.",
+    "errorGeneric": "No se pudo crear el mercado."
   }
 }

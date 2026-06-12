@@ -132,6 +132,7 @@ model Market {
 
   positions  UserPosition[]
   orders     Order[]
+  trades     Trade[]
   duels      Duel[]
   candles    Candle[]
 
@@ -260,6 +261,7 @@ model Proposal {
   endTime     DateTime
   category    String   @default("community")
   author      String
+  voters      Json?
 
   votes ProposalVote[]
 

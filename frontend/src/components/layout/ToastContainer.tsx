@@ -1,9 +1,11 @@
 import React from 'react';
 import { X, CheckCircle2, AlertCircle, Info, Loader } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useToast } from '@/src/context/ToastContext';
 
 export function ToastContainer() {
   const { toasts, removeToast } = useToast();
+  const { t } = useTranslation();
 
   return (
     <div className="fixed bottom-4 right-4 flex flex-col gap-3 z-[9999] max-w-sm">
@@ -36,14 +38,14 @@ export function ToastContainer() {
                 rel="noopener noreferrer"
                 className="text-xs text-[#00FFD1] hover:text-[#00E5BC] underline mt-2 inline-block transition-colors"
               >
-                View on Explorer →
+                {t('common.viewOnExplorer', 'View on Explorer →')}
               </a>
             )}
           </div>
 
           <button
             type="button"
-            aria-label="Close notification"
+            aria-label={t('common.closeNotification', 'Close notification')}
             onClick={() => removeToast(toast.id)}
             className="flex-shrink-0 text-[#71717A] hover:text-white transition-colors"
           >

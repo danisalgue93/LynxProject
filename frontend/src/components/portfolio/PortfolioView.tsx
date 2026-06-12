@@ -300,23 +300,23 @@ export function PortfolioView() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
                <div className="space-y-4">
                  <div className="bg-[#141417] p-4 rounded border border-[#27272A]">
-                    <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-2">Wallet Address</div>
+                    <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-2">{t('portfolio.walletAddress', 'Wallet Address')}</div>
                     <div className="font-mono text-white text-xs truncate max-w-[250px]">
                       {portfolio.walletAddress || "7XytR...Pq9W"}
                     </div>
                  </div>
                  <div className="flex gap-4">
                     <div className="bg-[#141417] p-4 rounded border border-[#27272A] flex-1">
-                      <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-2">SOL Balance</div>
+                      <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-2">{t('portfolio.solBalance', 'SOL Balance')}</div>
                       <div className="font-mono font-bold text-[#00FFD1]">{formatSOL(portfolio.solBalance)}</div>
                     </div>
                     <div className="bg-[#141417] p-4 rounded border border-[#27272A] flex-1">
-                      <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-2">LYNX Balance</div>
+                      <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-2">{t('portfolio.lynxBalance', 'LYNX Balance')}</div>
                       <div className="font-mono font-bold text-[#9945FF]">{formatNumber(portfolio.lynxBalance)}</div>
                     </div>
                  </div>
                  <div className="bg-[#141417] p-4 rounded border border-[#27272A]">
-                    <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-3">SOL Ledger</div>
+                    <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-3">{t('portfolio.solLedger', 'SOL Ledger')}</div>
                     <div className="flex flex-col sm:flex-row gap-3">
                       <input
                         type="number"
@@ -324,7 +324,7 @@ export function PortfolioView() {
                         step="0.01"
                         value={solLedgerAmount}
                         onChange={(e) => setSolLedgerAmount(e.target.value)}
-                        placeholder="0.00 SOL"
+                        placeholder={t('portfolio.solLedgerPlaceholder', '0.00 SOL')}
                         className="flex-1 bg-[#18181B] border border-[#27272A] rounded p-3 text-sm text-white outline-none focus:border-[#00FFD1]"
                       />
                       <div className="grid grid-cols-2 gap-2 sm:w-56">
@@ -351,9 +351,9 @@ export function PortfolioView() {
                   <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center p-2 mb-4">
                      <svg viewBox="0 0 40 40" fill="none" className="w-full h-full"><path d="M20 40C31.0457 40 40 31.0457 40 20C40 8.9543 31.0457 0 20 0C8.9543 0 0 8.9543 0 20C0 31.0457 8.9543 40 20 40Z" fill="#7D00FF"/><path d="M26.2428 11.5833H13.7571C11.9686 11.5833 10.519 13.0425 10.519 14.8427V25.1574C10.519 26.9576 11.9686 28.4168 13.7571 28.4168H26.2428C28.0313 28.4168 29.4809 26.9576 29.4809 25.1574V14.8427C29.4809 13.0425 28.0313 11.5833 26.2428 11.5833ZM25.8643 25.0416H14.1356C12.9818 25.0416 12.0463 24.1 12.0463 22.9388V17.0612C12.0463 15.9 12.9818 14.9584 14.1356 14.9584H25.8643C27.0181 14.9584 27.9536 15.9 27.9536 17.0612V22.9388C27.9536 24.1 27.0181 25.0416 25.8643 25.0416Z" fill="white"/><path d="M23.1091 19.3402C23.1091 20.8927 21.8596 22.1504 20.2974 22.1504C18.7352 22.1504 17.4858 20.8927 17.4858 19.3402C17.4858 17.7877 18.7352 16.53 20.2974 16.53C21.8596 16.53 23.1091 17.7877 23.1091 19.3402Z" fill="white"/></svg>
                   </div>
-                  <h4 className="text-sm font-bold text-white mb-2 uppercase tracking-wide">Buy Crypto</h4>
+                  <h4 className="text-sm font-bold text-white mb-2 uppercase tracking-wide">{t('portfolio.buyCryptoTitle', 'Buy Crypto')}</h4>
                   <p className="text-[10px] text-[#A1A1AA] mb-4 leading-relaxed max-w-[200px]">
-                    Instantly purchase crypto using your credit card, debit card, or bank account via MoonPay.
+                    {t('portfolio.buyCryptoDesc', 'Instantly purchase crypto using your credit card, debit card, or bank account via MoonPay.')}
                   </p>
                   {moonPayError && (
                     <div className="mb-3 text-[10px] text-red-400 bg-red-950/20 border border-red-500/20 rounded px-3 py-2">
@@ -549,7 +549,7 @@ export function PortfolioView() {
               <div className="w-28 h-28 md:w-32 md:h-32 flex items-center justify-center mb-6 mx-auto">
                 <img 
                   src="https://res.cloudinary.com/demeahktg/image/upload/v1778963944/Lynx-Sol_Sinfondo_imzk2w.png" 
-                  alt="Lynx Logo" 
+                  alt={t("common.lynxLogo", "Lynx Logo")} 
                   className="w-full h-full object-contain drop-shadow-[0_0_15px_rgba(0,255,209,0.3)]"
                 />
               </div>
@@ -583,14 +583,14 @@ export function PortfolioView() {
 
             <div className="p-4 md:p-8 border-t lg:border-t-0 lg:border-l border-[#00FFD1]/20 flex-1 flex flex-col bg-black/10 lg:bg-transparent">
               <div className="flex-1 flex flex-col justify-center mb-6">
-                <h4 className="text-xs font-bold text-white mb-6 text-center uppercase tracking-widest">Manage Stake</h4>
+                <h4 className="text-xs font-bold text-white mb-6 text-center uppercase tracking-widest">{t('portfolio.manageStake', 'Manage Stake')}</h4>
                 <div className="flex justify-between gap-4 mb-6">
                   <div className="bg-[#141417] border border-[#27272A] rounded p-3 flex-1 text-center">
-                    <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-2">Wallet</div>
+                    <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-2">{t('portfolio.walletTab', 'Wallet')}</div>
                     <div className="text-sm font-mono font-bold text-white">{formatNumber(portfolio.lynxBalance || 0)}</div>
                   </div>
                   <div className="bg-[#141417] border border-[#27272A] rounded p-3 flex-1 text-center">
-                    <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-2">Staked</div>
+                    <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-2">{t('portfolio.staked', 'Staked')}</div>
                     <div className="text-sm font-mono font-bold text-white">{formatNumber(portfolio.stakedLynx || 0)}</div>
                   </div>
                 </div>
@@ -605,7 +605,7 @@ export function PortfolioView() {
                         : "bg-[#0D0D0E] border-[#27272A] text-[#71717A] hover:border-[#52525B]"
                     )}
                   >
-                    Stake
+                    {t('portfolio.stakeTabLabel', 'Stake')}
                   </button>
                   <button 
                     onClick={() => setStakeMode('unstake')}
@@ -616,14 +616,14 @@ export function PortfolioView() {
                         : "bg-[#0D0D0E] border-[#27272A] text-[#71717A] hover:border-[#52525B]"
                     )}
                   >
-                    Unstake
+                    {t('portfolio.unstakeTabLabel', 'Unstake')}
                   </button>
                 </div>
 
                 <div className="relative">
                   <input 
                     type="number"
-                    placeholder="Amount of LYNX..."
+                    placeholder={t('portfolio.amountOfLynx', 'Amount of LYNX...')}
                     value={stakeAmount}
                     onChange={(e) => setStakeAmount(e.target.value)}
                     className="w-full bg-[#18181B] border border-[#27272A] rounded p-3 text-sm text-white placeholder-[#52525B] focus:outline-none focus:border-[#00FFD1]/50 focus:ring-1 focus:ring-[#00FFD1]/50 transition-all font-mono"
@@ -632,7 +632,7 @@ export function PortfolioView() {
                     onClick={() => setStakeAmount(String(stakeMode === 'stake' ? portfolio.lynxBalance : portfolio.stakedLynx))}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-bold text-[#00FFD1] uppercase tracking-widest hover:underline"
                   >
-                    MAX
+                    {t('portfolio.max', 'MAX')}
                   </button>
                 </div>
               </div>
@@ -652,7 +652,7 @@ export function PortfolioView() {
                     (isStaking || !stakeAmount || isNaN(Number(stakeAmount)) || Number(stakeAmount) <= 0) && "opacity-50 cursor-not-allowed hover:scale-100 active:scale-100"
                   )}
                 >
-                  {isStaking ? <span className="flex items-center justify-center gap-2"><div className="w-3 h-3 border-2 border-black/20 border-t-black rounded-full animate-spin"/> Processing...</span> : (stakeMode === 'stake' ? 'Stake LYNX' : 'Unstake LYNX')}
+                  {isStaking ? <span className="flex items-center justify-center gap-2"><div className="w-3 h-3 border-2 border-black/20 border-t-black rounded-full animate-spin"/> {t('common.processingEllipsis', 'Processing...')}</span> : (stakeMode === 'stake' ? t('portfolio.stakeLynx', 'Stake LYNX') : t('portfolio.unstakeLynx', 'Unstake LYNX'))}
                 </button>
               </div>
             </div>

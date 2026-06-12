@@ -87,7 +87,7 @@ function walletToDb(w: WalletState) {
     losses:           w.losses,
     approvedAt:       msToDateOpt(w.approvedAt),
     approvalNonce:    w.approvalNonce ?? null,
-    connectedWallets: (w.connectedWallets ?? null) as Prisma.InputJsonValue | null,
+    connectedWallets: (w.connectedWallets ?? Prisma.JsonNull) as Prisma.InputJsonValue | typeof Prisma.JsonNull,
   };
 }
 
@@ -159,10 +159,10 @@ function proposalToDb(p: Proposal) {
     status:      p.status,
     votesYes:    p.votesYes,
     votesNo:     p.votesNo,
-    endTime:     p.endTime,
+    endTime:     new Date(p.endTime),
     category:    p.category,
     author:      p.author,
-    voters:      (p.voters ?? null) as Prisma.InputJsonValue | null,
+    voters:      (p.voters ?? Prisma.JsonNull) as Prisma.InputJsonValue | typeof Prisma.JsonNull,
   };
 }
 
@@ -183,7 +183,7 @@ function transactionToDb(id: string, t: { signature: string; wallet?: string; in
     id,
     signature: t.signature,
     wallet:    t.wallet ?? null,
-    intent:    (t.intent ?? null) as Prisma.InputJsonValue | null,
+    intent:    (t.intent ?? Prisma.JsonNull) as Prisma.InputJsonValue | typeof Prisma.JsonNull,
     timestamp: msToDate(t.timestamp),
   };
 }
@@ -198,7 +198,7 @@ function ledgerToDb(e: LedgerEntry) {
     provider:  e.provider ?? null,
     status:    e.status,
     reference: e.reference ?? null,
-    metadata:  (e.metadata ?? null) as Prisma.InputJsonValue | null,
+    metadata:  (e.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue | typeof Prisma.JsonNull,
     createdAt: msToDate(e.createdAt),
   };
 }
@@ -332,7 +332,7 @@ function dbToProposal(r: any): Proposal {
     status:      r.status,
     votesYes:    r.votesYes,
     votesNo:     r.votesNo,
-    endTime:     r.endTime,
+    endTime:     r.endTime instanceof Date ? r.endTime.toISOString() : r.endTime,
     category:    r.category,
     author:      r.author,
     voters:      (r.voters as Record<string, 'yes' | 'no'> | null) ?? undefined,
@@ -368,6 +368,16 @@ function dbToLedger(r: any): LedgerEntry {
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 export function createPersistence(): Persistence {
+  if (process.env.NODE_ENV === 'test' && process.env.STORE_DRIVER !== 'prisma-test') {
+    return {
+      driver: 'memory',
+      load: async () => undefined,
+      save: async () => undefined,
+      loadAuthUsers: async () => undefined,
+      saveAuthUsers: async () => undefined
+    };
+  }
+
   if (process.env.STORE_DRIVER !== 'prisma') {
     return {
       driver: 'memory',
@@ -440,11 +450,11 @@ export function createPersistence(): Persistence {
 
       if (treasury) {
         store.treasury = {
-          sol:                treasury.sol,
-          lynx:               treasury.lynx,
-          lynxForInitialSale: treasury.lynxForInitialSale,
-          lynxBurned:         treasury.lynxBurned,
-          protocolDuelSol:    treasury.protocolDuelSol,
+          sol:                Number(treasury.sol),
+          lynx:               Number(treasury.lynx),
+          lynxForInitialSale: Number(treasury.lynxForInitialSale),
+          lynxBurned:         Number(treasury.lynxBurned),
+          protocolDuelSol:    Number(treasury.protocolDuelSol),
         };
       }
 

@@ -91,19 +91,19 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
           pendingMessage: t('governance.stakePending', 'Staking {{amount}} LYNX...', { amount }),
           successMessage: t('governance.stakeSuccess', 'Successfully staked {{amount}} LYNX!', { amount }),
           errorMessage: t('governance.stakeFailed', 'Failed to stake LYNX'),
-          explorerUrl: (txHash) => getTxExplorerUrl(txHash)
+          explorerUrl: (txHash) => getTxExplorerUrl(txHash),
+          // suppressErrorToast: StakeModal now owns the error display (inline, above the button).
+          // Without this flag, executeTransaction AND the catch below both show a toast → 2 toasts.
+          suppressErrorToast: true
         }
       );
       const statsData = await fetchDaoStats();
       setStats(statsData);
     } catch (e: any) {
       console.error(e);
-      const msg: string = e?.message || '';
-      if (msg.includes('Insufficient LYNX') || msg.includes('insufficient_lynx')) {
-        addToast({ type: 'error', message: t('portfolio.insufficientLynxBalance', 'Not enough LYNX to complete this transaction.'), duration: 6000 });
-      } else {
-        addToast({ type: 'error', message: msg || t('governance.stakeFailed', 'Failed to stake LYNX'), duration: 6000 });
-      }
+      // Re-throw so StakeModal.handleSubmit catches it and shows the inline error.
+      // Do NOT call addToast here — StakeModal is responsible for the error display.
+      throw e;
     } finally {
       setIsPendingAct(false);
     }

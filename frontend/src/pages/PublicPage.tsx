@@ -188,15 +188,15 @@ export function PublicPage() {
                       <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6">
                         <LogIn className="w-8 h-8 text-[#00FFD1]" />
                       </div>
-                      <h3 className="text-2xl font-bold text-white mb-3">Portfolio Vacío</h3>
+                      <h3 className="text-2xl font-bold text-white mb-3">{t('common.emptyPortfolioTitle', 'Empty Portfolio')}</h3>
                       <p className="text-slate-400 mb-6">
-                        Inicia sesión para ver tu portafolio y tus posiciones en mercados.
+                        {t('common.emptyPortfolioDescription', 'Log in to see your portfolio and your positions in markets.')}
                       </p>
                       <button 
                         onClick={() => setShowLoginModal(true)}
                         className="px-6 py-3 bg-[#00FFD1] text-black font-bold rounded hover:bg-[#00E5BC] transition-all"
                       >
-                        Registrarse / Login
+                        {t('common.signUpLogin', 'Sign Up / Log In')}
                       </button>
                     </div>
                   </div>
