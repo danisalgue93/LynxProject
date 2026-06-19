@@ -86,6 +86,17 @@ export function PublicPage() {
   const closeSidebar = () => setIsSidebarOpen(false);
 
   useEffect(() => {
+    const onNavigateTab = (event: any) => {
+      const tab = event?.detail?.tab;
+      if (typeof tab === 'string') {
+        setActiveTab(tab);
+      }
+    };
+    eventBus.addEventListener('navigate:tab', onNavigateTab as any);
+    return () => eventBus.removeEventListener('navigate:tab', onNavigateTab as any);
+  }, []);
+
+  useEffect(() => {
     const refresh = async () => {
       const markets = await fetchMarkets();
       setMarketSummary({

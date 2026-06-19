@@ -255,6 +255,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
   
   const [isPending, setIsPending] = useState(false);
   const [tradeError, setTradeError] = useState<string | null>(null);
+  const [tradeErrorIsInsufficientSol, setTradeErrorIsInsufficientSol] = useState(false);
   const lynxOrderAmount = parseFloat(lynxAmount);
   const lynxOrderPrice = parseFloat(lynxPrice);
   const isLynxOrderInvalid =
@@ -340,6 +341,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
       return;
     }
     setTradeError(null);
+    setTradeErrorIsInsufficientSol(false);
     setIsPending(true);
     try {
       await executeLynxOrder(
@@ -355,9 +357,11 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
       });
     } catch (err: any) {
       console.error(err);
+      const rawMessage = typeof err === 'string' ? err : err?.message;
       const msg = getOrderbookErrorMessage(err, t('orderbook.orderFailed', 'Order failed'));
       // Show contextual inline error and a single toast for visibility
       setTradeError(msg);
+      setTradeErrorIsInsufficientSol(typeof rawMessage === 'string' && rawMessage.includes('Insufficient SOL balance'));
       addToast({ type: 'error', message: msg });
     } finally {
       setIsPending(false);
@@ -378,6 +382,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
       return;
     }
     setTradeError(null);
+    setTradeErrorIsInsufficientSol(false);
     setIsPending(true);
     try {
       await executeTrade(
@@ -393,8 +398,10 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
       });
     } catch (err: any) {
       console.error(err);
+      const rawMessage = typeof err === 'string' ? err : err?.message;
       const msg = getOrderbookErrorMessage(err, t('orderbook.orderFailed', 'Order failed'));
       setTradeError(msg);
+      setTradeErrorIsInsufficientSol(typeof rawMessage === 'string' && rawMessage.includes('Insufficient SOL balance'));
       addToast({ type: 'error', message: msg });
     } finally {
       setIsPending(false);
@@ -899,6 +906,14 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                            <div className="flex-1 text-left">{tradeError}</div>
                            <button onClick={() => setTradeError(null)} className="text-[#FFB4B4] ml-3">{t('orderbook.dismiss', 'Dismiss')}</button>
                          </div>
+                         {tradeErrorIsInsufficientSol && (
+                           <button
+                             onClick={() => eventBus.dispatchEvent(new CustomEvent('navigate:tab', { detail: { tab: 'portfolio' } }))}
+                             className="mt-3 w-full py-2 rounded bg-[#00FFD1] text-black text-xs font-black uppercase tracking-widest hover:bg-[#00E5BC] transition-colors"
+                           >
+                             {t('orderbook.depositSol', 'Deposit SOL')}
+                           </button>
+                         )}
                        </div>
                      )}
                       {isLynxSol ? (

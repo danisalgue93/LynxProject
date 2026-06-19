@@ -378,7 +378,37 @@ export function createPersistence(): Persistence {
     };
   }
 
-  if (process.env.STORE_DRIVER !== 'prisma') {
+  // Decide whether to use Prisma (persistent) or the in-memory (volatile) driver.
+  //
+  // Historically this required BOTH `DATABASE_URL` (the connection string) AND a
+  // separate `STORE_DRIVER=prisma` flag to be set, with no warning if only one was
+  // present. That is an easy trap: a real Postgres database gets provisioned and
+  // `DATABASE_URL` gets configured, but the extra `STORE_DRIVER` flag is forgotten,
+  // and the backend silently falls back to in-memory storage — meaning markets,
+  // trades, orders and duels all vanish on every restart/redeploy with zero
+  // indication anything is wrong.
+  //
+  // Now: any non-empty `DATABASE_URL` is enough to opt into the Prisma driver,
+  // unless someone explicitly opts OUT with `STORE_DRIVER=memory` (useful for local
+  // development without a database).
+  const hasDatabaseUrl = Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.trim());
+  const explicitlyMemory = process.env.STORE_DRIVER === 'memory';
+  const wantsPrisma = (process.env.STORE_DRIVER === 'prisma' || hasDatabaseUrl) && !explicitlyMemory;
+
+  if (!wantsPrisma) {
+    if (process.env.STORE_DRIVER === 'prisma' && !hasDatabaseUrl) {
+      // Someone explicitly asked for Prisma but didn't configure a database — fail
+      // loudly instead of quietly losing data.
+      throw new Error(
+        'STORE_DRIVER=prisma was set but DATABASE_URL is missing/empty. ' +
+        'Set DATABASE_URL to a real Postgres connection string, or remove STORE_DRIVER to use the in-memory driver intentionally.'
+      );
+    }
+    console.warn(
+      '⚠️  [persistence] Using the IN-MEMORY store driver. ' +
+      'All markets, trades, orders, duels and balances will be LOST on every restart or redeploy. ' +
+      'Set DATABASE_URL (and run `prisma migrate`/`prisma db push`) to enable persistent storage.'
+    );
     return {
       driver: 'memory',
       load: async () => undefined,
@@ -387,6 +417,8 @@ export function createPersistence(): Persistence {
       saveAuthUsers: async () => undefined
     };
   }
+
+  console.log('✅ [persistence] Using the PRISMA store driver — state will persist across restarts.');
 
   const prisma = new PrismaClient();
 

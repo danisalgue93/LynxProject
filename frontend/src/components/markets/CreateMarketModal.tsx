@@ -32,8 +32,10 @@ export function CreateMarketModal({ onClose, onSubmit }: CreateMarketModalProps)
 
   const submit = async () => {
     setError('');
-    const cutoffAt = cutoffLocal ? new Date(cutoffLocal).getTime() : Date.now() + 60 * 60 * 1000;
-    const resolveAt = resolveLocal ? new Date(resolveLocal).getTime() : cutoffAt + 60 * 60 * 1000;
+    // Si no se especifica, el mercado caduca en 24h (antes era 1h, lo que provocaba
+    // que los mercados de prueba "desaparecieran" sin aviso al pasar una hora).
+    const cutoffAt = cutoffLocal ? new Date(cutoffLocal).getTime() : Date.now() + 24 * 60 * 60 * 1000;
+    const resolveAt = resolveLocal ? new Date(resolveLocal).getTime() : cutoffAt + 24 * 60 * 60 * 1000;
     if (!title.trim()) {
       setError(t('createMarket.errorTitleRequired', 'The event needs a title.'));
       return;
@@ -86,10 +88,20 @@ export function CreateMarketModal({ onClose, onSubmit }: CreateMarketModalProps)
             <label className="text-[10px] text-[#71717A] uppercase font-bold tracking-widest">
               {t('createMarket.cutoff', 'Cut-off')}
               <input type="datetime-local" value={cutoffLocal} onChange={(e) => setCutoffLocal(e.target.value)} className="mt-2 w-full bg-[#18181B] border border-[#27272A] rounded p-3 text-sm text-white outline-none focus:border-[#00FFD1]" />
+              {!cutoffLocal && (
+                <p className="mt-1 normal-case font-normal tracking-normal text-[10px] text-yellow-400/80">
+                  {t('createMarket.cutoffDefaultWarning', 'Sin fecha, caduca en 24h: {{date}}', { date: new Date(Date.now() + 24 * 60 * 60 * 1000).toLocaleString() })}
+                </p>
+              )}
             </label>
             <label className="text-[10px] text-[#71717A] uppercase font-bold tracking-widest">
               {t('createMarket.resolution', 'Resolution')}
               <input type="datetime-local" value={resolveLocal} onChange={(e) => setResolveLocal(e.target.value)} className="mt-2 w-full bg-[#18181B] border border-[#27272A] rounded p-3 text-sm text-white outline-none focus:border-[#00FFD1]" />
+              {!resolveLocal && (
+                <p className="mt-1 normal-case font-normal tracking-normal text-[10px] text-yellow-400/80">
+                  {t('createMarket.resolveDefaultWarning', 'Sin fecha, se usará cut-off + 24h')}
+                </p>
+              )}
             </label>
           </div>
           <div className="grid grid-cols-2 gap-3">

@@ -23,7 +23,6 @@ import {
   Sword,
   Wallet,
 } from "lucide-react";
-import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { motion, AnimatePresence } from "motion/react";
 import { formatSOL, cn } from "@/src/lib/utils";
 import { useProgram } from "@/src/hooks/useProgram";
@@ -254,8 +253,6 @@ export function MarketDetail({
       setIsPending(false);
     }
   };
-
-  const { setVisible } = useWalletModal();
 
   const handleClaim = async () => {
     if (readOnly) {
@@ -626,7 +623,7 @@ export function MarketDetail({
                   </p>
                   <button
                     type="button"
-                    onClick={() => setVisible(true)}
+                    onClick={() => onAuthRequired?.(t("marketDetail.actionBuyMarket", "buy or sell in markets"))}
                     className="inline-flex items-center gap-2 px-4 py-2 bg-[#00FFD1] text-black text-xs font-bold uppercase rounded hover:bg-[#00E5BC] transition-colors"
                   >
                     <Wallet className="w-4 h-4" />
