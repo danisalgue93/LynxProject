@@ -759,6 +759,7 @@ app.post('/api/markets/:id/trades', tradingRateLimit, asyncRoute(async (req, res
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
 
   const result = store.executePredictionTrade({
     wallet,
@@ -822,6 +823,7 @@ app.post('/api/duels', tradingRateLimit, asyncRoute(async (req, res) => {
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
 
   const duel = store.createDuel({
     wallet,
@@ -843,6 +845,7 @@ app.post('/api/duels/:id/accept', asyncRoute(async (req, res) => {
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
   const duel = store.acceptDuel({ wallet, duelId: req.params.id, side: body.side });
   await persist();
   emit('duel:accepted', duel);
@@ -854,6 +857,7 @@ app.delete('/api/duels/:id', asyncRoute(async (req, res) => {
   const body = z.object({ wallet: z.string() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
   const result = store.cancelDuel({ wallet, duelId: req.params.id });
   await persist();
   emit('duel:cancelled', result.duel);
@@ -882,6 +886,7 @@ app.post('/api/orders', tradingRateLimit, asyncRoute(async (req, res) => {
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
 
   const result = store.placeOrder({
     wallet,
@@ -966,6 +971,7 @@ app.post('/api/ledger/withdraw', asyncRoute(async (req, res) => {
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
   const result = store.withdraw({
     wallet,
     currency: body.currency,
@@ -1000,6 +1006,7 @@ app.delete('/api/orders/:id', asyncRoute(async (req, res) => {
   const body = z.object({ wallet: z.string() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
   const result = store.cancelOrder(wallet, req.params.id);
   await persist();
   emit('orderbook:updated', store.getOrderBook('LYNX/SOL'));
@@ -1012,6 +1019,7 @@ app.post('/api/staking/stake', tradingRateLimit, asyncRoute(async (req, res) => 
   const body = z.object({ wallet: z.string(), amount: z.number().positive() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
   const portfolio = store.stake(wallet, body.amount);
   await persist();
   emitPortfolioUpdated(wallet, portfolio);
@@ -1023,6 +1031,7 @@ app.post('/api/staking/unstake', tradingRateLimit, asyncRoute(async (req, res) =
   const body = z.object({ wallet: z.string(), amount: z.number().positive() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
   const portfolio = store.unstake(wallet, body.amount);
   await persist();
   emitPortfolioUpdated(wallet, portfolio);
@@ -1034,6 +1043,7 @@ app.post('/api/staking/claim', tradingRateLimit, asyncRoute(async (req, res) => 
   const body = z.object({ wallet: z.string() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
   const result = store.claimRewards(wallet);
   await persist();
   emitPortfolioUpdated(wallet, result.portfolio);

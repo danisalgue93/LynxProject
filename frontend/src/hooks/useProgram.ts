@@ -189,6 +189,7 @@ export function useProgram() {
   // Fetch user portfolio
   const fetchPortfolio = useCallback(async (): Promise<Portfolio> => {
     setLoadingCount(c => c + 1);
+    setError(null);
     try {
       const currentWallet = requireWallet();
       return await apiFetch<Portfolio>(`/api/portfolio?wallet=${encodeURIComponent(currentWallet)}`);
@@ -205,7 +206,7 @@ export function useProgram() {
     } finally {
       setLoadingCount(c => Math.max(0, c - 1));
     }
-  }, [requireWallet]);
+  }, [requireWallet, setError]);
 
   // Fetch DAO proposals
   const fetchProposals = useCallback(async (): Promise<Proposal[]> => {

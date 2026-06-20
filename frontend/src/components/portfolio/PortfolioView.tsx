@@ -308,11 +308,11 @@ export function PortfolioView() {
                  <div className="flex gap-4">
                     <div className="bg-[#141417] p-4 rounded border border-[#27272A] flex-1">
                       <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-2">{t('portfolio.solBalance', 'SOL Balance')}</div>
-                      <div className="font-mono font-bold text-[#00FFD1]">{formatSOL(portfolio.solBalance)}</div>
+                      <div className="font-mono font-bold text-[#00FFD1]">{formatSOL(portfolio.solBalance || 0)}</div>
                     </div>
                     <div className="bg-[#141417] p-4 rounded border border-[#27272A] flex-1">
                       <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-2">{t('portfolio.lynxBalance', 'LYNX Balance')}</div>
-                      <div className="font-mono font-bold text-[#9945FF]">{formatNumber(portfolio.lynxBalance)}</div>
+                      <div className="font-mono font-bold text-[#9945FF]">{formatNumber(portfolio.lynxBalance || 0)}</div>
                     </div>
                  </div>
                  <div className="bg-[#141417] p-4 rounded border border-[#27272A]">
@@ -381,7 +381,7 @@ export function PortfolioView() {
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 md:gap-6">
             <div className="lg:col-span-1 glass-card rounded p-4 md:p-6 border border-[#1F1F23] bg-[#0D0D0E]">
               <div className="text-[9px] md:text-[10px] uppercase font-black text-[#71717A] tracking-widest mb-3 md:mb-4">{t('portfolio.totalAssets', 'Total Assets')}</div>
-              <div className="text-2xl md:text-3xl font-mono font-bold text-white mb-2 tracking-tighter">{formatSOL(portfolio.solBalance)}</div>
+              <div className="text-2xl md:text-3xl font-mono font-bold text-white mb-2 tracking-tighter">{formatSOL(portfolio.solBalance || 0)}</div>
               <div className="text-[9px] md:text-[10px] text-[#00FFD1] flex items-center gap-1 font-bold uppercase tracking-wider">
                 <TrendingUp className="w-3 h-3" />
                 {t('portfolio.activeVault', 'Active Vault')}
@@ -390,7 +390,7 @@ export function PortfolioView() {
 
             <div className="lg:col-span-1 glass-card rounded p-4 md:p-6 border border-[#27272A] bg-[#141417]">
               <div className="text-[9px] md:text-[10px] uppercase font-black text-[#A1A1AA] tracking-widest mb-3 md:mb-4">{t('portfolio.lynxHolding', '$LYNX Holding')}</div>
-              <div className="text-2xl md:text-3xl font-mono font-bold text-white mb-2 tracking-tighter">{formatNumber(portfolio.lynxBalance)}</div>
+              <div className="text-2xl md:text-3xl font-mono font-bold text-white mb-2 tracking-tighter">{formatNumber(portfolio.lynxBalance || 0)}</div>
               <div className="text-[9px] md:text-[10px] text-[#71717A] flex items-center gap-1 font-bold uppercase tracking-widest">
                 {t('portfolio.yieldWeight', 'Yield Weight: High')}
               </div>

@@ -240,8 +240,8 @@ function dbToPosition(r: any): UserPosition {
     marketId:   r.marketId,
     wallet:     r.wallet,
     position:   r.position,
-    amount:     r.amount,
-    entryPrice: r.entryPrice,
+    amount:     Number(r.amount),
+    entryPrice: Number(r.entryPrice),
     currency:   r.currency,
     claimed:    r.claimed,
     createdAt:  dateToMs(r.createdAt),
@@ -272,15 +272,15 @@ function dbToOrder(r: any): Order {
     owner:          r.owner,
     side:           r.side,
     position:       r.position ?? undefined,
-    amount:         r.amount,
-    remaining:      r.remaining,
-    price:          r.price,
+    amount:         Number(r.amount),
+    remaining:      Number(r.remaining),
+    price:          Number(r.price),
     currency:       r.currency,
     status:         r.status,
     createdAt:      dateToMs(r.createdAt),
     lockedCurrency: r.lockedCurrency ?? undefined,
-    lockedAmount:   r.lockedAmount ?? undefined,
-    spentAmount:    r.spentAmount ?? undefined,
+    lockedAmount:   r.lockedAmount == null ? undefined : Number(r.lockedAmount),
+    spentAmount:    r.spentAmount == null ? undefined : Number(r.spentAmount),
   };
 }
 
@@ -293,9 +293,9 @@ function dbToTrade(r: any): Trade {
     taker:     r.taker,
     side:      r.side,
     position:  r.position ?? undefined,
-    amount:    r.amount,
-    price:     r.price,
-    feeAmount: r.feeAmount,
+    amount:    Number(r.amount),
+    price:     Number(r.price),
+    feeAmount: Number(r.feeAmount),
     currency:  r.currency,
     createdAt: dateToMs(r.createdAt),
   };
@@ -307,9 +307,9 @@ function dbToDuel(r: any): Duel {
     parentMarketId: r.parentMarketId,
     creator:        r.creator,
     rival:          r.rival ?? undefined,
-    amount:         r.amount,
-    grossAmount:    r.grossAmount ?? undefined,
-    burnedAmount:   r.burnedAmount ?? undefined,
+    amount:         Number(r.amount),
+    grossAmount:    r.grossAmount == null ? undefined : Number(r.grossAmount),
+    burnedAmount:   r.burnedAmount == null ? undefined : Number(r.burnedAmount),
     currency:       r.currency,
     status:         r.status,
     positionA:      r.positionA,
@@ -330,8 +330,8 @@ function dbToProposal(r: any): Proposal {
     title:       r.title,
     description: r.description,
     status:      r.status,
-    votesYes:    r.votesYes,
-    votesNo:     r.votesNo,
+    votesYes:    Number(r.votesYes),
+    votesNo:     Number(r.votesNo),
     endTime:     r.endTime instanceof Date ? r.endTime.toISOString() : r.endTime,
     category:    r.category,
     author:      r.author,
@@ -363,6 +363,38 @@ function dbToLedger(r: any): LedgerEntry {
     metadata:  (r.metadata as Record<string, unknown> | null) ?? undefined,
     createdAt: dateToMs(r.createdAt),
   };
+}
+
+// ── Incremental-save diffing ────────────────────────────────────────────────
+// Compares the current set of DB-shaped rows against a snapshot of what was
+// last written, and reports only the rows that are new/changed plus the keys
+// that disappeared (so callers can upsert the former and delete the latter,
+// instead of rewriting every row on every save()). `previousSnapshot` is
+// mutated in place to become the new baseline for the next call.
+
+function diffRows<T>(
+  current: Map<string, T>,
+  previousSnapshot: Map<string, string>
+): { changed: T[]; deletedKeys: string[] } {
+  const changed: T[] = [];
+  const seen = new Set<string>();
+
+  for (const [key, row] of current.entries()) {
+    seen.add(key);
+    const serialized = JSON.stringify(row);
+    if (previousSnapshot.get(key) !== serialized) {
+      changed.push(row);
+      previousSnapshot.set(key, serialized);
+    }
+  }
+
+  const deletedKeys: string[] = [];
+  for (const key of previousSnapshot.keys()) {
+    if (!seen.has(key)) deletedKeys.push(key);
+  }
+  for (const key of deletedKeys) previousSnapshot.delete(key);
+
+  return { changed, deletedKeys };
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────
@@ -421,6 +453,20 @@ export function createPersistence(): Persistence {
   console.log('✅ [persistence] Using the PRISMA store driver — state will persist across restarts.');
 
   const prisma = new PrismaClient();
+
+  // Snapshots of what was last written to the DB, keyed the same way as the
+  // corresponding store Map (or by notification/transaction id). Used by
+  // save() to write only what changed instead of rewriting every table.
+  const lastMarkets = new Map<string, string>();
+  const lastPositions = new Map<string, string>();
+  const lastWallets = new Map<string, string>();
+  const lastOrders = new Map<string, string>();
+  const lastTrades = new Map<string, string>();
+  const lastDuels = new Map<string, string>();
+  const lastProposals = new Map<string, string>();
+  const lastNotifications = new Map<string, string>();
+  const lastTransactions = new Map<string, string>();
+  const lastLedger = new Map<string, string>();
 
   return {
     driver: 'prisma',
@@ -495,75 +541,136 @@ export function createPersistence(): Persistence {
     },
 
     async save(store) {
-      // Flatten notifications map → array de filas
-      const notifRows: ReturnType<typeof notificationToDb>[] = [];
+      // Build the current DB-shaped rows for each table, keyed the same way
+      // as their primary key, then diff against what was last written so we
+      // only upsert new/changed rows and delete the ones that disappeared —
+      // instead of deleting and recreating all 10 tables on every save().
+      const marketRows = new Map<string, ReturnType<typeof marketToDb>>();
+      for (const m of store.markets.values()) marketRows.set(m.id, marketToDb(m));
+
+      const positionRows = new Map<string, ReturnType<typeof positionToDb>>();
+      for (const p of store.positions.values()) positionRows.set(p.id, positionToDb(p));
+
+      const walletRows = new Map<string, ReturnType<typeof walletToDb>>();
+      for (const w of store.wallets.values()) walletRows.set(w.wallet, walletToDb(w));
+
+      const orderRows = new Map<string, ReturnType<typeof orderToDb>>();
+      for (const o of store.orders.values()) orderRows.set(o.id, orderToDb(o));
+
+      const tradeRows = new Map<string, ReturnType<typeof tradeToDb>>();
+      for (const t of store.trades.values()) tradeRows.set(t.id, tradeToDb(t));
+
+      const duelRows = new Map<string, ReturnType<typeof duelToDb>>();
+      for (const d of store.duels.values()) duelRows.set(d.id, duelToDb(d));
+
+      const proposalRows = new Map<string, ReturnType<typeof proposalToDb>>();
+      for (const p of store.proposals.values()) proposalRows.set(p.id, proposalToDb(p));
+
+      // Notifications: flatten map → rows, keyed by notification id
+      const notificationRows = new Map<string, ReturnType<typeof notificationToDb>>();
       for (const [wallet, notifications] of store.notifications.entries()) {
-        for (const n of notifications) {
-          notifRows.push(notificationToDb(wallet, n));
-        }
+        for (const n of notifications) notificationRows.set(n.id, notificationToDb(wallet, n));
       }
 
+      const transactionRows = new Map<string, ReturnType<typeof transactionToDb>>();
+      for (const [id, t] of store.transactions.entries()) transactionRows.set(id, transactionToDb(id, t));
+
+      const ledgerRows = new Map<string, ReturnType<typeof ledgerToDb>>();
+      for (const e of store.ledger.values()) ledgerRows.set(e.id, ledgerToDb(e));
+
+      const markets = diffRows(marketRows, lastMarkets);
+      const positions = diffRows(positionRows, lastPositions);
+      const wallets = diffRows(walletRows, lastWallets);
+      const orders = diffRows(orderRows, lastOrders);
+      const trades = diffRows(tradeRows, lastTrades);
+      const duels = diffRows(duelRows, lastDuels);
+      const proposals = diffRows(proposalRows, lastProposals);
+      const notifications = diffRows(notificationRows, lastNotifications);
+      const transactions = diffRows(transactionRows, lastTransactions);
+      const ledger = diffRows(ledgerRows, lastLedger);
+
       await prisma.$transaction(async (tx) => {
-        // Markets
-        await tx.market.deleteMany();
-        if (store.markets.size > 0) {
-          await tx.market.createMany({ data: [...store.markets.values()].map(marketToDb) });
+        // Markets (upserted first: positions/orders/trades/duels reference them)
+        for (const m of markets.changed) {
+          await tx.market.upsert({ where: { id: m.id }, create: m, update: m });
         }
 
         // UserPositions
-        await tx.userPosition.deleteMany();
-        if (store.positions.size > 0) {
-          await tx.userPosition.createMany({ data: [...store.positions.values()].map(positionToDb) });
+        for (const p of positions.changed) {
+          await tx.userPosition.upsert({ where: { id: p.id }, create: p, update: p });
         }
 
         // WalletStates
-        await tx.walletState.deleteMany();
-        if (store.wallets.size > 0) {
-          await tx.walletState.createMany({ data: [...store.wallets.values()].map(walletToDb) });
+        for (const w of wallets.changed) {
+          await tx.walletState.upsert({ where: { wallet: w.wallet }, create: w, update: w });
         }
 
         // Orders
-        await tx.order.deleteMany();
-        if (store.orders.size > 0) {
-          await tx.order.createMany({ data: [...store.orders.values()].map(orderToDb) });
+        for (const o of orders.changed) {
+          await tx.order.upsert({ where: { id: o.id }, create: o, update: o });
         }
 
         // Trades
-        await tx.trade.deleteMany();
-        if (store.trades.size > 0) {
-          await tx.trade.createMany({ data: [...store.trades.values()].map(tradeToDb) });
+        for (const t of trades.changed) {
+          await tx.trade.upsert({ where: { id: t.id }, create: t, update: t });
         }
 
         // Duels
-        await tx.duel.deleteMany();
-        if (store.duels.size > 0) {
-          await tx.duel.createMany({ data: [...store.duels.values()].map(duelToDb) });
+        for (const d of duels.changed) {
+          await tx.duel.upsert({ where: { id: d.id }, create: d, update: d });
         }
 
         // Proposals
-        await tx.proposal.deleteMany();
-        if (store.proposals.size > 0) {
-          await tx.proposal.createMany({ data: [...store.proposals.values()].map(proposalToDb) });
+        for (const p of proposals.changed) {
+          await tx.proposal.upsert({ where: { id: p.id }, create: p, update: p });
         }
 
         // Notifications
-        await tx.notification.deleteMany();
-        if (notifRows.length > 0) {
-          await tx.notification.createMany({ data: notifRows });
+        for (const n of notifications.changed) {
+          await tx.notification.upsert({ where: { id: n.id }, create: n, update: n });
         }
 
         // Transactions
-        await tx.transaction.deleteMany();
-        if (store.transactions.size > 0) {
-          await tx.transaction.createMany({
-            data: [...store.transactions.entries()].map(([id, t]) => transactionToDb(id, t))
-          });
+        for (const t of transactions.changed) {
+          await tx.transaction.upsert({ where: { id: t.id }, create: t, update: t });
         }
 
         // LedgerEntries
-        await tx.ledgerEntry.deleteMany();
-        if (store.ledger.size > 0) {
-          await tx.ledgerEntry.createMany({ data: [...store.ledger.values()].map(ledgerToDb) });
+        for (const e of ledger.changed) {
+          await tx.ledgerEntry.upsert({ where: { id: e.id }, create: e, update: e });
+        }
+
+        // Deletions, in reverse-dependency order (children before the
+        // markets/wallets they reference).
+        if (positions.deletedKeys.length > 0) {
+          await tx.userPosition.deleteMany({ where: { id: { in: positions.deletedKeys } } });
+        }
+        if (orders.deletedKeys.length > 0) {
+          await tx.order.deleteMany({ where: { id: { in: orders.deletedKeys } } });
+        }
+        if (trades.deletedKeys.length > 0) {
+          await tx.trade.deleteMany({ where: { id: { in: trades.deletedKeys } } });
+        }
+        if (duels.deletedKeys.length > 0) {
+          await tx.duel.deleteMany({ where: { id: { in: duels.deletedKeys } } });
+        }
+        if (markets.deletedKeys.length > 0) {
+          await tx.market.deleteMany({ where: { id: { in: markets.deletedKeys } } });
+        }
+        if (wallets.deletedKeys.length > 0) {
+          await tx.walletState.deleteMany({ where: { wallet: { in: wallets.deletedKeys } } });
+        }
+        if (proposals.deletedKeys.length > 0) {
+          await tx.proposal.deleteMany({ where: { id: { in: proposals.deletedKeys } } });
+        }
+        if (notifications.deletedKeys.length > 0) {
+          await tx.notification.deleteMany({ where: { id: { in: notifications.deletedKeys } } });
+        }
+        if (transactions.deletedKeys.length > 0) {
+          await tx.transaction.deleteMany({ where: { id: { in: transactions.deletedKeys } } });
+        }
+        if (ledger.deletedKeys.length > 0) {
+          await tx.ledgerEntry.deleteMany({ where: { id: { in: ledger.deletedKeys } } });
         }
 
         // Treasury (singleton upsert)
