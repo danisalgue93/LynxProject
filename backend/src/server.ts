@@ -9,7 +9,8 @@ import { Server } from 'socket.io';
 import { z, ZodError } from 'zod';
 import nacl from 'tweetnacl';
 import bs58 from 'bs58';
-import { DEV_WALLET } from './economy.js';
+import { Connection, PublicKey, LAMPORTS_PER_SOL, Keypair, SystemProgram, Transaction, sendAndConfirmTransaction } from '@solana/web3.js';
+import { DEV_WALLET, TREASURY_WALLET, SOLANA_RPC_URL } from './economy.js';
 import { createPersistence } from './persistence.js';
 import { LynxState } from './state.js';
 import type { Currency, OrderSide, Position } from './types.js';
@@ -360,6 +361,173 @@ function requireSignedIntent(req: express.Request, res: express.Response) {
     return false;
   }
   return true;
+}
+
+let solanaConnection: Connection | null = null;
+function getSolanaConnection() {
+  if (!solanaConnection) {
+    solanaConnection = new Connection(SOLANA_RPC_URL, 'confirmed');
+  }
+  return solanaConnection;
+}
+
+// Lamports tolerance to account for rounding when converting a decimal SOL
+// amount to lamports. Deliberately small (well under 0.000001 SOL).
+const LAMPORTS_TOLERANCE = 10;
+
+/**
+ * Verifies a claimed SOL deposit against the Solana blockchain before any
+ * balance is credited. This is the server-side check that was previously
+ * missing entirely: without it, any authenticated+approved account could
+ * call /api/ledger/deposit with an arbitrary amount and have it accepted
+ * as real money with no on-chain transaction ever happening.
+ *
+ * Verifies:
+ *  - the transaction exists and is confirmed on-chain
+ *  - it did not fail
+ *  - the signature has not already been used to credit a deposit (replay)
+ *  - the destination account is the protocol treasury wallet
+ *  - the source account is the wallet claiming the deposit
+ *  - the SOL amount that actually moved matches the claimed amount
+ */
+async function verifyOnChainSolDeposit(params: {
+  signature: string;
+  fromWallet: string;
+  amountSol: number;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { signature, fromWallet, amountSol } = params;
+
+  if (store.hasTransaction(signature)) {
+    return { ok: false, error: 'This transaction signature has already been used' };
+  }
+
+  let treasuryPubkey: PublicKey;
+  let senderPubkey: PublicKey;
+  try {
+    treasuryPubkey = new PublicKey(TREASURY_WALLET);
+    senderPubkey = new PublicKey(fromWallet);
+  } catch {
+    return { ok: false, error: 'Invalid treasury or sender wallet address' };
+  }
+
+  let tx;
+  try {
+    tx = await getSolanaConnection().getTransaction(signature, {
+      commitment: 'confirmed',
+      maxSupportedTransactionVersion: 0
+    });
+  } catch (err: any) {
+    return { ok: false, error: `Unable to verify transaction on-chain: ${err?.message || 'RPC error'}` };
+  }
+
+  if (!tx) {
+    return { ok: false, error: 'Transaction not found or not yet confirmed on-chain' };
+  }
+  if (tx.meta?.err) {
+    return { ok: false, error: 'On-chain transaction failed' };
+  }
+
+  const accountKeys = tx.transaction.message.getAccountKeys
+    ? tx.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses }).staticAccountKeys
+    : (tx.transaction.message as any).accountKeys;
+  const keys = accountKeys.map((k: PublicKey) => k.toBase58());
+
+  const fromIndex = keys.indexOf(senderPubkey.toBase58());
+  const toIndex = keys.indexOf(treasuryPubkey.toBase58());
+  if (fromIndex === -1 || toIndex === -1) {
+    return { ok: false, error: 'Transaction does not transfer between the claimed wallet and the treasury' };
+  }
+
+  const preBalances = tx.meta?.preBalances ?? [];
+  const postBalances = tx.meta?.postBalances ?? [];
+  const treasuryDelta = (postBalances[toIndex] ?? 0) - (preBalances[toIndex] ?? 0);
+  const senderDelta = (preBalances[fromIndex] ?? 0) - (postBalances[fromIndex] ?? 0);
+
+  const expectedLamports = Math.round(amountSol * LAMPORTS_PER_SOL);
+  if (treasuryDelta <= 0 || treasuryDelta + LAMPORTS_TOLERANCE < expectedLamports) {
+    return { ok: false, error: 'On-chain transfer amount does not match the requested deposit amount' };
+  }
+  if (senderDelta < treasuryDelta) {
+    return { ok: false, error: 'Sender balance change does not account for the treasury deposit' };
+  }
+
+  return { ok: true };
+}
+
+let treasuryKeypair: Keypair | null = null;
+function getTreasuryKeypair(): Keypair {
+  if (!treasuryKeypair) {
+    const secret = process.env.TREASURY_SECRET_KEY;
+    if (!secret) {
+      throw new Error('TREASURY_SECRET_KEY must be set to send on-chain SOL withdrawals.');
+    }
+    treasuryKeypair = Keypair.fromSecretKey(bs58.decode(secret));
+  }
+  return treasuryKeypair;
+}
+
+/**
+ * Managed accounts (email/Magic logins) are identified internally by a
+ * `MAGIC:<digest>` string (see managedWalletForUser), which is not a real
+ * Solana address and cannot receive an on-chain transfer. To let these
+ * accounts withdraw real SOL, we deterministically derive a real Solana
+ * keypair from that same managed id using a server-only seed, so the same
+ * managed id always resolves to the same on-chain address.
+ */
+function deriveManagedWalletKeypair(managedId: string): Keypair {
+  const seed = process.env.MANAGED_WALLET_SEED;
+  if (!seed) {
+    throw new Error('MANAGED_WALLET_SEED must be set to send on-chain SOL withdrawals for managed accounts.');
+  }
+  const seedBytes = createHash('sha256').update(`${seed}:${managedId}`).digest();
+  return Keypair.fromSeed(seedBytes);
+}
+
+/**
+ * Sends a real on-chain SOL transfer from the treasury wallet to the
+ * withdrawing user's wallet and waits for confirmation. This is the
+ * server-side action that was previously missing entirely: without it,
+ * /api/ledger/withdraw only decremented the internal balance and marked
+ * the ledger entry COMPLETED, with no SOL ever leaving the treasury.
+ */
+async function sendOnChainSolWithdrawal(params: {
+  toWallet: string;
+  amountSol: number;
+}): Promise<{ ok: true; signature: string } | { ok: false; error: string }> {
+  const { toWallet, amountSol } = params;
+
+  let recipientPubkey: PublicKey;
+  try {
+    recipientPubkey = toWallet.startsWith('MAGIC:')
+      ? deriveManagedWalletKeypair(toWallet).publicKey
+      : new PublicKey(toWallet);
+  } catch (err: any) {
+    return { ok: false, error: toWallet.startsWith('MAGIC:') ? (err?.message || 'Managed wallet is not configured for on-chain withdrawals') : 'SOL withdrawals require a connected on-chain wallet address' };
+  }
+
+  let payer: Keypair;
+  try {
+    payer = getTreasuryKeypair();
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Treasury wallet is not configured' };
+  }
+
+  const lamports = Math.round(amountSol * LAMPORTS_PER_SOL);
+  const connection = getSolanaConnection();
+  const tx = new Transaction().add(
+    SystemProgram.transfer({
+      fromPubkey: payer.publicKey,
+      toPubkey: recipientPubkey,
+      lamports
+    })
+  );
+
+  try {
+    const signature = await sendAndConfirmTransaction(connection, tx, [payer], { commitment: 'confirmed' });
+    return { ok: true, signature };
+  } catch (err: any) {
+    return { ok: false, error: `Unable to send on-chain withdrawal: ${err?.message || 'RPC error'}` };
+  }
 }
 
 function requireApprovedWallet(res: express.Response, wallet: string) {
@@ -941,13 +1109,42 @@ app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
     currency: currencySchema,
     amount: z.number().positive(),
     provider: z.enum(['CARD', 'EXTERNAL_WALLET', 'INTERNAL']).default('INTERNAL'),
-    reference: z.string().optional()
+    reference: z.string().optional(),
+    signature: z.string().optional()
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet) return;
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
   const isTestTreasuryFunding = process.env.NODE_ENV === 'test' && (wallet === (process.env.TREASURY_WALLET || 'LYNX_DEV_TREASURY'));
   if (!isTestTreasuryFunding && !requireApprovedWallet(res, wallet)) return;
+
+  if (process.env.NODE_ENV !== 'test') {
+    if (body.provider === 'EXTERNAL_WALLET') {
+      // Real on-chain deposits must carry the confirmed transaction signature
+      // and are verified against the Solana blockchain before crediting.
+      if (!requireSignedIntent(req, res)) return;
+      if (body.currency !== 'SOL') {
+        res.status(400).json({ error: 'Only SOL deposits can currently be verified on-chain' });
+        return;
+      }
+      const verification = await verifyOnChainSolDeposit({
+        signature: body.signature!,
+        fromWallet: wallet,
+        amountSol: body.amount
+      });
+      if (!verification.ok) {
+        res.status(400).json({ error: verification.error });
+        return;
+      }
+    } else {
+      // INTERNAL / CARD deposits have no on-chain proof attached to them, so
+      // they must never be reachable by a regular authenticated user — only
+      // trusted server-side flows (e.g. an admin grant or a verified payment
+      // webhook) may credit a balance this way.
+      if (!requireAdmin(req, res)) return;
+    }
+  }
+
   const result = store.deposit({
     wallet,
     currency: body.currency,
@@ -955,6 +1152,9 @@ app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
     provider: body.provider,
     reference: body.reference
   });
+  if (body.signature) {
+    store.addTransaction({ signature: body.signature, wallet, intent: { type: 'DEPOSIT', currency: body.currency, amount: body.amount, provider: body.provider } });
+  }
   await persist();
   emit('ledger:deposit', { wallet, ledgerEntry: result.ledgerEntry });
   emitPortfolioUpdated(wallet, result.portfolio);
@@ -972,16 +1172,35 @@ app.post('/api/ledger/withdraw', asyncRoute(async (req, res) => {
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
+  let withdrawalSignature: string | undefined;
+  if (process.env.NODE_ENV !== 'test' && body.currency === 'SOL') {
+    // Real SOL withdrawals must actually leave the treasury on-chain before
+    // the internal balance is debited — without this, the withdrawal was
+    // only ever an internal bookkeeping entry with no funds ever sent.
+    if (store.getWallet(wallet).solBalance < body.amount) {
+      res.status(400).json({ error: 'Insufficient SOL balance' });
+      return;
+    }
+    const onChainResult = await sendOnChainSolWithdrawal({ toWallet: wallet, amountSol: body.amount });
+    if (!onChainResult.ok) {
+      res.status(400).json({ error: onChainResult.error });
+      return;
+    }
+    withdrawalSignature = onChainResult.signature;
+  }
   const result = store.withdraw({
     wallet,
     currency: body.currency,
     amount: body.amount,
     reference: body.reference
   });
+  if (withdrawalSignature) {
+    store.addTransaction({ signature: withdrawalSignature, wallet, intent: { type: 'WITHDRAWAL', currency: body.currency, amount: body.amount } });
+  }
   await persist();
-  emit('ledger:withdrawal', { wallet, ledgerEntry: result.ledgerEntry });
+  emit('ledger:withdrawal', { wallet, ledgerEntry: result.ledgerEntry, signature: withdrawalSignature });
   emitPortfolioUpdated(wallet, result.portfolio);
-  res.json(result);
+  res.json({ ...result, signature: withdrawalSignature });
 }));
 
 app.get('/api/positions', (req: any, res) => {
@@ -995,6 +1214,7 @@ app.post('/api/positions/:id/claim', asyncRoute(async (req, res) => {
   const body = z.object({ wallet: z.string() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
   const result = store.claimPosition(wallet, req.params.id);
   await persist();
   emitPortfolioUpdated(wallet, result.portfolio);
@@ -1082,6 +1302,7 @@ app.post('/api/proposals/:id/vote', asyncRoute(async (req, res) => {
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
   const proposal = store.castVote({ wallet, proposalId: req.params.id, voteType: body.voteType });
   await persist();
   emit('dao:proposal-updated', proposal);

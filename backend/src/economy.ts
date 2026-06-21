@@ -1,3 +1,8 @@
+// EVENT_PROTOCOL_FEE (10%) is the aggregate protocol take on resolved SOL
+// markets, equal to STAKER_REWARD_FEE + TREASURY_EVENT_FEE below. It is kept
+// here for reference/UI display only — it must never be applied as its own
+// separate deduction, since the staker/treasury split already accounts for
+// the full 10%.
 export const EVENT_PROTOCOL_FEE = 0.1;
 export const STAKER_REWARD_FEE = 0.05;
 export const TREASURY_EVENT_FEE = 0.05;
@@ -16,6 +21,8 @@ if (process.env.NODE_ENV === 'production' && !process.env.TREASURY_WALLET) {
 }
 
 export const TREASURY_WALLET = process.env.TREASURY_WALLET || 'LYNX_DEV_TREASURY';
+
+export const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
 
 export function roundAmount(value: number) {
   return Math.round((value + Number.EPSILON) * 1_000_000_000) / 1_000_000_000;

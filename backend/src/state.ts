@@ -1,5 +1,4 @@
 import {
-  EVENT_PROTOCOL_FEE,
   GLOBAL_TRADE_FEE,
   LYNX_EMISSION_PER_SOL,
   LYNX_EVENT_BURN,
@@ -672,7 +671,12 @@ export class LynxState {
     market.resolvedAt = nowMs();
 
     if (market.currency === 'SOL') {
-      const protocolFee = roundAmount(market.poolAmount * EVENT_PROTOCOL_FEE);
+      // Total protocol take on resolution is STAKER_REWARD_FEE + TREASURY_EVENT_FEE
+      // (10%), matching exactly what claimPosition() deducts from the pool.
+      // A separate EVENT_PROTOCOL_FEE was previously computed here too, but it
+      // was never credited anywhere — dead code left over from an earlier
+      // refactor. Removed: crediting it would mint SOL out of thin air, since
+      // claimPosition only ever deducts the staker+treasury 10%, not 20%.
       const stakerFee = roundAmount(market.poolAmount * STAKER_REWARD_FEE);
       const treasuryFee = roundAmount(market.poolAmount * TREASURY_EVENT_FEE);
       this.treasury.sol = roundAmount(this.treasury.sol + treasuryFee);
@@ -833,6 +837,10 @@ export class LynxState {
     if (this.transactions.has(tx.signature)) return;
     const ts = Date.now();
     this.transactions.set(tx.signature, { signature: tx.signature, wallet: tx.wallet, intent: tx.intent, timestamp: ts });
+  }
+
+  hasTransaction(signature: string) {
+    return this.transactions.has(signature);
   }
 
   getUserPositions(marketId: string) {

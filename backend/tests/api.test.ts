@@ -230,6 +230,40 @@ describe('Lynx backend API', () => {
     expect(portfolio.body.solBalance).toBe(1);
   });
 
+  it('refuses to credit a deposit outside test mode without on-chain proof (no infinite money)', async () => {
+    const registerResponse = await request(app)
+      .post('/auth/register')
+      .send({ email: `exploit-user-${Date.now()}@lynx.local`, password: 'password123', displayName: 'exploit-user' })
+      .expect(201);
+    const userToken = registerResponse.body.token as string;
+    const wallet = registerResponse.body.user.managedWalletAddress as string;
+    expect(wallet).toBeTruthy();
+    await approveWallet(userToken, wallet);
+
+    const originalEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      // EXTERNAL_WALLET claims a real deposit but supplies no transaction signature.
+      await request(app)
+        .post('/api/ledger/deposit')
+        .set(auth(userToken))
+        .send({ wallet, currency: 'SOL', amount: 999999, provider: 'EXTERNAL_WALLET' })
+        .expect(400);
+
+      // INTERNAL provider has no on-chain proof at all and must be admin-only.
+      await request(app)
+        .post('/api/ledger/deposit')
+        .set(auth(userToken))
+        .send({ wallet, currency: 'SOL', amount: 999999, provider: 'INTERNAL' })
+        .expect(403);
+
+      const portfolio = await request(app).get(`/api/portfolio?wallet=${wallet}`).set(auth(userToken)).expect(200);
+      expect(portfolio.body.solBalance).not.toBe(999999);
+    } finally {
+      process.env.NODE_ENV = originalEnv;
+    }
+  });
+
   it('locks and refunds prediction limit orders without minting balance', async () => {
     const adminToken = await loginAdmin();
     const userToken = await registerUser('limit-user');
@@ -246,8 +280,9 @@ describe('Lynx backend API', () => {
     expect(portfolio.body.solBalance).toBe(0);
 
     await request(app)
-      .delete(`/api/orders/${created.body.order.id}?wallet=LIMIT_TRADER`)
+      .delete(`/api/orders/${created.body.order.id}`)
       .set(auth(userToken))
+      .send({ wallet: 'LIMIT_TRADER' })
       .expect(200);
 
     portfolio = await request(app).get('/api/portfolio?wallet=LIMIT_TRADER').expect(200);
@@ -320,7 +355,12 @@ describe('Lynx backend API', () => {
 
   it('rejects repeated DAO votes from the same approved wallet', async () => {
     const userToken = await registerUser('dao-voter');
-    await approveWallet(userToken, 'VOTER');
+    await approveAndFund(userToken, 'VOTER', { LYNX: 50 });
+    await request(app)
+      .post('/api/staking/stake')
+      .set(auth(userToken))
+      .send({ wallet: 'VOTER', amount: 50 })
+      .expect(200);
     const proposal = await request(app)
       .post('/api/proposals')
       .set(auth(userToken))
@@ -338,5 +378,134 @@ describe('Lynx backend API', () => {
       .set(auth(userToken))
       .send({ wallet: 'VOTER', voteType: 'no' })
       .expect(400);
+  });
+
+  it('refuses to let a user vote using a wallet they do not own', async () => {
+    const victimToken = await registerUser('dao-victim');
+    await approveAndFund(victimToken, 'VICTIM_VOTER', { LYNX: 50 });
+    await request(app)
+      .post('/api/staking/stake')
+      .set(auth(victimToken))
+      .send({ wallet: 'VICTIM_VOTER', amount: 50 })
+      .expect(200);
+
+    const attackerRegister = await request(app)
+      .post('/auth/register')
+      .send({ email: `dao-attacker-${Date.now()}@lynx.local`, password: 'password123', displayName: 'dao-attacker' })
+      .expect(201);
+    const attackerToken = attackerRegister.body.token as string;
+
+    const adminToken = await loginAdmin();
+    const proposal = await request(app)
+      .post('/api/proposals')
+      .set(auth(adminToken))
+      .send({ title: 'Hijack test', description: 'Test proposal', category: 'protocol' })
+      .expect(201);
+
+    const originalEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      // The attacker is authenticated as themselves but tries to cast a vote
+      // using the victim's wallet address — this must be rejected.
+      await request(app)
+        .post(`/api/proposals/${proposal.body.id}/vote`)
+        .set(auth(attackerToken))
+        .send({ wallet: 'VICTIM_VOTER', voteType: 'yes' })
+        .expect(403);
+    } finally {
+      process.env.NODE_ENV = originalEnv;
+    }
+
+    // The victim must still be free to cast their own vote afterwards.
+    await request(app)
+      .post(`/api/proposals/${proposal.body.id}/vote`)
+      .set(auth(victimToken))
+      .send({ wallet: 'VICTIM_VOTER', voteType: 'no' })
+      .expect(200);
+  });
+
+  it('refuses to let a user claim a winning position from a wallet they do not own', async () => {
+    const adminToken = await loginAdmin();
+    const victimToken = await registerUser('claim-victim');
+    const market = await createMarket(adminToken, { id: 'market-claim-hijack' });
+    await approveAndFund(victimToken, 'CLAIM_VICTIM', { SOL: 1 });
+
+    const trade = await request(app)
+      .post(`/api/markets/${market.id}/trades`)
+      .set(auth(victimToken))
+      .send({ wallet: 'CLAIM_VICTIM', amount: 1, position: 'YES', tradeType: 'swap' })
+      .expect(200);
+
+    await request(app)
+      .post(`/api/admin/markets/${market.id}/resolve`)
+      .set(auth(adminToken))
+      .send({ result: 'YES', source: 'manual', confirmation: 'RESOLVE YES' })
+      .expect(200);
+
+    const attackerRegister = await request(app)
+      .post('/auth/register')
+      .send({ email: `claim-attacker-${Date.now()}@lynx.local`, password: 'password123', displayName: 'claim-attacker' })
+      .expect(201);
+    const attackerToken = attackerRegister.body.token as string;
+
+    const originalEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      // The attacker is authenticated as themselves but tries to trigger the
+      // claim using the victim's wallet address — this must be rejected.
+      await request(app)
+        .post(`/api/positions/${trade.body.position.id}/claim`)
+        .set(auth(attackerToken))
+        .send({ wallet: 'CLAIM_VICTIM' })
+        .expect(403);
+    } finally {
+      process.env.NODE_ENV = originalEnv;
+    }
+
+    // The victim must still be free to claim their own payout afterwards.
+    await request(app)
+      .post(`/api/positions/${trade.body.position.id}/claim`)
+      .set(auth(victimToken))
+      .send({ wallet: 'CLAIM_VICTIM' })
+      .expect(200);
+  });
+
+  it('only takes the documented 10% staker+treasury fee on SOL market resolution (no extra protocol fee)', async () => {
+    const adminToken = await loginAdmin();
+    const winnerToken = await registerUser('fee-winner');
+    const market = await createMarket(adminToken, { id: 'market-fee-check' });
+    await approveAndFund(winnerToken, 'FEE_WINNER', { SOL: 10 });
+
+    const treasurySolBefore = store.treasury.sol;
+
+    const trade = await request(app)
+      .post(`/api/markets/${market.id}/trades`)
+      .set(auth(winnerToken))
+      .send({ wallet: 'FEE_WINNER', amount: 10, position: 'YES', tradeType: 'swap' })
+      .expect(200);
+
+    await request(app)
+      .post(`/api/admin/markets/${market.id}/resolve`)
+      .set(auth(adminToken))
+      .send({ result: 'YES', source: 'manual', confirmation: 'RESOLVE YES' })
+      .expect(200);
+
+    // With no active stakers, both the 5% treasury fee and the 5% staker
+    // fee (which has nowhere else to go) land in the treasury — 10% total,
+    // never more.
+    expect(store.treasury.sol - treasurySolBefore).toBe(1);
+
+    const claim = await request(app)
+      .post(`/api/positions/${trade.body.position.id}/claim`)
+      .set(auth(winnerToken))
+      .send({ wallet: 'FEE_WINNER' })
+      .expect(200);
+
+    // Sole winner claims the full pool minus the 10% staker+treasury fee —
+    // never minus an extra, separately-applied EVENT_PROTOCOL_FEE.
+    expect(claim.body.payout).toBe(9);
+
+    const portfolio = await request(app).get('/api/portfolio?wallet=FEE_WINNER').expect(200);
+    expect(portfolio.body.solBalance).toBe(9);
   });
 });
