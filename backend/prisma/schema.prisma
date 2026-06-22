@@ -164,6 +164,7 @@ model WalletState {
   lynxBalance      Decimal  @default(10000) @db.Decimal(28, 9)
   stakedLynx       Decimal  @default(0)     @db.Decimal(28, 9)
   rewardsSol       Decimal  @default(0)     @db.Decimal(28, 9)
+  rewardsLynx      Decimal  @default(0)     @db.Decimal(28, 9)
   totalVolume      Decimal  @default(0)     @db.Decimal(28, 9)
   wins             Int      @default(0)
   losses           Int      @default(0)

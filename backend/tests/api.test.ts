@@ -308,6 +308,123 @@ describe('Lynx backend API', () => {
       .expect(400);
   });
 
+  it('keeps a market in the default listing after cutoff, only dropping it once it is actually RESOLVED', async () => {
+    const adminToken = await loginAdmin();
+    const market = await createMarket(adminToken, { id: 'market-listing-cutoff' });
+
+    await request(app)
+      .post(`/api/admin/markets/${market.id}/cutoff`)
+      .set(auth(adminToken))
+      .send({ force: true, signature: sig })
+      .expect(200);
+
+    // New entries are correctly blocked past cutoff (covered by the test
+    // above), but the market itself — now awaiting resolution — must still
+    // be visible in the default (non-includeFinished) listing.
+    const afterCutoff = await request(app).get('/api/markets').expect(200);
+    const found = afterCutoff.body.find((m: any) => m.id === market.id);
+    expect(found).toBeDefined();
+    expect(found.status).toBe('CUT_OFF');
+
+    await request(app)
+      .post(`/api/admin/markets/${market.id}/resolve`)
+      .set(auth(adminToken))
+      .send({ result: 'YES', source: 'manual', confirmation: 'RESOLVE YES' })
+      .expect(200);
+
+    // Only once the admin actually finalizes the market does it drop out.
+    const afterResolve = await request(app).get('/api/markets').expect(200);
+    expect(afterResolve.body.some((m: any) => m.id === market.id)).toBe(false);
+
+    // It's still reachable directly and via includeFinished=true.
+    const direct = await request(app).get(`/api/markets/${market.id}`).expect(200);
+    expect(direct.body.status).toBe('RESOLVED');
+    const withFinished = await request(app).get('/api/markets?includeFinished=true').expect(200);
+    expect(withFinished.body.some((m: any) => m.id === market.id)).toBe(true);
+  });
+
+  it('keeps a market listed past its cutoffAt timestamp even without a manual admin cutoff call', async () => {
+    const adminToken = await loginAdmin();
+    const now = Date.now();
+    const market = await createMarket(adminToken, {
+      id: 'market-listing-elapsed',
+      cutoffAt: now + 50,
+      resolveAt: now + 1000 * 60 * 60
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    const listed = await request(app).get('/api/markets').expect(200);
+    const found = listed.body.find((m: any) => m.id === market.id);
+    expect(found).toBeDefined();
+    // Reading the list also reconciles the stale status on the fly — no
+    // server restart or background job required for the badge to be right.
+    expect(found.status).toBe('CUT_OFF');
+
+    const direct = await request(app).get(`/api/markets/${market.id}`).expect(200);
+    expect(direct.body.status).toBe('CUT_OFF');
+  });
+
+  it('keeps OPEN and ACTIVE duels in the default listing after their market is cut off, until it actually resolves', async () => {
+    const adminToken = await loginAdmin();
+    const creatorToken = await registerUser('duel-listing-creator');
+    const rivalToken = await registerUser('duel-listing-rival');
+    const openCreatorToken = await registerUser('duel-listing-open-creator');
+    const market = await createMarket(adminToken, { id: 'market-duel-listing' });
+    await approveAndFund(creatorToken, 'DUEL_LISTING_CREATOR', { SOL: 1 });
+    await approveAndFund(rivalToken, 'DUEL_LISTING_RIVAL', { SOL: 1 });
+    await approveAndFund(openCreatorToken, 'DUEL_LISTING_OPEN', { SOL: 1 });
+
+    const created = await request(app)
+      .post('/api/duels')
+      .set(auth(creatorToken))
+      .send({ wallet: 'DUEL_LISTING_CREATOR', marketId: market.id, side: 'YES', amount: 1 })
+      .expect(201);
+
+    const stillOpen = await request(app)
+      .post('/api/duels')
+      .set(auth(openCreatorToken))
+      .send({ wallet: 'DUEL_LISTING_OPEN', marketId: market.id, side: 'NO', amount: 1 })
+      .expect(201);
+
+    const accepted = await request(app)
+      .post(`/api/duels/${created.body.id}/accept`)
+      .set(auth(rivalToken))
+      .send({ wallet: 'DUEL_LISTING_RIVAL' })
+      .expect(200);
+    expect(accepted.body.status).toBe('ACTIVE');
+
+    // Force the parent market past cutoff, same as the cron/admin job would do.
+    await request(app)
+      .post(`/api/admin/markets/${market.id}/cutoff`)
+      .set(auth(adminToken))
+      .send({ force: true, signature: sig })
+      .expect(200);
+
+    // The ACTIVE duel has two users' funds locked and is waiting on
+    // resolveMarket() — it must still show up in the default
+    // (non-includeFinished) listing. The OPEN duel can still legitimately be
+    // accepted past cutoff (per acceptDuel()), so it must stay listed too.
+    const listed = await request(app).get('/api/duels').expect(200);
+    const listedIds = listed.body.map((d: any) => d.id);
+    expect(listedIds).toContain(created.body.id);
+    expect(listedIds).toContain(stillOpen.body.id);
+
+    const filteredByMarket = await request(app).get(`/api/duels?marketId=${market.id}`).expect(200);
+    expect(filteredByMarket.body.map((d: any) => d.id)).toContain(created.body.id);
+
+    // Once the market actually resolves, resolveDuelsForMarket() settles the
+    // ACTIVE duel and it drops out of the default listing.
+    await request(app)
+      .post(`/api/admin/markets/${market.id}/resolve`)
+      .set(auth(adminToken))
+      .send({ result: 'YES', source: 'manual', confirmation: 'RESOLVE YES' })
+      .expect(200);
+
+    const afterResolve = await request(app).get('/api/duels').expect(200);
+    expect(afterResolve.body.some((d: any) => d.id === created.body.id)).toBe(false);
+  });
+
   it('locks protocol stake for 1v1vP duels', async () => {
     const adminToken = await loginAdmin();
     const userToken = await registerUser('protocol-duel');
@@ -507,5 +624,90 @@ describe('Lynx backend API', () => {
 
     const portfolio = await request(app).get('/api/portfolio?wallet=FEE_WINNER').expect(200);
     expect(portfolio.body.solBalance).toBe(9);
+  });
+
+  it('credits the staker+treasury fee in LYNX (not SOL) on LYNX market resolution, instead of discarding it', async () => {
+    const adminToken = await loginAdmin();
+    const winnerToken = await registerUser('lynx-fee-winner');
+    const market = await createMarket(adminToken, { id: 'market-lynx-fee-check', currency: 'LYNX' });
+    await approveAndFund(winnerToken, 'LYNX_FEE_WINNER', { LYNX: 100 });
+
+    const treasuryLynxBefore = store.treasury.lynx;
+    const treasurySolBefore = store.treasury.sol;
+
+    const trade = await request(app)
+      .post(`/api/markets/${market.id}/trades`)
+      .set(auth(winnerToken))
+      .send({ wallet: 'LYNX_FEE_WINNER', amount: 100, position: 'YES', tradeType: 'swap' })
+      .expect(200);
+
+    // 15% entry burn leaves an 85 LYNX pool (separate mechanism, unaffected by this fix).
+    expect(trade.body.market.poolAmount).toBe(85);
+
+    await request(app)
+      .post(`/api/admin/markets/${market.id}/resolve`)
+      .set(auth(adminToken))
+      .send({ result: 'YES', source: 'manual', confirmation: 'RESOLVE YES' })
+      .expect(200);
+
+    // With no active stakers, the 10% staker+treasury fee (5% + 5% of the
+    // 85 LYNX pool = 8.5 LYNX) must land in treasury.lynx — not vanish, and
+    // not be misrouted into treasury.sol.
+    expect(store.treasury.lynx - treasuryLynxBefore).toBe(8.5);
+    expect(store.treasury.sol).toBe(treasurySolBefore);
+
+    const claim = await request(app)
+      .post(`/api/positions/${trade.body.position.id}/claim`)
+      .set(auth(winnerToken))
+      .send({ wallet: 'LYNX_FEE_WINNER' })
+      .expect(200);
+
+    // Sole winner claims the 85 LYNX pool minus the 10% fee that was just
+    // credited to treasury above — the same 10% claimPosition() always
+    // deducted, now actually accounted for instead of disappearing.
+    expect(claim.body.payout).toBe(76.5);
+    expect(claim.body.currency).toBe('LYNX');
+  });
+
+  it('pays LYNX staking rewards (not SOL) to stakers when a LYNX market resolves, claimable via /api/staking/claim', async () => {
+    const adminToken = await loginAdmin();
+    const stakerToken = await registerUser('lynx-fee-staker');
+    const traderToken = await registerUser('lynx-fee-trader');
+    const market = await createMarket(adminToken, { id: 'market-lynx-staker-fee', currency: 'LYNX' });
+    await approveAndFund(stakerToken, 'LYNX_STAKER', { LYNX: 50 });
+    await approveAndFund(traderToken, 'LYNX_FEE_TRADER', { LYNX: 100 });
+
+    await request(app)
+      .post('/api/staking/stake')
+      .set(auth(stakerToken))
+      .send({ wallet: 'LYNX_STAKER', amount: 50 })
+      .expect(200);
+
+    await request(app)
+      .post(`/api/markets/${market.id}/trades`)
+      .set(auth(traderToken))
+      .send({ wallet: 'LYNX_FEE_TRADER', amount: 100, position: 'YES', tradeType: 'swap' })
+      .expect(200);
+
+    await request(app)
+      .post(`/api/admin/markets/${market.id}/resolve`)
+      .set(auth(adminToken))
+      .send({ result: 'YES', source: 'manual', confirmation: 'RESOLVE YES' })
+      .expect(200);
+
+    // 5% staker fee on the 85 LYNX pool = 4.25 LYNX, sole staker takes it all.
+    const claim = await request(app)
+      .post('/api/staking/claim')
+      .set(auth(stakerToken))
+      .send({ wallet: 'LYNX_STAKER' })
+      .expect(200);
+
+    expect(claim.body.claimedLynx).toBe(4.25);
+    expect(claim.body.claimedSol).toBe(0);
+
+    const portfolio = await request(app).get('/api/portfolio?wallet=LYNX_STAKER').expect(200);
+    // Staked balance (50) was debited from lynxBalance on stake, then the
+    // 4.25 LYNX reward is credited back on claim.
+    expect(portfolio.body.lynxBalance).toBe(4.25);
   });
 });

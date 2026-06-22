@@ -122,13 +122,13 @@ export function useProgram() {
     }
   }, [ensureApproved]);
 
-  const executeLynxOrder = useCallback(async (side: 'BUY' | 'SELL', amount: number, price: number) => {
+  const executeLynxOrder = useCallback(async (side: 'BUY' | 'SELL', amount: number, price?: number, tradeType: 'limit' | 'market' = 'limit') => {
     setLoadingCount(c => c + 1);
     try {
       const currentWallet = await ensureApproved();
       return await apiFetch('/api/orders', {
         method: 'POST',
-        body: JSON.stringify({ wallet: currentWallet, pair: 'LYNX/SOL', side, amount, price, currency: 'LYNX' }),
+        body: JSON.stringify({ wallet: currentWallet, pair: 'LYNX/SOL', side, amount, price, currency: 'LYNX', tradeType }),
       });
     } catch (err: any) {
       throw err;

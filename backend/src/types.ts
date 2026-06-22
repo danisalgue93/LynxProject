@@ -51,6 +51,7 @@ export interface WalletState {
   lynxBalance: number;
   stakedLynx: number;
   rewardsSol: number;
+  rewardsLynx: number;
   totalVolume: number;
   wins: number;
   losses: number;

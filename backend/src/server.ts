@@ -1049,8 +1049,12 @@ app.post('/api/orders', tradingRateLimit, asyncRoute(async (req, res) => {
     side: sideSchema,
     position: positionSchema.optional(),
     amount: z.number().positive(),
-    price: z.number().positive(),
-    currency: currencySchema.default('LYNX')
+    price: z.number().positive().optional(),
+    currency: currencySchema.default('LYNX'),
+    tradeType: z.enum(['limit', 'market']).default('limit')
+  }).refine((data) => data.tradeType === 'market' || typeof data.price === 'number', {
+    message: 'price is required for limit orders',
+    path: ['price']
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
@@ -1064,7 +1068,8 @@ app.post('/api/orders', tradingRateLimit, asyncRoute(async (req, res) => {
     position: body.position as Position | undefined,
     amount: body.amount,
     price: body.price,
-    currency: body.currency as Currency
+    currency: body.currency as Currency,
+    tradeType: body.tradeType
   });
   await persist();
   emit('orderbook:updated', result.orderbook);

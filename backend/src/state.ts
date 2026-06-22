@@ -253,6 +253,7 @@ export class LynxState {
         lynxBalance: STARTING_LYNX,
         stakedLynx: 0,
         rewardsSol: 0,
+        rewardsLynx: 0,
         totalVolume: 0,
         wins: 0,
         losses: 0,
@@ -264,6 +265,19 @@ export class LynxState {
   }
 
   /**
+   * Cheap, single-market version of the CUT_OFF transition below. Safe to
+   * call on every read (getMarket/listMarkets) since it's O(1) and a no-op
+   * once the market is already CUT_OFF/RESOLVED — this is what keeps
+   * `market.status` accurate between server restarts, instead of only being
+   * correct right after reconcileStatuses() runs at startup.
+   */
+  private reconcileMarketStatus(market: Market) {
+    if ((market.status === 'OPEN' || market.status === 'ACTIVE') && nowMs() >= market.cutoffAt) {
+      market.status = 'CUT_OFF';
+    }
+  }
+
+  /**
    * Reconciles in-memory statuses against real wall-clock time.
    * Called on startup (after loading from DB) and can be called anytime.
    * - Markets with cutoffAt in the past and status OPEN/ACTIVE → CUT_OFF
@@ -272,9 +286,7 @@ export class LynxState {
   reconcileStatuses() {
     const now = nowMs();
     for (const market of this.markets.values()) {
-      if ((market.status === 'OPEN' || market.status === 'ACTIVE') && now >= market.cutoffAt) {
-        market.status = 'CUT_OFF';
-      }
+      this.reconcileMarketStatus(market);
     }
     for (const proposal of this.proposals.values()) {
       if (proposal.status === 'active' && new Date(proposal.endTime).getTime() <= now) {
@@ -284,14 +296,20 @@ export class LynxState {
   }
 
   listMarkets(includeFinished = false) {
-    const now = nowMs();
+    for (const market of this.markets.values()) {
+      this.reconcileMarketStatus(market);
+    }
     return [...this.markets.values()]
       .filter(m => {
         if (includeFinished) return true;
-        if (m.status === 'RESOLVED' || m.status === 'CUT_OFF' || m.status === 'EXPIRED') return false;
-        // Belt-and-suspenders: also exclude by timestamp even if status wasn't updated
-        if (now >= m.cutoffAt) return false;
-        return true;
+        // A market only disappears from the default listing once it's
+        // actually RESOLVED — i.e. finalized by the admin (or oracle).
+        // Reaching cutoffAt (and the resulting CUT_OFF status) only stops
+        // *new* entries, which assertMarketAcceptsEntries() already enforces
+        // independently of this listing. Hiding the market itself here too
+        // made live markets vanish with no warning while still awaiting
+        // resolution, even for users who already hold open positions in them.
+        return m.status !== 'RESOLVED';
       })
       .sort((a, b) => b.createdAt - a.createdAt);
   }
@@ -299,6 +317,7 @@ export class LynxState {
   getMarket(id: string) {
     const market = this.markets.get(id);
     if (!market) throw new Error('Market not found');
+    this.reconcileMarketStatus(market);
     return market;
   }
 
@@ -312,7 +331,6 @@ export class LynxState {
   }
 
   listDuels(parentMarketId?: string, includeFinished = false) {
-    const now = nowMs();
     return [...this.duels.values()]
       .filter((duel) => !parentMarketId || duel.parentMarketId === parentMarketId)
       .filter((duel) => {
@@ -320,8 +338,14 @@ export class LynxState {
         if (duel.status === 'RESOLVED' || duel.status === 'CANCELLED') return false;
         const market = this.markets.get(duel.parentMarketId);
         if (!market) return false;
-        if (market.status === 'RESOLVED' || market.status === 'CUT_OFF' || market.status === 'EXPIRED') return false;
-        return now < market.cutoffAt;
+        // A duel (OPEN awaiting a rival, or ACTIVE with funds locked awaiting
+        // the market's outcome) stays listed for as long as its market hasn't
+        // been fully RESOLVED. Filtering it out as soon as the market hits
+        // cutoff/CUT_OFF was wrong: acceptDuel() explicitly still allows
+        // accepting an OPEN duel after cutoff (only RESOLVED blocks it), and
+        // an ACTIVE duel with two users' funds locked must stay visible while
+        // it's waiting on resolveMarket() to settle it.
+        return market.status !== 'RESOLVED';
       })
       .sort((a, b) => b.createdAt - a.createdAt);
   }
@@ -363,14 +387,24 @@ export class LynxState {
         };
       });
 
-    const payments = wallet.rewardsSol > 0
-      ? [{
-          title: 'Protocol staking rewards',
-          date: new Date().toISOString().slice(0, 10),
-          amount: roundAmount(wallet.rewardsSol),
-          token: 'SOL'
-        }]
-      : [];
+    const payments = [
+      ...(wallet.rewardsSol > 0
+        ? [{
+            title: 'Protocol staking rewards',
+            date: new Date().toISOString().slice(0, 10),
+            amount: roundAmount(wallet.rewardsSol),
+            token: 'SOL'
+          }]
+        : []),
+      ...(wallet.rewardsLynx > 0
+        ? [{
+            title: 'Protocol staking rewards',
+            date: new Date().toISOString().slice(0, 10),
+            amount: roundAmount(wallet.rewardsLynx),
+            token: 'LYNX'
+          }]
+        : [])
+    ];
 
     return {
       walletAddress: wallet.wallet,
@@ -471,11 +505,23 @@ export class LynxState {
     side: OrderSide;
     position?: Position;
     amount: number;
-    price: number;
+    price?: number;
     currency: Currency;
+    tradeType?: 'limit' | 'market';
   }) {
     assertPositiveAmount(input.amount);
-    assertPositiveAmount(input.price);
+
+    if (input.tradeType === 'market') {
+      if (input.pair !== 'LYNX/SOL') throw new Error('Market orders are only supported for the LYNX/SOL pair');
+      return this.placeLynxMarketOrder({
+        wallet: input.wallet,
+        side: input.side,
+        amount: input.amount,
+        currency: input.currency
+      });
+    }
+
+    assertPositiveAmount(input.price!);
 
     const wallet = this.getWallet(input.wallet);
     const market = input.marketId ? this.getMarket(input.marketId) : undefined;
@@ -485,7 +531,7 @@ export class LynxState {
     let lockedAmount: number | undefined;
 
     if (isLynxSolPair) {
-      const notional = roundAmount(input.amount * input.price);
+      const notional = roundAmount(input.amount * input.price!);
       const fee = roundAmount(notional * GLOBAL_TRADE_FEE);
       if (input.side === 'BUY') {
         lockedCurrency = 'SOL';
@@ -517,7 +563,7 @@ export class LynxState {
       position,
       amount: input.amount,
       remaining: input.amount,
-      price: input.price,
+      price: input.price!,
       currency: input.currency,
       status: 'OPEN',
       createdAt: nowMs(),
@@ -532,6 +578,78 @@ export class LynxState {
     }
 
     return { order, orderbook: this.getOrderBook(input.pair, input.marketId) };
+  }
+
+  // Real market order for LYNX/SOL: walks the resting opposite-side orders to
+  // find exactly how much of `amount` can be filled right now and at what
+  // prices, instead of trusting a price supplied by the client. Only the
+  // amount that the current book can actually fill is locked and executed;
+  // a market order never rests on the book waiting for a price.
+  private placeLynxMarketOrder(input: {
+    wallet: string;
+    side: OrderSide;
+    amount: number;
+    currency: Currency;
+  }) {
+    const wallet = this.getWallet(input.wallet);
+
+    const opposite = [...this.orders.values()]
+      .filter((candidate) =>
+        candidate.pair === 'LYNX/SOL' &&
+        candidate.side !== input.side &&
+        candidate.status !== 'FILLED' &&
+        candidate.status !== 'CANCELLED' &&
+        candidate.remaining > 0
+      )
+      .sort((a, b) => input.side === 'BUY' ? a.price - b.price : b.price - a.price);
+
+    let remainingToFill = input.amount;
+    let totalNotional = 0;
+    let worstPrice = 0;
+    for (const maker of opposite) {
+      if (remainingToFill <= 0) break;
+      const amount = Math.min(remainingToFill, maker.remaining);
+      totalNotional = roundAmount(totalNotional + amount * maker.price);
+      worstPrice = maker.price;
+      remainingToFill = roundAmount(remainingToFill - amount);
+    }
+
+    const fillableAmount = roundAmount(input.amount - remainingToFill);
+    if (fillableAmount <= 0) {
+      throw new Error('No liquidity available for market order');
+    }
+
+    let lockedCurrency: Currency;
+    let lockedAmount: number;
+    if (input.side === 'BUY') {
+      const fee = roundAmount(totalNotional * GLOBAL_TRADE_FEE);
+      lockedCurrency = 'SOL';
+      lockedAmount = roundAmount(totalNotional + fee);
+    } else {
+      lockedCurrency = 'LYNX';
+      lockedAmount = fillableAmount;
+    }
+    this.debit(wallet, lockedCurrency, lockedAmount);
+
+    const order: Order = {
+      id: id('order'),
+      pair: 'LYNX/SOL',
+      owner: wallet.wallet,
+      side: input.side,
+      amount: fillableAmount,
+      remaining: fillableAmount,
+      price: worstPrice,
+      currency: input.currency,
+      status: 'OPEN',
+      createdAt: nowMs(),
+      lockedCurrency,
+      lockedAmount,
+      spentAmount: 0
+    };
+    this.orders.set(order.id, order);
+    this.matchLynxOrder(order);
+
+    return { order, orderbook: this.getOrderBook('LYNX/SOL') };
   }
 
   createDuel(input: {
@@ -680,8 +798,19 @@ export class LynxState {
       const stakerFee = roundAmount(market.poolAmount * STAKER_REWARD_FEE);
       const treasuryFee = roundAmount(market.poolAmount * TREASURY_EVENT_FEE);
       this.treasury.sol = roundAmount(this.treasury.sol + treasuryFee);
-      this.distributeStakingRewards(stakerFee);
+      this.distributeStakingRewards(stakerFee, 'SOL');
       this.mintLynxForSolvedSolMarket(market);
+    } else {
+      // LYNX-denominated markets: claimPosition() deducts this exact same
+      // 10% (staker+treasury) from the pool regardless of currency, so it
+      // must be credited here too — in LYNX — or it simply evaporates
+      // (charged to winners, paid to nobody). No LYNX emission here: that
+      // mechanism is specifically a SOL -> LYNX reward and doesn't apply to
+      // markets already denominated in LYNX.
+      const stakerFee = roundAmount(market.poolAmount * STAKER_REWARD_FEE);
+      const treasuryFee = roundAmount(market.poolAmount * TREASURY_EVENT_FEE);
+      this.treasury.lynx = roundAmount(this.treasury.lynx + treasuryFee);
+      this.distributeStakingRewards(stakerFee, 'LYNX');
     }
 
     this.resolveDuelsForMarket(market);
@@ -708,10 +837,18 @@ export class LynxState {
 
   claimRewards(walletAddress: string) {
     const wallet = this.getWallet(walletAddress);
-    const rewards = wallet.rewardsSol;
+    const claimedSol = wallet.rewardsSol;
+    const claimedLynx = wallet.rewardsLynx;
     wallet.rewardsSol = 0;
-    wallet.solBalance = roundAmount(wallet.solBalance + rewards);
-    return { claimed: roundAmount(rewards), portfolio: this.getPortfolio(wallet.wallet) };
+    wallet.rewardsLynx = 0;
+    wallet.solBalance = roundAmount(wallet.solBalance + claimedSol);
+    wallet.lynxBalance = roundAmount(wallet.lynxBalance + claimedLynx);
+    return {
+      claimed: roundAmount(claimedSol), // kept for backward compatibility with existing callers
+      claimedSol: roundAmount(claimedSol),
+      claimedLynx: roundAmount(claimedLynx),
+      portfolio: this.getPortfolio(wallet.wallet)
+    };
   }
 
   castVote(input: { wallet: string; proposalId: string; voteType: 'yes' | 'no' }) {
@@ -949,20 +1086,28 @@ export class LynxState {
     return roundAmount(Math.max(0.01, Math.min(0.99, sideAmount / market.poolAmount)));
   }
 
-  private distributeStakingRewards(amount: number) {
+  private distributeStakingRewards(amount: number, currency: Currency = 'SOL') {
     const stakers = [...this.wallets.values()].filter((wallet) => wallet.stakedLynx > 0);
     const totalStaked = stakers.reduce((sum, wallet) => sum + wallet.stakedLynx, 0);
     if (totalStaked <= 0) {
-      this.treasury.sol = roundAmount(this.treasury.sol + amount);
+      if (currency === 'LYNX') {
+        this.treasury.lynx = roundAmount(this.treasury.lynx + amount);
+      } else {
+        this.treasury.sol = roundAmount(this.treasury.sol + amount);
+      }
       return;
     }
     for (const wallet of stakers) {
       const share = amount * (wallet.stakedLynx / totalStaked);
-      wallet.rewardsSol = roundAmount(wallet.rewardsSol + share);
+      if (currency === 'LYNX') {
+        wallet.rewardsLynx = roundAmount(wallet.rewardsLynx + share);
+      } else {
+        wallet.rewardsSol = roundAmount(wallet.rewardsSol + share);
+      }
       this.pushNotification(wallet.wallet, {
         type: 'claimable',
-        title: 'SOL staking rewards available',
-        message: `You earned ${roundAmount(share)} SOL from protocol event fees.`
+        title: `${currency} staking rewards available`,
+        message: `You earned ${roundAmount(share)} ${currency} from protocol event fees.`
       });
     }
   }

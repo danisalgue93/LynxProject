@@ -41,6 +41,7 @@ export function PortfolioView() {
   const connectionLabel = user?.authMethod === 'email'
     ? t('portfolio.connectedViaEmail', 'Connected via email')
     : null;
+  const isManagedAccount = user?.authMethod === 'email';
 
   const getPortfolioErrorMessage = (err: any, fallback: string) => {
     const message = typeof err === 'string' ? err : err?.message || fallback;
@@ -328,22 +329,29 @@ export function PortfolioView() {
                         className="flex-1 bg-[#18181B] border border-[#27272A] rounded p-3 text-sm text-white outline-none focus:border-[#00FFD1]"
                       />
                       <div className="grid grid-cols-2 gap-2 sm:w-56">
-                        <button
-                          onClick={() => handleSolLedgerAction('deposit')}
-                          disabled={isLedgerPending || isSolLedgerAmountInvalid}
-                          className="rounded bg-[#00FFD1] text-black px-3 py-2 text-[10px] font-black uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {t('portfolio.deposit', 'Deposit')}
-                        </button>
+                        {!isManagedAccount && (
+                          <button
+                            onClick={() => handleSolLedgerAction('deposit')}
+                            disabled={isLedgerPending || isSolLedgerAmountInvalid}
+                            className="rounded bg-[#00FFD1] text-black px-3 py-2 text-[10px] font-black uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {t('portfolio.deposit', 'Deposit')}
+                          </button>
+                        )}
                         <button
                           onClick={() => handleSolLedgerAction('withdraw')}
                           disabled={isLedgerPending || isSolLedgerAmountInvalid}
-                          className="rounded bg-[#18181B] text-white border border-[#27272A] px-3 py-2 text-[10px] font-black uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
+                          className={cn("rounded bg-[#18181B] text-white border border-[#27272A] px-3 py-2 text-[10px] font-black uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed", isManagedAccount && "col-span-2")}
                         >
                           {t('portfolio.withdraw', 'Withdraw')}
                         </button>
                       </div>
                     </div>
+                    {isManagedAccount && (
+                      <p className="text-[9px] text-[#71717A] mt-2">
+                        {t('portfolio.managedDepositHint', 'Use Buy Crypto below to add SOL to your account.')}
+                      </p>
+                    )}
                  </div>
                </div>
 

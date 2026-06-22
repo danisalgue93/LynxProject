@@ -231,6 +231,9 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
     if (message.includes('Connect or create an account')) {
       return t('orderbook.authRequired', 'Please connect a wallet or create an account to trade.');
     }
+    if (message.includes('No liquidity available for market order')) {
+      return t('orderbook.noLiquidity', 'No liquidity available to fill this market order right now.');
+    }
     return message;
   };
   const [markets, setMarkets] = useState<Market[]>([]);
@@ -261,8 +264,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
   const isLynxOrderInvalid =
     !Number.isFinite(lynxOrderAmount) ||
     lynxOrderAmount <= 0 ||
-    !Number.isFinite(lynxOrderPrice) ||
-    lynxOrderPrice <= 0;
+    (lynxTradeType === 'limit' && (!Number.isFinite(lynxOrderPrice) || lynxOrderPrice <= 0));
   const isLynxSol = selectedMarketId === 'lynx-sol';
   const predOrderAmount = parseFloat(predAmount);
   const predOrderPrice = parseFloat(predPrice);
@@ -347,7 +349,8 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
       await executeLynxOrder(
         lynxSide === 'buy' ? 'BUY' : 'SELL',
         lynxOrderAmount,
-        lynxOrderPrice
+        lynxTradeType === 'limit' ? lynxOrderPrice : undefined,
+        lynxTradeType
       );
       const data = await fetchOrderBook('LYNX/SOL');
       setLynxOrderBook(data);
