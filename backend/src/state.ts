@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import {
   GLOBAL_TRADE_FEE,
   LYNX_EMISSION_PER_SOL,
@@ -31,7 +32,7 @@ const STARTING_SOL = 0;
 const STARTING_LYNX = 0;
 
 function id(prefix: string) {
-  return `${prefix}_${Math.random().toString(36).slice(2, 10)}_${Date.now().toString(36)}`;
+  return `${prefix}_${randomUUID()}`;
 }
 
 function nowMs() {
@@ -1254,7 +1255,8 @@ export class LynxState {
       read: false,
       ...partial
     };
-    this.notifications.set(wallet, [notification, ...(this.notifications.get(wallet) ?? [])]);
+    const MAX_NOTIFICATIONS = 100;
+    this.notifications.set(wallet, [notification, ...(this.notifications.get(wallet) ?? [])].slice(0, MAX_NOTIFICATIONS));
   }
 
   private addLedgerEntry(input: Omit<LedgerEntry, 'id' | 'createdAt'>) {
@@ -1374,12 +1376,19 @@ export class LynxState {
     const basePrice = symbol.toUpperCase() === 'SOL' ? 145 : 0.004;
     const end = Math.ceil(Date.now() / ms) * ms;
     const candles: Candle[] = [];
+    // Deterministic pseudo-random in [0, 1), seeded by candle time so the
+    // same candle always renders the same value across repeated requests
+    // instead of jumping on every refresh.
+    const seededRandom = (seed: number) => {
+      const x = Math.sin(seed) * 10000;
+      return x - Math.floor(x);
+    };
     let current = basePrice;
     for (let i = limit - 1; i >= 0; i--) {
       const time = end - i * ms;
       const drift = Math.sin(i / 6) * current * 0.006;
       const open = current;
-      const close = Math.max(0.000001, current + drift + (Math.random() - 0.47) * current * 0.018);
+      const close = Math.max(0.000001, current + drift + (seededRandom(time) - 0.47) * current * 0.018);
       const high = Math.max(open, close) + current * 0.01;
       const low = Math.max(0.000001, Math.min(open, close) - current * 0.01);
       const volume = symbol.toUpperCase() === 'SOL' ? 1000 + i * 3 : 50000 + i * 250;

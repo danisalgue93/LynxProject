@@ -1,4 +1,22 @@
 /**
+ * ⚠️ DEPRECATED / NO USADO EN PRODUCCIÓN ⚠️
+ *
+ * Este archivo NO está importado por ningún otro módulo del proyecto.
+ * La liquidación real de mercados ocurre en `state.ts::claimPosition()`,
+ * cuya lógica de payout y fees DIVERGE de la implementada aquí:
+ *
+ *   - Aquí:      payout = (userAmount / totalWinnerAmount) * netPool
+ *   - state.ts:  payout = (userAmount / winningPool) * netPool
+ *
+ * Además, `FEE_TOTAL_PERCENT` está hardcodeado abajo (0.10), mientras que
+ * `state.ts` importa las constantes de fees desde `economy.ts`, que pueden
+ * cambiar independientemente de este archivo.
+ *
+ * NO reutilizar `calculateSettlement()` / `validateSettlement()` como fuente
+ * de verdad sin antes reconciliar ambas implementaciones — de lo contrario
+ * los pagos calculados aquí no coincidirán con los que realmente ejecuta
+ * `claimPosition()`.
+ *
  * Settlement logic for market resolution
  * Handles payout calculations and fee distribution
  */

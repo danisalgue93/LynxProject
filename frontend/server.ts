@@ -1,5 +1,6 @@
 import express from 'express';
 import 'dotenv/config';
+import helmet from 'helmet';
 import path from 'path';
 import cors from 'cors';
 import { createHmac } from 'crypto';
@@ -14,6 +15,19 @@ async function startServer() {
     .split(',')
     .map(o => o.trim())
     .filter(Boolean);
+
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "https://auth.magic.link"],
+        connectSrc: ["'self'", "https://api.devnet.solana.com", "https://api.mainnet-beta.solana.com", "wss:"],
+        imgSrc: ["'self'", "data:", "https://res.cloudinary.com"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+      },
+    },
+    crossOriginResourcePolicy: false,
+  }));
 
   app.use(cors(
     allowedOrigins.length > 0

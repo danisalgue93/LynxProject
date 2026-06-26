@@ -3,7 +3,7 @@ import 'dotenv/config';
 import express from 'express';
 import helmet from 'helmet';
 import http from 'http';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import morgan from 'morgan';
 import { Server } from 'socket.io';
 import { z, ZodError } from 'zod';
@@ -14,7 +14,7 @@ import { DEV_WALLET, TREASURY_WALLET, SOLANA_RPC_URL } from './economy.js';
 import { createPersistence } from './persistence.js';
 import { LynxState } from './state.js';
 import type { Currency, OrderSide, Position } from './types.js';
-import { generateToken, verifyToken, hashPassword, hashPasswordSync, verifyPassword, extractToken } from './auth.js';
+import { generateToken, generateRefreshToken, verifyToken, verifyRefreshToken, hashPassword, hashPasswordSync, verifyPassword, extractToken } from './auth.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -35,7 +35,33 @@ const io = new Server(httpServer, {
   }
 });
 
-app.use(helmet({ crossOriginResourcePolicy: false }));
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      connectSrc: ["'self'", "https://api.devnet.solana.com", "wss:"],
+      imgSrc: ["'self'", "data:"],
+    },
+  },
+  crossOriginResourcePolicy: false
+}));
+
+// In production, TLS is terminated upstream (reverse proxy / platform load
+// balancer) and the original protocol is forwarded via X-Forwarded-Proto.
+// Reject/redirect anything that reaches us as plain HTTP so JWTs and wallet
+// signatures can never travel unencrypted, even if the proxy is misconfigured
+// or someone hits the origin port directly.
+if (process.env.NODE_ENV === 'production') {
+  app.use((req, res, next) => {
+    if (req.headers['x-forwarded-proto'] !== 'https') {
+      res.redirect(301, `https://${req.headers.host}${req.originalUrl}`);
+      return;
+    }
+    next();
+  });
+}
+
 app.use(cors({ origin: corsOrigins, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 // lightweight structured logger (no external dependency)
@@ -44,9 +70,20 @@ const logger = {
   error: (obj: any, msg?: string) => console.error(JSON.stringify({ level: 'error', msg: msg || '', ...obj }))
 };
 
-// attach logger to request for handlers
+// assign a correlation ID to every request for distributed tracing
+app.use((req: any, res, next) => {
+  req.id = (req.headers['x-request-id'] as string) || randomUUID();
+  res.setHeader('x-request-id', req.id);
+  next();
+});
+
+// attach a request-scoped logger that embeds the correlation ID in every log entry
 app.use((req, _res, next) => {
-  (req as any).log = logger;
+  const requestId = (req as any).id;
+  (req as any).log = {
+    info: (obj: any, msg?: string) => logger.info({ requestId, ...obj }, msg),
+    error: (obj: any, msg?: string) => logger.error({ requestId, ...obj }, msg)
+  };
   next();
 });
 
@@ -65,7 +102,7 @@ app.use((req, _res, next) => {
     (req as any).log.info({ query: req.query, body: safeBody }, 'request:received');
   } catch (e) {
     // fallback
-    logger.info({ method: req.method, path: req.path }, 'request:received');
+    logger.info({ requestId: (req as any).id, method: req.method, path: req.path }, 'request:received');
   }
   next();
 });
@@ -95,8 +132,13 @@ async function persist() {
   await persistence.save(store);
 }
 
-function walletFromQuery(value: unknown) {
-  return typeof value === 'string' && value.trim() ? value.trim() : DEV_WALLET;
+function walletFromQuery(req: express.Request, res: express.Response): string | null {
+  const val = req.query.wallet;
+  if (typeof val !== 'string' || !val.trim()) {
+    res.status(400).json({ error: 'wallet query parameter is required' });
+    return null;
+  }
+  return val.trim();
 }
 
 function requireAdminApiToken(req: express.Request, res: express.Response) {
@@ -126,7 +168,11 @@ function createSimpleRateLimit({ windowMs, max }: { windowMs: number; max: numbe
     const now = Date.now();
     const current = attempts.get(key);
     if (!current || current.resetAt <= now) {
-      if (attempts.size > 50_000) attempts.clear();
+      if (attempts.size > 50_000) {
+        for (const [k, v] of attempts) {
+          if (v.resetAt <= now) attempts.delete(k);
+        }
+      }
       attempts.set(key, { count: 1, resetAt: now + windowMs });
       next();
       return;
@@ -174,6 +220,8 @@ interface AuthUser {
 }
 
 const users = new Map<string, AuthUser>();
+const usersByEmail = new Map<string, string>(); // email.toLowerCase() → userId
+const usersByWallet = new Map<string, string>(); // walletAddress → userId
 const adminWallets = (process.env.ADMIN_WALLETS || '')
   .split(',')
   .map((wallet) => wallet.trim())
@@ -230,20 +278,23 @@ if (adminPassword) {
     createdAt: Date.now()
   };
   users.set(adminUser.id, adminUser);
+  usersByEmail.set(adminUser.email.toLowerCase(), adminUser.id);
 }
 
 function ensureConfiguredAdminWalletUsers() {
   for (const wallet of adminWallets) {
-    const existing = [...users.values()].find((user) => user.walletAddress === wallet);
+    const existingId = usersByWallet.get(wallet);
+    const existing = existingId ? users.get(existingId) : undefined;
     if (existing) {
       existing.role = 'admin';
       existing.emailVerified = true;
       continue;
     }
     const id = `admin-wallet-${wallet.slice(0, 8)}`;
+    const email = `${wallet.slice(0, 8)}@admin-wallet.lynx`;
     users.set(id, {
       id,
-      email: `${wallet.slice(0, 8)}@admin-wallet.lynx`,
+      email,
       passwordHash: '',
       displayName: `Admin ${wallet.slice(0, 4)}...${wallet.slice(-4)}`,
       role: 'admin',
@@ -253,6 +304,8 @@ function ensureConfiguredAdminWalletUsers() {
       walletLinkedAt: Date.now(),
       createdAt: Date.now()
     });
+    usersByEmail.set(email.toLowerCase(), id);
+    usersByWallet.set(wallet, id);
   }
 }
 
@@ -264,8 +317,12 @@ async function loadPersistedAuthUsers() {
   const persisted = await persistence.loadAuthUsers<AuthUser>();
   if (!persisted) return;
   users.clear();
+  usersByEmail.clear();
+  usersByWallet.clear();
   for (const [id, user] of persisted) {
     users.set(id, user);
+    usersByEmail.set(user.email.toLowerCase(), id);
+    if (user.walletAddress) usersByWallet.set(user.walletAddress, id);
   }
 }
 
@@ -286,6 +343,13 @@ app.use((req: any, _res, next) => {
 function requireAuth(req: any, res: express.Response) {
   if (!req.user) {
     res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
+    return false;
+  }
+  // The JWT role/identity is fixed at login time. Re-check against the live
+  // users Map so that a banned/deleted account's still-valid (unexpired)
+  // token stops working immediately, instead of remaining usable until expiry.
+  if (!users.has(req.user.userId)) {
+    res.status(401).json({ error: 'Session invalidated' });
     return false;
   }
   return true;
@@ -556,7 +620,7 @@ app.post('/auth/register', maybeAuthRateLimit, asyncRoute(async (req, res) => {
   }).parse(req.body);
 
   // Check if user already exists
-  const exists = [...users.values()].some(u => u.email.toLowerCase() === body.email.toLowerCase());
+  const exists = usersByEmail.has(body.email.toLowerCase());
   if (exists) {
     return res.status(400).json({ error: 'User already exists' });
   }
@@ -565,7 +629,7 @@ app.post('/auth/register', maybeAuthRateLimit, asyncRoute(async (req, res) => {
   const passwordHash = await hashPassword(body.password);
 
   // Create user
-  const userId = `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const userId = `user-${randomUUID()}`;
   const user: AuthUser = {
     id: userId,
     email: body.email,
@@ -580,6 +644,7 @@ app.post('/auth/register', maybeAuthRateLimit, asyncRoute(async (req, res) => {
   };
 
   users.set(userId, user);
+  usersByEmail.set(user.email.toLowerCase(), userId);
   if (user.managedWalletAddress) {
     store.approveWallet(user.managedWalletAddress);
     await persist();
@@ -587,7 +652,7 @@ app.post('/auth/register', maybeAuthRateLimit, asyncRoute(async (req, res) => {
   await persistAuthUsers();
 
   if (requireEmailVerification) {
-    logger.info({
+    (req as any).log.info({
       email: user.email,
       verificationToken: process.env.NODE_ENV === 'production' ? '[redacted]' : user.emailVerificationToken
     }, 'auth:email-verification-required');
@@ -600,7 +665,8 @@ app.post('/auth/register', maybeAuthRateLimit, asyncRoute(async (req, res) => {
 
   res.status(201).json({
     user: publicUser(user),
-    token: generateToken({ userId, email: user.email, role: user.role })
+    token: generateToken({ userId, email: user.email, role: user.role }),
+    refreshToken: generateRefreshToken(userId)
   });
 }));
 
@@ -611,7 +677,7 @@ app.post('/auth/login', maybeAuthRateLimit, asyncRoute(async (req, res) => {
   }).parse(req.body);
 
   // Find user by email
-  const user = [...users.values()].find(u => u.email.toLowerCase() === body.email.toLowerCase());
+  const user = users.get(usersByEmail.get(body.email.toLowerCase()) ?? '');
   if (!user) {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
@@ -631,7 +697,8 @@ app.post('/auth/login', maybeAuthRateLimit, asyncRoute(async (req, res) => {
 
   res.json({
     user: publicUser(user),
-    token: generateToken({ userId: user.id, email: user.email, role: user.role })
+    token: generateToken({ userId: user.id, email: user.email, role: user.role }),
+    refreshToken: generateRefreshToken(user.id)
   });
 }));
 
@@ -656,18 +723,19 @@ app.post('/auth/verify-email', maybeAuthRateLimit, asyncRoute(async (req, res) =
 
   res.json({
     user: publicUser(user),
-    token: generateToken({ userId: user.id, email: user.email, role: user.role })
+    token: generateToken({ userId: user.id, email: user.email, role: user.role }),
+    refreshToken: generateRefreshToken(user.id)
   });
 }));
 
 app.post('/auth/request-password-reset', maybeAuthRateLimit, asyncRoute(async (req, res) => {
   const body = z.object({ email: z.string().email() }).parse(req.body);
-  const user = [...users.values()].find((candidate) => candidate.email.toLowerCase() === body.email.toLowerCase());
+  const user = users.get(usersByEmail.get(body.email.toLowerCase()) ?? '');
   if (user && user.authMethod === 'email') {
     user.passwordResetToken = token('reset');
     user.passwordResetExpiresAt = Date.now() + 1000 * 60 * 30;
     await persistAuthUsers();
-    logger.info({
+    (req as any).log.info({
       email: user.email,
       resetToken: process.env.NODE_ENV === 'production' ? '[redacted]' : user.passwordResetToken
     }, 'auth:password-reset-requested');
@@ -732,10 +800,10 @@ app.post('/auth/wallet-login', maybeAuthRateLimit, asyncRoute(async (req, res) =
   }
 
   // Find existing user by wallet or create one
-  let user = [...users.values()].find(u => u.walletAddress === body.wallet);
+  let user = users.get(usersByWallet.get(body.wallet) ?? '');
 
   if (!user) {
-    const userId = `wallet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const userId = `wallet-${randomUUID()}`;
     user = {
       id: userId,
       email: `${body.wallet.slice(0, 8)}@wallet.lynx`,
@@ -749,6 +817,8 @@ app.post('/auth/wallet-login', maybeAuthRateLimit, asyncRoute(async (req, res) =
       createdAt: Date.now()
     };
     users.set(userId, user);
+    usersByEmail.set(user.email.toLowerCase(), userId);
+    usersByWallet.set(body.wallet, userId);
     store.approveWallet(user.walletAddress!);
     await persist();
   } else if (isAdminWallet(body.wallet)) {
@@ -757,10 +827,28 @@ app.post('/auth/wallet-login', maybeAuthRateLimit, asyncRoute(async (req, res) =
   await persistAuthUsers();
 
   const token = generateToken({ userId: user.id, email: user.email, role: user.role });
+  const refreshToken = generateRefreshToken(user.id);
 
   res.json({
     user: publicUser(user),
     token,
+    refreshToken,
+  });
+}));
+
+app.post('/auth/refresh', maybeAuthRateLimit, asyncRoute(async (req, res) => {
+  const body = z.object({ refreshToken: z.string().min(1) }).parse(req.body);
+  const payload = verifyRefreshToken(body.refreshToken);
+  if (!payload) {
+    return res.status(401).json({ error: 'Invalid or expired refresh token' });
+  }
+  const user = users.get(payload.userId);
+  if (!user) {
+    return res.status(401).json({ error: 'User not found' });
+  }
+  res.json({
+    token: generateToken({ userId: user.id, email: user.email, role: user.role }),
+    refreshToken: generateRefreshToken(user.id),
   });
 }));
 
@@ -805,13 +893,15 @@ app.post('/auth/link-wallet', asyncRoute(async (req: any, res) => {
     return res.status(400).json({ error: 'Wallet signature verification failed' });
   }
 
-  const walletTaken = [...users.values()].find((user) => user.walletAddress === body.wallet && user.id !== currentUser.id);
+  const takenById = usersByWallet.get(body.wallet);
+  const walletTaken = takenById !== undefined && takenById !== currentUser.id;
   if (walletTaken) {
     return res.status(400).json({ error: 'Wallet already linked to another account' });
   }
 
   currentUser.walletAddress = body.wallet;
   currentUser.walletLinkedAt = Date.now();
+  usersByWallet.set(body.wallet, currentUser.id);
   if (isAdminWallet(body.wallet)) currentUser.role = 'admin';
   store.approveWallet(body.wallet);
   await persist();
@@ -849,7 +939,15 @@ app.get('/api/config', (_req, res) => {
 
 app.get('/api/markets', (req, res) => {
   const includeFinished = req.query.includeFinished === 'true';
-  res.json(store.listMarkets(includeFinished));
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+  const all = store.listMarkets(includeFinished);
+  res.json({
+    data: all.slice(offset, offset + limit),
+    total: all.length,
+    limit,
+    offset
+  });
 });
 
 app.get('/api/markets/:id', (req, res) => {
@@ -888,7 +986,7 @@ app.post('/api/markets', asyncRoute(async (req, res) => {
   }
 
   const market = {
-    id: body.id || `market-${Date.now()}`,
+    id: body.id || `market_${randomUUID()}`,
     title: body.title,
     description: body.description,
     category: body.category,
@@ -977,7 +1075,15 @@ app.post('/api/admin/markets/:id/cutoff', asyncRoute(async (req, res) => {
 app.get('/api/duels', (req, res) => {
   const parentMarketId = typeof req.query.marketId === 'string' ? req.query.marketId : undefined;
   const includeFinished = req.query.includeFinished === 'true';
-  res.json(store.listDuels(parentMarketId, includeFinished));
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+  const all = store.listDuels(parentMarketId, includeFinished);
+  res.json({
+    data: all.slice(offset, offset + limit),
+    total: all.length,
+    limit,
+    offset
+  });
 });
 
 app.post('/api/duels', tradingRateLimit, asyncRoute(async (req, res) => {
@@ -1077,13 +1183,15 @@ app.post('/api/orders', tradingRateLimit, asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/portfolio', (req: any, res) => {
-  const wallet = walletFromQuery(req.query.wallet);
+  const wallet = walletFromQuery(req, res);
+  if (!wallet) return;
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
   res.json(store.getPortfolio(wallet));
 });
 
 app.get('/api/ledger', (req: any, res) => {
-  const wallet = walletFromQuery(req.query.wallet);
+  const wallet = walletFromQuery(req, res);
+  if (!wallet) return;
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
   res.json(store.listLedger(wallet));
 });
@@ -1209,7 +1317,8 @@ app.post('/api/ledger/withdraw', asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/positions', (req: any, res) => {
-  const wallet = walletFromQuery(req.query.wallet);
+  const wallet = walletFromQuery(req, res);
+  if (!wallet) return;
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   res.json(store.listPositions(wallet));
 });
@@ -1319,13 +1428,17 @@ app.post('/api/proposals/:id/vote', asyncRoute(async (req, res) => {
 app.get('/api/chart/klines', (req, res) => {
   const symbol = typeof req.query.symbol === 'string' ? req.query.symbol : 'LYNX';
   const interval = typeof req.query.interval === 'string' ? req.query.interval : '1d';
-  const limit = Number(req.query.limit || 100);
+  const rawLimit = parseInt(req.query.limit as string, 10);
+  const limit = isNaN(rawLimit) ? 100 : Math.min(Math.max(rawLimit, 1), 500);
   const marketId = typeof req.query.marketId === 'string' ? req.query.marketId : undefined;
   res.json(store.klines(symbol, interval, limit, marketId));
 });
 
 app.get('/api/notifications', (req, res) => {
-  res.json(store.listNotifications(walletFromQuery(req.query.wallet)));
+  const wallet = walletFromQuery(req, res);
+  if (!wallet) return;
+  if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
+  res.json(store.listNotifications(wallet));
 });
 
 app.post('/api/notifications/read', asyncRoute(async (req, res) => {
@@ -1345,17 +1458,17 @@ app.post('/api/notifications/read', asyncRoute(async (req, res) => {
 app.post('/api/transactions', asyncRoute(async (req, res) => {
   if (process.env.NODE_ENV !== 'test' && !requireAuth(req, res)) return;
   const intent = req.body || {};
-  try { (req as any).log && (req as any).log.info({ intent }, 'tx:intent'); } catch (e) { logger.info({ intent }, 'tx:intent'); }
+  try { (req as any).log && (req as any).log.info({ intent }, 'tx:intent'); } catch (e) { logger.info({ requestId: (req as any).id, intent }, 'tx:intent'); }
   if (intent.signature) {
     const link = `https://explorer.solana.com/tx/${intent.signature}?cluster=${process.env.SOLANA_CLUSTER || 'devnet'}`;
-    try { (req as any).log && (req as any).log.info({ signature: intent.signature, link }, 'tx:signature'); } catch (e) { logger.info({ signature: intent.signature, link }, 'tx:signature'); }
+    try { (req as any).log && (req as any).log.info({ signature: intent.signature, link }, 'tx:signature'); } catch (e) { logger.info({ requestId: (req as any).id, signature: intent.signature, link }, 'tx:signature'); }
     // persist signature in store and emit socket event
     try {
       store.addTransaction({ signature: intent.signature, wallet: typeof intent.wallet === 'string' ? intent.wallet : undefined, intent });
       emit('crypto:tx', { signature: intent.signature, wallet: intent.wallet, link, timestamp: Date.now() });
       await persist();
     } catch (e) {
-      try { (req as any).log && (req as any).log.error({ err: e }, 'Failed to persist tx'); } catch (err2) { logger.error({ err: e }, 'Failed to persist tx'); }
+      try { (req as any).log && (req as any).log.error({ err: e }, 'Failed to persist tx'); } catch (err2) { logger.error({ requestId: (req as any).id, err: e }, 'Failed to persist tx'); }
     }
   }
   res.json({
@@ -1366,9 +1479,12 @@ app.post('/api/transactions', asyncRoute(async (req, res) => {
   });
 }));
 
-app.get('/api/transactions', (req, res) => {
+app.get('/api/transactions', (req: any, res) => {
+  const wallet = walletFromQuery(req, res);
+  if (!wallet) return;
+  if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
   try {
-    const list = store.listTransactions();
+    const list = store.listTransactions().filter((tx) => tx.wallet === wallet);
     res.json(list);
   } catch (e) {
     res.status(500).json({ error: 'Failed to list transactions' });
@@ -1414,6 +1530,13 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 });
 
 async function start() {
+  if (process.env.NODE_ENV === 'production') {
+    const required = ['TREASURY_WALLET', 'TREASURY_SECRET_KEY', 'MANAGED_WALLET_SEED',
+                      'JWT_SECRET', 'DATABASE_URL', 'CORS_ORIGIN'];
+    for (const key of required) {
+      if (!process.env[key]) throw new Error(`Missing required env var: ${key}`);
+    }
+  }
   if (process.env.NODE_ENV === 'production' && persistence.driver !== 'prisma') {
     throw new Error('STORE_DRIVER must be "prisma" in production');
   }

@@ -89,7 +89,8 @@ export function useProgram() {
     setLoadingCount(c => c + 1);
     setError(null);
     try {
-      return await apiFetch<Market[]>('/api/markets');
+      const response = await apiFetch<{ data: Market[]; total: number; limit: number; offset: number }>('/api/markets?limit=200');
+      return response.data;
     } catch (err: any) {
       console.error('Error fetching markets:', err);
       setError(err.message || 'Failed to fetch markets');
@@ -147,7 +148,8 @@ export function useProgram() {
   const fetchDuels = useCallback(async (): Promise<Duel[]> => {
     setLoadingCount(c => c + 1);
     try {
-      return await apiFetch<Duel[]>('/api/duels');
+      const response = await apiFetch<{ data: Duel[]; total: number; limit: number; offset: number }>('/api/duels?limit=200');
+      return response.data;
     } catch (err: any) {
       console.error('Failed to fetch duels', err);
       return [];
@@ -417,12 +419,13 @@ export function useProgram() {
 
   const fetchTransactions = useCallback(async () => {
     try {
-      return await apiFetch('/api/transactions');
+      const currentWallet = requireWallet();
+      return await apiFetch(`/api/transactions?wallet=${encodeURIComponent(currentWallet)}`);
     } catch (err: any) {
       console.error('Failed to fetch transactions', err);
       return [];
     }
-  }, []);
+  }, [requireWallet]);
 
   // Fetch positions for the current wallet
   const fetchPositions = useCallback(async () => {
