@@ -24,7 +24,15 @@ export async function POST(req: NextRequest) {
     }
 
     const signature = await resolveMarketManually(marketPubkey, result as OutcomeName);
-    await sendTelegram(`*Lynx manual resolution executed*\n\nMarket: \`${marketPubkey}\`\nResult: *${result}*\nTx: \`${signature}\``);
+
+    // Send Telegram notification async — resolution is committed on-chain already.
+    // A Telegram failure must NOT cause a 400 response that misleads the admin into
+    // thinking the resolution failed (which could trigger a duplicate resolution attempt).
+    sendTelegram(
+      `*Lynx manual resolution executed*\n\nMarket: \`${marketPubkey}\`\nResult: *${result}*\nTx: \`${signature}\``
+    ).catch((err: any) =>
+      console.error('[resolve] Telegram notification failed (TX was confirmed):', err?.message)
+    );
 
     return NextResponse.json({ ok: true, signature });
   } catch (err: any) {

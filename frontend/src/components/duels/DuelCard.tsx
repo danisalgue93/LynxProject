@@ -8,6 +8,7 @@ import { STATUS_COLORS } from '@/src/constants';
 import { useProgram } from '@/src/hooks/useProgram';
 import { useBlockchainTransaction } from '@/src/hooks/useBlockchainTransaction';
 import { getTxExplorerUrl } from '@/src/lib/explorer';
+import { apiFetch } from '@/src/lib/api';
 import { getManagedWalletAddress, useManagedAuthSession } from '@/src/lib/auth';
 import { useTranslation } from 'react-i18next';
 
@@ -37,8 +38,8 @@ export function DuelCard({ duel }: DuelCardProps) {
       } else {
         // Fallback: fetch the specific market directly so resolved markets are found too
         try {
-          const res = await fetch(`/api/markets/${duel.parentMarketId}`);
-          if (res.ok) setParentMarket(await res.json());
+          const market = await apiFetch<Market>(`/api/markets/${duel.parentMarketId}`);
+          if (market) setParentMarket(market);
         } catch { /* ignore */ }
       }
     };

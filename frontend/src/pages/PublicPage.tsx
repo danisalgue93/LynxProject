@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Sidebar } from '../components/layout/Sidebar';
@@ -46,11 +46,13 @@ export function PublicPage() {
   const { fetchMarkets, createDuel } = useProgram();
   const activeWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession);
 
+  const socketRef = useRef<any>(null);
+
   useEffect(() => {
     try {
       const socket = io(API_BASE_URL, { transports: ['websocket'] });
+      socketRef.current = socket;
       socket.on('connect', () => {
-        console.log('[socket] connected', socket.id);
         if (activeWallet) socket.emit('identify', activeWallet);
       });
       const events = ['market:created','market:updated','duel:created','duel:accepted','orderbook:updated','portfolio:updated','portfolio:updated:private','dao:proposal-created','dao:proposal-updated','dev:reset','crypto:tx'];
@@ -61,9 +63,18 @@ export function PublicPage() {
       }
       return () => {
         socket.disconnect();
+        socketRef.current = null;
       };
     } catch (err) {
-      console.error('Socket init failed', err);
+      // Socket unavailable in SSR or test env — silently ignore
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Re-identify when wallet changes without reconnecting the socket
+  useEffect(() => {
+    if (activeWallet && socketRef.current?.connected) {
+      socketRef.current.emit('identify', activeWallet);
     }
   }, [activeWallet]);
 

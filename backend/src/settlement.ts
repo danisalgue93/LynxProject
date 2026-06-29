@@ -21,6 +21,8 @@
  * Handles payout calculations and fee distribution
  */
 
+import { STAKER_REWARD_FEE, TREASURY_EVENT_FEE, EVENT_PROTOCOL_FEE } from './economy.js';
+
 export interface SettlementInput {
   marketId: string;
   outcome: 'YES' | 'NO' | 'A' | 'B' | 'DRAW';
@@ -43,9 +45,9 @@ export interface SettlementResult {
   }>;
 }
 
-const FEE_TOTAL_PERCENT = 0.10; // 10%
-const FEE_STAKING_SHARE = 0.50; // 50% of total fees
-const FEE_TREASURY_SHARE = 0.50; // 50% of total fees
+const FEE_TOTAL_PERCENT = EVENT_PROTOCOL_FEE;       // 10% (= STAKER_REWARD_FEE + TREASURY_EVENT_FEE)
+const FEE_STAKING_SHARE = STAKER_REWARD_FEE / EVENT_PROTOCOL_FEE;  // 50% of total fees
+const FEE_TREASURY_SHARE = TREASURY_EVENT_FEE / EVENT_PROTOCOL_FEE; // 50% of total fees
 
 /**
  * Calculate settlement payouts for a market

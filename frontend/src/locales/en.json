@@ -214,7 +214,13 @@
     "endingSoon": "Ending Soon",
     "newest": "Newest",
     "noActiveMarkets": "No Active Markets",
-    "noMarketsDesc": "Connect wallet to load contracts or deploy initial data."
+    "noMarketsDesc": "Connect wallet to load contracts or deploy initial data.",
+    "createMarket": "Create market",
+    "category": "Category",
+    "sortBy": "Sort by",
+    "noResults": "No markets match your filters",
+    "clearFilters": "Try adjusting your search or filters",
+    "createFirstMarket": "Create the first market from the admin panel."
   },
   "dashboard": {
     "mainnetBadge": "MAINNET BETA",

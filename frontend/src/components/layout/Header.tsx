@@ -30,7 +30,8 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
   const [showNotifications, setShowNotifications] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<"login" | "signup" | "change">("login");
+  const [authMode, setAuthMode] = useState<"login" | "signup" | "change" | "reset" | "verify">("login");
+  const [authPrefilledToken, setAuthPrefilledToken] = useState<string>("");
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
   const accountWallet = user?.walletAddress || user?.managedWalletAddress || "";
@@ -39,7 +40,12 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
 
   useEffect(() => {
     const handleOpenAuth = (event: any) => {
-      setAuthMode(event?.detail?.mode === "signup" ? "signup" : "login");
+      const mode = event?.detail?.mode;
+      const token = event?.detail?.token || "";
+      if (mode === "signup") setAuthMode("signup");
+      else if (mode === "reset") { setAuthMode("reset"); setAuthPrefilledToken(token); }
+      else if (mode === "verify") { setAuthMode("verify"); setAuthPrefilledToken(token); }
+      else setAuthMode("login");
       setIsAuthModalOpen(true);
     };
     window.addEventListener("open-auth-modal", handleOpenAuth as EventListener);
@@ -230,8 +236,9 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
 
       <AuthModal
         isOpen={isAuthModalOpen}
-        onClose={() => setIsAuthModalOpen(false)}
+        onClose={() => { setIsAuthModalOpen(false); setAuthPrefilledToken(""); }}
         defaultMode={authMode}
+        prefilledToken={authPrefilledToken}
         onLoginSuccess={() => navigate("/dashboard")}
       />
     </>

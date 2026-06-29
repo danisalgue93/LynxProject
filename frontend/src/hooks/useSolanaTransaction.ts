@@ -24,10 +24,7 @@ import { apiFetch, API_BASE_URL } from '../lib/api';
 import { useToast } from '../context/ToastContext';
 import { getTxExplorerUrl } from '../lib/explorer';
 
-const TREASURY_WALLET =
-  import.meta.env.VITE_TREASURY_WALLET ||
-  import.meta.env.VITE_PROGRAM_ID ||
-  '';
+const TREASURY_WALLET = import.meta.env.VITE_TREASURY_WALLET || '';
 
 const SOLANA_NETWORK = (import.meta.env.VITE_SOLANA_NETWORK as string) || 'devnet';
 

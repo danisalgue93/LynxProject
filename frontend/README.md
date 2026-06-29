@@ -1,20 +1,70 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Lynx Frontend
 
-# Run and deploy your AI Studio app
+React + Vite SPA for [Lynx Market](../README.md).
 
-This contains everything you need to run your app locally.
+## Development
 
-View your app in AI Studio: https://ai.studio/apps/7f172cea-2400-40c5-bb16-7dc32c72cb72
+```bash
+cp .env.example .env   # set VITE_API_URL and Solana network
+npm install
+npm run dev            # starts Express proxy + Vite HMR on :3000
+```
 
-## Run Locally
+## Scripts
 
-**Prerequisites:**  Node.js
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start dev server with Express proxy + Vite HMR |
+| `npm run build` | Production build (Vite SPA + Express server bundle) |
+| `npm start` | Start production server from `dist/` |
+| `npm test` | Run Vitest unit tests |
+| `npm run lint` | TypeScript type-check |
 
+## Environment Variables
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+See `.env.example` for the full list.
+
+Key variables:
+
+| Variable | Description |
+|----------|-------------|
+| `VITE_API_URL` | Backend base URL (no trailing slash) |
+| `VITE_SOLANA_NETWORK` | `mainnet-beta` \| `devnet` |
+| `VITE_SOLANA_RPC_URL` | Optional custom RPC endpoint |
+| `VITE_TREASURY_WALLET` | Treasury wallet public key (for on-chain deposits) |
+| `VITE_PROGRAM_ID` | Anchor program ID |
+| `VITE_MAGIC_PUBLISHABLE_KEY` | Magic Link publishable key |
+| `VITE_MOONPAY_API_KEY` | MoonPay publishable key |
+| `MOONPAY_SECRET_KEY` | Server-only MoonPay secret (never expose as VITE_) |
+
+## Architecture
+
+```
+src/
+├── components/
+│   ├── auth/          AuthModal (email + wallet login)
+│   ├── common/        ErrorBoundary, RequiresLoginModal
+│   ├── dao/           Governance / proposals
+│   ├── docs/          Documentation view
+│   ├── duels/         1v1 duel system
+│   ├── layout/        Header, Sidebar, ToastContainer
+│   ├── markets/       Markets grid, market detail, order book
+│   └── portfolio/     Portfolio, staking, deposits
+├── context/           AuthContext, ToastContext
+├── hooks/             useProgram, useSolanaTransaction, useBlockchainTransaction
+├── lib/               api, auth, eventBus, explorer, utils
+├── locales/           en.json, es.json (i18n)
+├── pages/             Dashboard, PublicPage
+├── providers/         SolanaProvider
+└── types.ts           Frontend type definitions
+```
+
+## Testing
+
+Uses [Vitest](https://vitest.dev/) + [React Testing Library](https://testing-library.com/).
+
+Test files live in `src/__tests__/`. Run:
+
+```bash
+npm test
+```

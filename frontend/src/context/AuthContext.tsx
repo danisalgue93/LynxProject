@@ -35,6 +35,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const STORAGE_KEY_TOKEN = 'lynx_auth_token';
+const STORAGE_KEY_REFRESH = 'lynx_refresh_token';
 const STORAGE_KEY_USER = 'lynx_auth_user';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -42,11 +43,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const applySession = (data: { user: AuthUser; token: string }) => {
+  const applySession = (data: { user: AuthUser; token: string; refreshToken?: string }) => {
     setToken(data.token);
     setUser(data.user);
     localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
     localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data.user));
+    if (data.refreshToken) {
+      localStorage.setItem(STORAGE_KEY_REFRESH, data.refreshToken);
+    }
     if (data.user.authMethod === 'email' && data.user.managedWalletAddress) {
       saveManagedAuthSession({
         provider: 'email-password',
@@ -71,6 +75,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       if (!response.ok) {
         localStorage.removeItem(STORAGE_KEY_TOKEN);
+        localStorage.removeItem(STORAGE_KEY_REFRESH);
         localStorage.removeItem(STORAGE_KEY_USER);
         setToken(null);
         setUser(null);
@@ -99,6 +104,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
       setToken(null);
       localStorage.removeItem(STORAGE_KEY_TOKEN);
+      localStorage.removeItem(STORAGE_KEY_REFRESH);
       localStorage.removeItem(STORAGE_KEY_USER);
     }
   };
@@ -109,9 +115,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const storedUser = localStorage.getItem(STORAGE_KEY_USER);
 
     if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
-      refreshUser().finally(() => setIsLoading(false));
+      try {
+        setToken(storedToken);
+        setUser(JSON.parse(storedUser));
+        refreshUser().finally(() => setIsLoading(false));
+      } catch {
+        // Corrupted localStorage — clear and start fresh
+        localStorage.removeItem(STORAGE_KEY_TOKEN);
+        localStorage.removeItem(STORAGE_KEY_REFRESH);
+        localStorage.removeItem(STORAGE_KEY_USER);
+        setIsLoading(false);
+      }
     } else {
       setIsLoading(false);
     }
@@ -275,6 +289,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     setToken(null);
     localStorage.removeItem(STORAGE_KEY_TOKEN);
+    localStorage.removeItem(STORAGE_KEY_REFRESH);
     localStorage.removeItem(STORAGE_KEY_USER);
     clearManagedAuthSession();
   };

@@ -12,11 +12,11 @@ export default defineConfig(({mode}) => {
       react(), 
       tailwindcss(),
       nodePolyfills({
-        include: ['buffer', 'crypto', 'stream', 'util'],
+        // Only 'buffer' is strictly required by @solana/web3.js in the browser.
+        // Including crypto/stream/util adds ~200KB to the bundle unnecessarily.
+        include: ['buffer'],
         globals: {
           Buffer: true,
-          global: true,
-          process: true,
         },
       })
     ],
@@ -34,9 +34,8 @@ export default defineConfig(({mode}) => {
       },
     },
     server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modify: file watching is disabled to prevent flickering during agent edits.
-      hmr: process.env.DISABLE_HMR !== 'true',
+      hmr: true,
+      port: 5173,
     },
     test: {
       globals: true,

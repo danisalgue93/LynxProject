@@ -1,3 +1,6 @@
+// Sentry MUST be the very first import — instruments Express, Prisma, and async ops
+import './instrument.js';
+import { Sentry } from './instrument.js';
 import cors from 'cors';
 import 'dotenv/config';
 import express from 'express';
@@ -5,6 +8,7 @@ import helmet from 'helmet';
 import http from 'http';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import morgan from 'morgan';
+import compression from 'compression';
 import { Server } from 'socket.io';
 import { z, ZodError } from 'zod';
 import nacl from 'tweetnacl';
@@ -15,6 +19,7 @@ import { createPersistence } from './persistence.js';
 import { LynxState } from './state.js';
 import type { Currency, OrderSide, Position } from './types.js';
 import { generateToken, generateRefreshToken, verifyToken, verifyRefreshToken, hashPassword, hashPasswordSync, verifyPassword, extractToken } from './auth.js';
+import { sendVerificationEmail, sendPasswordResetEmail, isEmailConfigured } from './email.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -53,16 +58,28 @@ app.use(helmet({
 // signatures can never travel unencrypted, even if the proxy is misconfigured
 // or someone hits the origin port directly.
 if (process.env.NODE_ENV === 'production') {
+  // Enforce HTTPS: reject plain-HTTP requests that slip past the reverse proxy.
+  // We use a configured APP_URL (not req.headers.host) to build the redirect
+  // target, preventing Host-header injection attacks.
+  const appHost = (process.env.APP_URL || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
   app.use((req, res, next) => {
     if (req.headers['x-forwarded-proto'] !== 'https') {
-      res.redirect(301, `https://${req.headers.host}${req.originalUrl}`);
+      if (appHost) {
+        res.redirect(301, `https://${appHost}${req.originalUrl}`);
+      } else {
+        res.status(400).json({ error: 'HTTPS required' });
+      }
       return;
     }
     next();
   });
 }
 
+// Gzip/brotli compression for all responses (reduces bandwidth ~70%)
+app.use(compression());
 app.use(cors({ origin: corsOrigins, credentials: true }));
+// Note: Sentry auto-instruments HTTP in v8 via the init() call in instrument.ts.
+// No manual middleware needed here — setupExpressErrorHandler() is called after routes.
 app.use(express.json({ limit: '1mb' }));
 // lightweight structured logger (no external dependency)
 const logger = {
@@ -99,7 +116,12 @@ app.use((req, _res, next) => {
         if (key in safeBody) safeBody[key] = '[REDACTED]';
       }
     }
-    (req as any).log.info({ query: req.query, body: safeBody }, 'request:received');
+    // Mask wallet query params to avoid leaking on-chain addresses into logs
+    const safeQuery = req.query && typeof req.query === 'object' ? { ...req.query } : req.query;
+    if (safeQuery && typeof safeQuery === 'object' && 'wallet' in safeQuery) {
+      (safeQuery as any).wallet = '[REDACTED]';
+    }
+    (req as any).log.info({ query: safeQuery, body: safeBody }, 'request:received');
   } catch (e) {
     // fallback
     logger.info({ requestId: (req as any).id, method: req.method, path: req.path }, 'request:received');
@@ -386,7 +408,13 @@ function requireAdmin(req: any, res: express.Response) {
   const auth = req.headers.authorization;
   const bearerToken = auth?.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : undefined;
   const headerToken = typeof req.headers['x-admin-api-token'] === 'string' ? req.headers['x-admin-api-token'] : undefined;
-  if (configuredToken && (bearerToken === configuredToken || headerToken === configuredToken)) {
+  // Use constant-time comparison to prevent timing attacks on the admin token
+  const safeEqual = (a: string, b: string) => {
+    try {
+      return a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+    } catch { return false; }
+  };
+  if (configuredToken && ((bearerToken !== undefined && safeEqual(bearerToken, configuredToken)) || (headerToken !== undefined && safeEqual(headerToken, configuredToken)))) {
     return true;
   }
   if (!requireAuth(req, res)) return false;
@@ -652,14 +680,25 @@ app.post('/auth/register', maybeAuthRateLimit, asyncRoute(async (req, res) => {
   await persistAuthUsers();
 
   if (requireEmailVerification) {
-    (req as any).log.info({
-      email: user.email,
-      verificationToken: process.env.NODE_ENV === 'production' ? '[redacted]' : user.emailVerificationToken
-    }, 'auth:email-verification-required');
+    (req as any).log.info({ email: user.email }, 'auth:email-verification-required');
+    // Send verification email (non-blocking — failure is logged but doesn't block registration)
+    if (isEmailConfigured()) {
+      sendVerificationEmail({
+        to: user.email,
+        token: user.emailVerificationToken!,
+        displayName: user.displayName,
+      }).catch((err) => {
+        logger.error({ email: user.email, err: err?.message }, 'email:verification-send-failed');
+      });
+    } else {
+      // Dev mode: no Resend configured — expose token in response so the flow can be tested
+      logger.info({ email: user.email, verificationToken: user.emailVerificationToken }, 'email:no-resend-dev-token');
+    }
     return res.status(201).json({
       requiresEmailVerification: true,
       email: user.email,
-      devVerificationToken: process.env.NODE_ENV === 'production' ? undefined : user.emailVerificationToken
+      // Only expose the token in development when Resend is not configured
+      devVerificationToken: isEmailConfigured() ? undefined : user.emailVerificationToken,
     });
   }
 
@@ -735,14 +774,20 @@ app.post('/auth/request-password-reset', maybeAuthRateLimit, asyncRoute(async (r
     user.passwordResetToken = token('reset');
     user.passwordResetExpiresAt = Date.now() + 1000 * 60 * 30;
     await persistAuthUsers();
-    (req as any).log.info({
-      email: user.email,
-      resetToken: process.env.NODE_ENV === 'production' ? '[redacted]' : user.passwordResetToken
-    }, 'auth:password-reset-requested');
+    (req as any).log.info({ email: user.email }, 'auth:password-reset-requested');
+    if (isEmailConfigured()) {
+      sendPasswordResetEmail({ to: user.email, token: user.passwordResetToken }).catch((err) => {
+        logger.error({ email: user.email, err: err?.message }, 'email:reset-send-failed');
+      });
+    } else {
+      logger.info({ email: user.email, resetToken: user.passwordResetToken }, 'email:no-resend-dev-token');
+    }
   }
+  // Always return 200 to avoid user enumeration (don't reveal whether email exists)
   res.json({
     ok: true,
-    devResetToken: process.env.NODE_ENV === 'production' ? undefined : user?.passwordResetToken
+    // Only expose the token in development when Resend is not configured
+    devResetToken: isEmailConfigured() ? undefined : user?.passwordResetToken,
   });
 }));
 
@@ -918,12 +963,21 @@ app.delete('/auth/unlink-wallet', (req: any, res) => {
 // ==================== API ENDPOINTS ====================
 
 app.get('/api/health', (_req, res) => {
+  const mem = process.memoryUsage();
   res.json({
     status: 'ok',
     service: 'lynx-backend',
+    version: process.env.npm_package_version || '0.0.0',
     store: persistence.driver,
     solanaCluster: process.env.SOLANA_CLUSTER || 'devnet',
-    programId: process.env.PROGRAM_ID || null
+    programId: process.env.PROGRAM_ID || null,
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+    memory: {
+      heapUsedMB: Math.round(mem.heapUsed / 1_048_576),
+      heapTotalMB: Math.round(mem.heapTotal / 1_048_576),
+      rssMB: Math.round(mem.rss / 1_048_576),
+    },
   });
 });
 
@@ -1503,6 +1557,9 @@ app.post('/api/dev/reset', asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Sentry v8: register error handler after all routes, before the generic Express error handler
+Sentry.setupExpressErrorHandler(app);
+
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const message = error instanceof Error ? error.message : 'Internal Server Error';
   const normalizedMessage = message.toLowerCase();
@@ -1526,13 +1583,17 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
           normalizedMessage.includes('expired')
         ? 400
         : 500;
+  // 500s are captured by sentryErrorHandler above; log them locally too
+  if (status === 500) {
+    logger.error({ err: message }, 'unhandled-error');
+  }
   res.status(status).json({ error: message });
 });
 
 async function start() {
   if (process.env.NODE_ENV === 'production') {
     const required = ['TREASURY_WALLET', 'TREASURY_SECRET_KEY', 'MANAGED_WALLET_SEED',
-                      'JWT_SECRET', 'DATABASE_URL', 'CORS_ORIGIN'];
+                      'JWT_SECRET', 'DATABASE_URL', 'CORS_ORIGIN', 'APP_URL'];
     for (const key of required) {
       if (!process.env[key]) throw new Error(`Missing required env var: ${key}`);
     }

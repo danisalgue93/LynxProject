@@ -1,27 +1,38 @@
-import {StrictMode} from 'react';
-import {createRoot} from 'react-dom/client';
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * IMPORTANT: sentry.ts MUST be the very first import so that it can
+ * instrument React, the router, and all other libraries before they load.
+ */
+import './lib/sentry';
+
+import React from 'react';
+import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
+import { I18nextProvider } from 'react-i18next';
+import i18n from './i18n';
+import { ToastProvider } from './context/ToastContext';
+import { AuthProvider } from './context/AuthContext';
+import { SolanaProvider } from './providers/SolanaProvider';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import App from './App.tsx';
 import './index.css';
-import './i18n';
-import { initializeLanguage } from './i18n';
-import { SolanaProvider } from './providers/SolanaProvider.tsx';
-import { AuthProvider } from './context/AuthContext';
-import { ToastProvider } from './context/ToastContext';
 
-// Initialize location based language
-initializeLanguage();
-
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
     <BrowserRouter>
-      <AuthProvider>
+      <I18nextProvider i18n={i18n}>
         <ToastProvider>
-          <SolanaProvider>
-            <App />
-          </SolanaProvider>
+          <AuthProvider>
+            <SolanaProvider>
+              <ErrorBoundary>
+                <App />
+              </ErrorBoundary>
+            </SolanaProvider>
+          </AuthProvider>
         </ToastProvider>
-      </AuthProvider>
+      </I18nextProvider>
     </BrowserRouter>
-  </StrictMode>,
+  </React.StrictMode>
 );

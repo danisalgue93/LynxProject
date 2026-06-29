@@ -1,0 +1,153 @@
+version: '3.9'
+
+# ── Shared network ─────────────────────────────────────────────────────────────
+networks:
+  lynx:
+    driver: bridge
+
+# ── Named volumes ──────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+  certbot_www:      # shared between nginx (serve) and certbot (write challenge files)
+  certbot_conf:     # shared between nginx (read certs) and certbot (write certs)
+
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-lynx_market}
+      POSTGRES_USER:     ${POSTGRES_USER:-lynx}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [lynx]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lynx} -d ${POSTGRES_DB:-lynx_market}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Prisma migrations (runs once then exits) ──────────────────────────────────
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: >
+      sh -c "npx prisma migrate deploy && echo 'Migrations applied'"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-lynx}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lynx_market}?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [lynx]
+    restart: "no"
+
+  # ── Backend ──────────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV:             production
+      PORT:                 4000
+      DATABASE_URL:         postgresql://${POSTGRES_USER:-lynx}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lynx_market}?schema=public
+      STORE_DRIVER:         prisma
+      JWT_SECRET:           ${JWT_SECRET:?JWT_SECRET is required}
+      REFRESH_SECRET:       ${REFRESH_SECRET:?REFRESH_SECRET is required}
+      JWT_EXPIRY:           ${JWT_EXPIRY:-15m}
+      REFRESH_EXPIRY:       ${REFRESH_EXPIRY:-7d}
+      CORS_ORIGIN:          ${CORS_ORIGIN:?CORS_ORIGIN is required}
+      ADMIN_WALLETS:        ${ADMIN_WALLETS:?ADMIN_WALLETS is required}
+      ADMIN_API_TOKEN:      ${ADMIN_API_TOKEN:?ADMIN_API_TOKEN is required}
+      TREASURY_WALLET:      ${TREASURY_WALLET:?TREASURY_WALLET is required}
+      TREASURY_SECRET_KEY:  ${TREASURY_SECRET_KEY:?TREASURY_SECRET_KEY is required}
+      MANAGED_WALLET_SEED:  ${MANAGED_WALLET_SEED:?MANAGED_WALLET_SEED is required}
+      SOLANA_CLUSTER:       ${SOLANA_CLUSTER:-mainnet-beta}
+      SOLANA_RPC_URL:       ${SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}
+      PROGRAM_ID:           ${PROGRAM_ID:-}
+      LYNX_MINT:            ${LYNX_MINT:-}
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-true}
+      RESEND_API_KEY:       ${RESEND_API_KEY:-}
+      EMAIL_FROM:           ${EMAIL_FROM:-noreply@lynxmarket.io}
+      APP_URL:              ${APP_URL:?APP_URL is required (e.g. https://yourdomain.com)}
+      SENTRY_DSN:           ${SENTRY_DSN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [lynx]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  # ── Frontend ──────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL:                 ${VITE_API_URL:-}
+        VITE_SOLANA_NETWORK:          ${SOLANA_CLUSTER:-mainnet-beta}
+        VITE_SOLANA_RPC_URL:          ${SOLANA_RPC_URL:-}
+        VITE_MAGIC_PUBLISHABLE_KEY:   ${VITE_MAGIC_PUBLISHABLE_KEY:-}
+        VITE_MOONPAY_API_KEY:         ${VITE_MOONPAY_API_KEY:-}
+        VITE_TREASURY_WALLET:         ${TREASURY_WALLET:-}
+        VITE_PROGRAM_ID:              ${PROGRAM_ID:-}
+        VITE_LYNX_MINT:               ${LYNX_MINT:-}
+        VITE_SENTRY_DSN:              ${VITE_SENTRY_DSN:-}
+    restart: unless-stopped
+    environment:
+      NODE_ENV:           production
+      PORT:               3000
+      BACKEND_URL:        http://backend:4000
+      CORS_ORIGIN:        ${CORS_ORIGIN:-}
+      MOONPAY_SECRET_KEY: ${MOONPAY_SECRET_KEY:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [lynx]
+
+  # ── Nginx reverse proxy ───────────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot_www:/var/www/certbot:ro        # serve ACME challenge files
+      - certbot_conf:/etc/nginx/ssl:ro          # serve TLS certificates
+    depends_on:
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_healthy
+    networks: [lynx]
+    healthcheck:
+      test: ["CMD-SHELL", "nginx -t 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Certbot (Let's Encrypt certificate management) ────────────────────────────
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - certbot_www:/var/www/certbot   # write ACME challenge files
+      - certbot_conf:/etc/letsencrypt  # write certificates
+    # Run in standalone renewal mode. Trigger renewal manually or via a cron job:
+    #   docker compose run --rm certbot renew
+    # First-time issuance: see nginx/init-certs.sh
+    entrypoint: >
+      sh -c "trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done"
+    profiles: [certbot]   # only starts when explicitly included: --profile certbot

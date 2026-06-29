@@ -214,7 +214,13 @@
     "endingSoon": "Terminando Pronto",
     "newest": "Más Recientes",
     "noActiveMarkets": "No Hay Mercados Activos",
-    "noMarketsDesc": "Conecta tu billetera para cargar contratos o desplegar datos iniciales."
+    "noMarketsDesc": "Conecta tu billetera para cargar contratos o desplegar datos iniciales.",
+    "createMarket": "Crear mercado",
+    "category": "Categoría",
+    "sortBy": "Ordenar por",
+    "noResults": "Ningún mercado coincide con tus filtros",
+    "clearFilters": "Prueba ajustando tu búsqueda o filtros",
+    "createFirstMarket": "Crea el primer mercado desde el panel admin."
   },
   "dashboard": {
     "mainnetBadge": "BETA MAINNET",

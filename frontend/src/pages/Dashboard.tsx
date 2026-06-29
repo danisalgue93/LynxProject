@@ -52,7 +52,6 @@ export function Dashboard() {
       const socket = io(API_BASE_URL, { transports: ['websocket'] });
       socketRef.current = socket;
       socket.on('connect', () => {
-        console.log('[socket] connected', socket.id);
         if (activeWallet) socket.emit('identify', activeWallet);
       });
       const events = ['market:created','market:updated','duel:created','duel:accepted','orderbook:updated','portfolio:updated','portfolio:updated:private','dao:proposal-created','dao:proposal-updated','dev:reset','crypto:tx'];

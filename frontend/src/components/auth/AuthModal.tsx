@@ -8,7 +8,8 @@ import { useAuth } from "@/src/context/AuthContext";
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  defaultMode: "login" | "signup" | "change";
+  defaultMode: "login" | "signup" | "change" | "reset" | "verify";
+  prefilledToken?: string;
   onLoginSuccess?: () => void;
 }
 
@@ -22,7 +23,7 @@ function bytesToBase64(bytes: Uint8Array) {
   return window.btoa(binary);
 }
 
-export function AuthModal({ isOpen, onClose, defaultMode, onLoginSuccess }: AuthModalProps) {
+export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", onLoginSuccess }: AuthModalProps) {
   const { t } = useTranslation();
   const { setVisible } = useWalletModal();
   const { connected, publicKey, signMessage } = useWallet();
@@ -58,8 +59,13 @@ export function AuthModal({ isOpen, onClose, defaultMode, onLoginSuccess }: Auth
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
+      // Pre-fill token from email deep-link (e.g. /?reset=TOKEN or /?verify=TOKEN)
+      if (prefilledToken) {
+        if (defaultMode === "reset") setResetToken(prefilledToken);
+        if (defaultMode === "verify") setVerificationToken(prefilledToken);
+      }
     }
-  }, [defaultMode, isOpen]);
+  }, [defaultMode, isOpen, prefilledToken]);
 
   useEffect(() => {
     if (!walletLoginRequested || !connected || !publicKey || !signMessage || !isOpen) return;
@@ -141,8 +147,14 @@ export function AuthModal({ isOpen, onClose, defaultMode, onLoginSuccess }: Auth
         const result = await register(email, password);
         const signupResult = result as { requiresEmailVerification?: boolean; devVerificationToken?: string; email?: string } | undefined;
         if (signupResult?.requiresEmailVerification) {
+          // In production, devVerificationToken is undefined and the token arrives by email.
+          // In dev (no Resend configured), it is returned directly so the flow can be tested.
           setVerificationToken(signupResult.devVerificationToken || "");
-          setStatus(t("auth.confirmEmailSent", "Confirm your email to activate the account."));
+          setStatus(
+            signupResult.devVerificationToken
+              ? t("auth.devTokenNote", "[DEV] Token pre-filled from API response.")
+              : t("auth.confirmEmailSent", "Check your email — we sent you a verification link.")
+          );
           setMode("verify");
           return;
         }
@@ -156,8 +168,13 @@ export function AuthModal({ isOpen, onClose, defaultMode, onLoginSuccess }: Auth
       }
       if (mode === "forgot") {
         const result = await requestPasswordReset(email);
+        // In production, devResetToken is undefined and the token arrives by email.
         setResetToken(result.devResetToken || "");
-        setStatus(t("auth.resetEmailSent", "Password reset instructions sent."));
+        setStatus(
+          result.devResetToken
+            ? t("auth.devTokenNote", "[DEV] Token pre-filled from API response.")
+            : t("auth.resetEmailSent", "If that email exists, we sent a reset link. Check your inbox.")
+        );
         setMode("reset");
         return;
       }

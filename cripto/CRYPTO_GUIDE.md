@@ -1,55 +1,92 @@
-# Lynx Protocol - Guia cripto
+# Lynx Crypto Module — Complete Guide
 
-La carpeta `cripto` contiene el programa Anchor/Solana para la parte on-chain de Lynx.
+## Architecture
 
-## Estado actual
-
-- `cargo check -p lynx_project` pasa.
-- `anchor build --no-idl` pasa y genera el binario SBF.
-- `anchor build` completo queda bloqueado solo en generacion IDL por una incompatibilidad entre `anchor-syn 0.30.1`, `proc_macro2` y Rust 1.89.
-- `scripts/init_protocol.cjs` inicializa Devnet sin depender del IDL.
-
-## Programa
-
-Program ID:
-
-```text
-CiKuW8r71WnTLkGAKvFyYhtV2UhuJ4j8swDPDc8PEXvu
+```
+cripto/
+├── programs/lynx_project/   Anchor smart contract (Solana)
+│   └── src/
+│       ├── lib.rs           All instructions (entry points)
+│       ├── state.rs         On-chain account structures
+│       ├── constants.rs     Protocol constants (fees, BPS, limits)
+│       └── error.rs         Custom error codes
+├── admin-panel/             Next.js admin UI (market resolution)
+├── scripts/init_protocol.cjs  One-time protocol initialization
+├── migrations/deploy.ts     Anchor migration (alternative init)
+└── Anchor.toml              Anchor workspace config
 ```
 
-## Flujo economico implementado
+## Smart Contract Instructions
 
-1. `initialize_protocol`: registra admin, treasury, mint LYNX, vault de staking y vault de rewards.
-2. `create_market`: crea mercados SOL o LYNX con autoridad de oraculo y fallback admin.
-3. `buy_position_sol`: deposita SOL en el vault del mercado.
-4. `buy_position_lynx_with_burn`: registra posicion LYNX y quema el 15% del importe apostado.
-5. `cut_off_market`: cierra apuestas al llegar `cutoff_ts`.
-6. `resolve_market_oracle`: resuelve con la signer de oraculo configurada.
-7. `resolve_market_admin`: fallback del admin tras `oracle_deadline`.
-8. `claim_market_sol`: paga a ganadores el 90% neto del pool SOL.
-9. `mint_lynx_distribution`: emite LYNX tras eventos SOL: 30% participantes, 10% treasury, 60% venta inicial.
-10. `stake_lynx`, `unstake_lynx`, `claim_staking_rewards`: staking LYNX con rewards SOL acumuladas por fee de eventos.
-11. `create_duel`, `accept_duel`, `resolve_duel_sol`: duelos 1v1 SOL.
-12. `resolve_protocol_duel`: flujo 1v1vP; si gana el protocolo, el SOL va a treasury; si gana el usuario, recupera stake y recibe LYNX emitido.
+### Market lifecycle
 
-## Backend vs on-chain
+| Instruction | Signer | Notes |
+|-------------|--------|-------|
+| `create_market` | Admin | Creates on-chain market with vault |
+| `buy_position_sol` | Buyer | Permissionless — deposits SOL |
+| `buy_position_lynx_with_burn` | Buyer | Burns 15% LYNX, deposits remainder |
+| `cut_off_market` | Anyone | Permissionless once `cutoff_ts` is reached |
+| `resolve_market_oracle` | Oracle authority | After `resolve_ts` |
+| `resolve_market_admin` | Admin | After `oracle_deadline` (oracle fallback) |
+| `claim_market_sol` | Winning position owner | After market is Resolved |
+| `mint_lynx_distribution` | Position owner | Mints LYNX participation rewards |
 
-El order book completo y los 1v1 LYNX quedan off-chain en `backend`, estilo Polymarket, usando ledger interno y burn contable. El contrato mantiene las piezas que deben vivir on-chain: vaults, resolucion, emision/burn de LYNX, staking y duelos SOL/1v1vP base.
+### Staking
 
-## Deploy Devnet
+| Instruction | Notes |
+|-------------|-------|
+| `stake_lynx` | Deposit LYNX, start earning SOL rewards |
+| `unstake_lynx` | Withdraw LYNX, claims pending SOL rewards |
+| `claim_staking_rewards` | Claim accrued SOL rewards |
+
+### Duels
+
+| Instruction | Notes |
+|-------------|-------|
+| `create_duel` | Creator deposits SOL and picks outcome |
+| `accept_duel` | Rival deposits equal SOL with opposite outcome |
+| `resolve_duel_sol` | Permissionless once parent market is Resolved |
+| `resolve_protocol_duel` | OneVOneVProtocol type only |
+
+## Protocol Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `EVENT_PROTOCOL_FEE_BPS` | 1000 (10%) | Total fee deducted from winning pool |
+| `STAKER_REWARD_FEE_BPS` | 500 (5%) | Portion going to LYNX stakers |
+| `TREASURY_EVENT_FEE_BPS` | 500 (5%) | Portion going to treasury |
+| `GLOBAL_TRADE_FEE_BPS` | 10 (0.1%) | Fee on duel payouts |
+| `LYNX_EVENT_BURN_BPS` | 1500 (15%) | LYNX burned on market entry |
+| `ORACLE_TIMEOUT_SECONDS` | 3600 | Grace period before admin can resolve |
+
+## Deployment
+
+### Prerequisites
+
+- Rust + Solana CLI + Anchor CLI 0.30.1
+- A funded Solana wallet at `~/.config/solana/id.json`
+
+### Steps
 
 ```bash
-npm run build:program
+# 1. Build and deploy the program
+cd cripto
+anchor build
 anchor deploy --provider.cluster devnet
-npm run init:devnet
+
+# 2. Initialize the protocol (creates config PDA, LYNX mint, vaults)
+PROGRAM_ID=<deployed_program_id> node scripts/init_protocol.cjs
+
+# 3. Note the output addresses:
+#    - config PDA
+#    - LYNX mint address
+#    → Update VITE_PROGRAM_ID and VITE_LYNX_MINT in frontend .env
+#    → Update PROGRAM_ID and LYNX_MINT in backend .env
 ```
 
-En Windows tambien puedes ejecutar `deploy_devnet.ps1`, que hace build, deploy e inicializacion.
+## Security notes
 
-## Panel admin
-
-`admin-panel` se ha actualizado al layout nuevo:
-
-- `ProtocolConfig`: admin, treasury, mint, stake vault, rewards vault.
-- `Market`: incluye `is_ternary`, `draw_total` y `burned_lynx`.
-- `resolve_market_admin` firma con las cuentas nuevas: config, market, vault, rewards vault, admin y treasury.
+- The admin keypair used for `resolve_market_admin` is stored only in the admin panel's environment variables, never in the frontend or backend.
+- The oracle authority keypair (`oracle_authority`) is a separate key with narrower permissions — it can only resolve markets, not administer the protocol.
+- All arithmetic uses `checked_*` operations to prevent overflow/underflow.
+- All vault transfers verify rent-exemption before withdrawing.

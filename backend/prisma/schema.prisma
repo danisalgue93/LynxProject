@@ -156,6 +156,7 @@ model UserPosition {
 
   @@index([wallet])
   @@index([marketId])
+  @@index([wallet, claimed])
 }
 
 model WalletState {
@@ -248,6 +249,7 @@ model Duel {
   @@index([parentMarketId])
   @@index([status])
   @@index([creator])
+  @@index([rival])
 }
 
 // ─── Governance ───────────────────────────────────────────────────────────────
@@ -313,6 +315,7 @@ model LedgerEntry {
   @@index([wallet])
   @@index([type])
   @@index([createdAt])
+  @@index([wallet, status])
 }
 
 // ─── Crypto / Transactions ────────────────────────────────────────────────────

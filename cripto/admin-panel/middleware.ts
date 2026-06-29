@@ -19,6 +19,12 @@ export function middleware(req: NextRequest) {
   res.headers.set('X-Content-Type-Options', 'nosniff');
   res.headers.set('Referrer-Policy', 'no-referrer');
   res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  // Strict CSP for admin panel — no external resources allowed
+  res.headers.set(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none';"
+  );
+  res.headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
   return res;
 }
 
