@@ -229,6 +229,25 @@ export class LynxState {
     return { portfolio: this.getPortfolio(wallet.wallet), ledgerEntry };
   }
 
+  /**
+   * Reverse a failed withdrawal by re-crediting the wallet.
+   * Creates a REFUND ledger entry (not DEPOSIT) for auditability.
+   */
+  refund(input: { wallet: string; currency: Currency; amount: number; reference?: string }) {
+    assertPositiveAmount(input.amount);
+    const wallet = this.getWallet(input.wallet);
+    this.credit(wallet, input.currency, input.amount);
+    const ledgerEntry = this.addLedgerEntry({
+      wallet: wallet.wallet,
+      type: 'REFUND',
+      currency: input.currency,
+      amount: roundAmount(input.amount),
+      status: 'COMPLETED',
+      reference: input.reference
+    });
+    return { portfolio: this.getPortfolio(wallet.wallet), ledgerEntry };
+  }
+
   withdraw(input: { wallet: string; currency: Currency; amount: number; reference?: string }) {
     assertPositiveAmount(input.amount);
     const wallet = this.getWallet(input.wallet);
@@ -979,6 +998,18 @@ export class LynxState {
 
   hasTransaction(signature: string) {
     return this.transactions.has(signature);
+  }
+
+  getTransaction(signature: string) {
+    return this.transactions.get(signature);
+  }
+
+  /**
+   * Remove a pre-registered transaction (used to roll back a replay-guard
+   * registration when the on-chain verification subsequently fails).
+   */
+  removeTransaction(signature: string) {
+    this.transactions.delete(signature);
   }
 
   getUserPositions(marketId: string) {

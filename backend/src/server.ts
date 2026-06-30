@@ -6,7 +6,7 @@ import 'dotenv/config';
 import express from 'express';
 import helmet from 'helmet';
 import http from 'http';
-import { createHash, randomBytes, randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import morgan from 'morgan';
 import compression from 'compression';
 import { Server } from 'socket.io';
@@ -489,10 +489,9 @@ async function verifyOnChainSolDeposit(params: {
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const { signature, fromWallet, amountSol } = params;
 
-  if (store.hasTransaction(signature)) {
-    return { ok: false, error: 'This transaction signature has already been used' };
-  }
-
+  // Note: signature replay check is performed by the caller (atomically, before this
+  // async function is invoked) to prevent TOCTOU race conditions. This function
+  // only validates the on-chain transaction details.
   let treasuryPubkey: PublicKey;
   let senderPubkey: PublicKey;
   try {
@@ -1294,12 +1293,25 @@ app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
         res.status(400).json({ error: 'Only SOL deposits can currently be verified on-chain' });
         return;
       }
+      // REPLAY / RACE-CONDITION FIX: Register the signature synchronously BEFORE
+      // the async RPC verification. Without this, two concurrent requests with the
+      // same signature could both pass hasTransaction() before either records it.
+      // store.hasTransaction() is O(1) synchronous, so this is atomic within Node.
+      if (store.hasTransaction(body.signature!)) {
+        res.status(400).json({ error: 'This transaction signature has already been used' });
+        return;
+      }
+      // Pre-register to block concurrent duplicates; removed on verification failure
+      store.addTransaction({ signature: body.signature!, wallet, intent: { type: 'DEPOSIT_PENDING', currency: body.currency, amount: body.amount, provider: body.provider } });
+
       const verification = await verifyOnChainSolDeposit({
         signature: body.signature!,
         fromWallet: wallet,
         amountSol: body.amount
       });
       if (!verification.ok) {
+        // Remove the pre-registration so the user can retry with a valid signature
+        store.removeTransaction(body.signature!);
         res.status(400).json({ error: verification.error });
         return;
       }
@@ -1319,8 +1331,13 @@ app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
     provider: body.provider,
     reference: body.reference
   });
-  if (body.signature) {
+  // Only record the final transaction if not already pre-registered (EXTERNAL_WALLET flow)
+  if (body.signature && !store.hasTransaction(body.signature)) {
     store.addTransaction({ signature: body.signature, wallet, intent: { type: 'DEPOSIT', currency: body.currency, amount: body.amount, provider: body.provider } });
+  } else if (body.signature) {
+    // Update the pre-registered DEPOSIT_PENDING entry to DEPOSIT
+    const existing = store.getTransaction(body.signature);
+    if (existing) existing.intent = { type: 'DEPOSIT', currency: body.currency, amount: body.amount, provider: body.provider };
   }
   await persist();
   emit('ledger:deposit', { wallet, ledgerEntry: result.ledgerEntry });
@@ -1339,35 +1356,55 @@ app.post('/api/ledger/withdraw', asyncRoute(async (req, res) => {
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet || !requireApprovedWallet(res, wallet)) return;
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
-  let withdrawalSignature: string | undefined;
   if (process.env.NODE_ENV !== 'test' && body.currency === 'SOL') {
-    // Real SOL withdrawals must actually leave the treasury on-chain before
-    // the internal balance is debited — without this, the withdrawal was
-    // only ever an internal bookkeeping entry with no funds ever sent.
-    if (store.getWallet(wallet).solBalance < body.amount) {
-      res.status(400).json({ error: 'Insufficient SOL balance' });
+    // RACE-CONDITION FIX: Deduct the internal balance synchronously BEFORE the
+    // async on-chain transfer. If the on-chain send fails we restore the balance.
+    // Without this, two concurrent withdrawal requests could both pass the balance
+    // check before either one debited it — a classic TOCTOU double-spend.
+    //
+    // store.withdraw() is synchronous and therefore atomic within Node's event loop.
+    // Any subsequent concurrent request will see the already-debited balance.
+    let withdrawalResult: ReturnType<typeof store.withdraw>;
+    try {
+      withdrawalResult = store.withdraw({ wallet, currency: body.currency, amount: body.amount });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
       return;
     }
     const onChainResult = await sendOnChainSolWithdrawal({ toWallet: wallet, amountSol: body.amount });
     if (!onChainResult.ok) {
+      // On-chain failed — reverse the internal debit so the user isn't stuck.
+      // Must persist() before responding so a server restart doesn't leave the
+      // balance permanently deducted (funds lost).
+      store.deposit({ wallet, currency: body.currency, amount: body.amount, provider: 'INTERNAL',
+        reference: `reversal:${withdrawalResult.ledgerEntry.id}` });
+      await persist();
       res.status(400).json({ error: onChainResult.error });
       return;
     }
-    withdrawalSignature = onChainResult.signature;
+    const withdrawalSignature = onChainResult.signature;
+    // Update the already-created ledger entry with the on-chain signature
+    withdrawalResult.ledgerEntry.reference = withdrawalSignature;
+    // Record the TX and persist BEFORE returning — otherwise a server restart
+    // would restore the balance and allow a second withdrawal.
+    store.addTransaction({ signature: withdrawalSignature, wallet, intent: { type: 'WITHDRAWAL', currency: body.currency, amount: body.amount } });
+    await persist();
+    emit('ledger:withdrawal', { wallet, ledgerEntry: withdrawalResult.ledgerEntry, signature: withdrawalSignature });
+    emitPortfolioUpdated(wallet, withdrawalResult.portfolio);
+    res.json({ portfolio: withdrawalResult.portfolio, ledgerEntry: withdrawalResult.ledgerEntry, signature: withdrawalSignature });
+    return;
   }
+  // Non-SOL or test withdrawals (no on-chain TX needed)
   const result = store.withdraw({
     wallet,
     currency: body.currency,
     amount: body.amount,
     reference: body.reference
   });
-  if (withdrawalSignature) {
-    store.addTransaction({ signature: withdrawalSignature, wallet, intent: { type: 'WITHDRAWAL', currency: body.currency, amount: body.amount } });
-  }
   await persist();
-  emit('ledger:withdrawal', { wallet, ledgerEntry: result.ledgerEntry, signature: withdrawalSignature });
+  emit('ledger:withdrawal', { wallet, ledgerEntry: result.ledgerEntry, signature: undefined });
   emitPortfolioUpdated(wallet, result.portfolio);
-  res.json({ ...result, signature: withdrawalSignature });
+  res.json({ ...result });
 }));
 
 app.get('/api/positions', (req: any, res) => {
