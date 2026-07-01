@@ -515,6 +515,10 @@ export class LynxState {
     };
     this.trades.set(trade.id, trade);
 
+    // This swap/market trade just moved the pool's implied price, which can
+    // put any resting prediction limit order on either side into range.
+    this.matchPredictionOrders(market);
+
     return { trade, position: userPosition, market };
   }
 
@@ -595,6 +599,8 @@ export class LynxState {
 
     if (input.pair === 'LYNX/SOL') {
       this.matchLynxOrder(order);
+    } else if (market) {
+      this.matchPredictionOrders(market);
     }
 
     return { order, orderbook: this.getOrderBook(input.pair, input.marketId) };
@@ -692,15 +698,10 @@ export class LynxState {
     }
     if (type === '1v1' && market.isTernary) throw new Error('1v1 duels require a binary market');
     if (type === '1v1vP' && !market.isTernary) throw new Error('1v1vP duels require a ternary market');
-    const protocolWallet = type === '1v1vP' ? this.getWallet(TREASURY_WALLET) : undefined;
     if (market.currency === 'SOL' && wallet.solBalance < input.amount) throw new Error('Insufficient SOL balance');
     if (market.currency === 'LYNX' && wallet.lynxBalance < input.amount) throw new Error('Insufficient LYNX balance');
-    if (protocolWallet && protocolWallet.solBalance < input.amount) throw new Error('Insufficient protocol SOL balance');
 
     this.debit(wallet, market.currency, input.amount);
-    if (type === '1v1vP') {
-      this.debit(protocolWallet!, 'SOL', input.amount);
-    }
     const burnedAmount = market.currency === 'LYNX' ? roundAmount(input.amount * LYNX_EVENT_BURN) : 0;
     const netAmount = roundAmount(input.amount - burnedAmount);
     if (burnedAmount > 0) {
@@ -871,6 +872,17 @@ export class LynxState {
     };
   }
 
+  // Wallet -> stakedLynx for every wallet that currently has stake. Called
+  // once at proposal-creation time and frozen onto proposal.stakeSnapshot;
+  // see castVote() for why (blocks "flash-stake" voting).
+  private snapshotStakedLynx(): Record<string, number> {
+    const snapshot: Record<string, number> = {};
+    for (const wallet of this.wallets.values()) {
+      if (wallet.stakedLynx > 0) snapshot[wallet.wallet] = wallet.stakedLynx;
+    }
+    return snapshot;
+  }
+
   castVote(input: { wallet: string; proposalId: string; voteType: 'yes' | 'no' }) {
     const proposal = this.proposals.get(input.proposalId);
     if (!proposal) throw new Error('Proposal not found');
@@ -878,8 +890,13 @@ export class LynxState {
     const wallet = this.getWallet(input.wallet);
     proposal.voters ??= {};
     if (proposal.voters[wallet.wallet]) throw new Error('Wallet already voted on this proposal');
-    if (wallet.stakedLynx === 0) throw new Error('Requires a staked LYNX balance to vote');
-    const weight = wallet.stakedLynx;
+    // Weight comes from the stake snapshot taken when the proposal was
+    // created, not the live balance — otherwise anyone can stake a large
+    // amount, vote, and unstake immediately without ever having real skin in
+    // the game. Proposals that predate this snapshot (stakeSnapshot
+    // undefined) fall back to the live balance, same as before this fix.
+    const weight = proposal.stakeSnapshot ? (proposal.stakeSnapshot[wallet.wallet] ?? 0) : wallet.stakedLynx;
+    if (weight === 0) throw new Error('Requires a staked LYNX balance to vote');
     if (input.voteType === 'yes') proposal.votesYes = roundAmount(proposal.votesYes + weight);
     else proposal.votesNo = roundAmount(proposal.votesNo + weight);
     proposal.voters[wallet.wallet] = input.voteType;
@@ -898,7 +915,8 @@ export class LynxState {
       endTime: new Date(now + 1000 * 60 * 60 * 24 * 7).toISOString(),
       category: input.category || 'community',
       author: input.author || 'Anonymous',
-      voters: {}
+      voters: {},
+      stakeSnapshot: this.snapshotStakedLynx()
     };
     this.proposals.set(proposal.id, proposal as Proposal);
     return proposal;
@@ -1107,6 +1125,107 @@ export class LynxState {
     }
   }
 
+  // Prediction markets settle against a shared AMM/parimutuel pool, not
+  // against an opposite order the way matchLynxOrder() walks the LYNX/SOL
+  // book. There is no maker on the other side to fill against, so a resting
+  // limit order can only ever fill in full (the pool has no size limit of
+  // its own), and only once the market's current implied price for that
+  // order's side has moved strictly below what the order asked for. Filling
+  // exactly at the neutral default price (poolAmount === 0) is intentionally
+  // excluded so a brand-new market with no real trading yet doesn't
+  // auto-fill the very first limit order placed on it.
+  //
+  // Runs right after a limit order is placed (in case it already qualifies)
+  // and again after any swap/market trade, since that shifts the price for
+  // every resting order on the book, not just the side that just traded.
+  // Filling one order can itself move the price into range for another, so
+  // this loops passes until nothing more triggers.
+  private matchPredictionOrders(market: Market) {
+    if (market.status !== 'OPEN' && market.status !== 'ACTIVE') return;
+
+    const MAX_PASSES = 200;
+    let filledSomething = true;
+    let passes = 0;
+
+    while (filledSomething && passes < MAX_PASSES) {
+      filledSomething = false;
+      passes++;
+
+      const resting = [...this.orders.values()]
+        .filter((candidate) =>
+          candidate.pair === market.id &&
+          candidate.status === 'OPEN' &&
+          candidate.remaining > 0 &&
+          candidate.position
+        )
+        .sort((a, b) => a.createdAt - b.createdAt);
+
+      for (const order of resting) {
+        const position = order.position!;
+        const currentPrice = this.estimatePositionPrice(market.id, position);
+        if (currentPrice >= order.price) continue;
+
+        const amount = order.remaining;
+        const burn = market.currency === 'LYNX' ? roundAmount(amount * LYNX_EVENT_BURN) : 0;
+        if (burn > 0) {
+          market.burnedAmount = roundAmount(market.burnedAmount + burn);
+          this.treasury.lynxBurned = roundAmount(this.treasury.lynxBurned + burn);
+        }
+
+        const creditedToPool = roundAmount(amount - burn);
+        market.status = 'ACTIVE';
+        market.poolAmount = roundAmount(market.poolAmount + creditedToPool);
+        if (position === 'YES' || position === 'A') market.yesAmount = roundAmount(market.yesAmount + creditedToPool);
+        if (position === 'NO' || position === 'B') market.noAmount = roundAmount(market.noAmount + creditedToPool);
+        if (position === 'DRAW') market.drawAmount = roundAmount((market.drawAmount ?? 0) + creditedToPool);
+
+        const wallet = this.getWallet(order.owner);
+        wallet.totalVolume = roundAmount(wallet.totalVolume + amount);
+
+        const entryPrice = this.estimatePositionPrice(market.id, position);
+        const userPosition: UserPosition = {
+          id: id('pos'),
+          marketId: market.id,
+          wallet: wallet.wallet,
+          position,
+          amount: creditedToPool,
+          entryPrice,
+          currency: market.currency,
+          claimed: false,
+          createdAt: nowMs()
+        };
+        this.positions.set(userPosition.id, userPosition);
+
+        order.remaining = 0;
+        order.status = 'FILLED';
+        order.spentAmount = order.lockedAmount;
+
+        const tradeId = id('trade');
+        this.trades.set(tradeId, {
+          id: tradeId,
+          marketId: market.id,
+          pair: market.id,
+          taker: order.owner,
+          side: order.side,
+          position,
+          amount,
+          price: entryPrice,
+          feeAmount: 0,
+          currency: market.currency,
+          createdAt: nowMs()
+        });
+
+        this.pushNotification(order.owner, {
+          type: 'trade',
+          title: 'Limit order filled',
+          message: `Your ${position} limit order on "${market.title}" filled for ${amount} ${market.currency}.`
+        });
+
+        filledSomething = true;
+      }
+    }
+  }
+
   private estimatePositionPrice(marketId: string, position: Position) {
     const market = this.getMarket(marketId);
     if (market.poolAmount === 0) return market.isTernary ? 0.333 : 0.5;
@@ -1214,19 +1333,15 @@ export class LynxState {
       const rivalWins = result === duel.positionB || (result === 'YES' && duel.positionB === 'A') || (result === 'NO' && duel.positionB === 'B');
 
       if (duel.type === '1v1vP') {
-        const total = roundAmount(duel.amount * 2);
         if (creatorWins) {
-          const fee = roundAmount(total * GLOBAL_TRADE_FEE);
-          const payout = roundAmount(total - fee);
           const wallet = this.getWallet(duel.creator);
-          this.credit(wallet, 'SOL', payout);
+          this.credit(wallet, 'SOL', duel.amount);
           this.mintProtocolDuelLynx(wallet.wallet, duel.amount);
-          this.treasury.sol = roundAmount(this.treasury.sol + fee);
           duel.winner = duel.creator;
         } else {
           const protocolWallet = this.getWallet(TREASURY_WALLET);
-          this.credit(protocolWallet, 'SOL', total);
-          this.treasury.protocolDuelSol = roundAmount(this.treasury.protocolDuelSol + total);
+          this.credit(protocolWallet, 'SOL', duel.amount);
+          this.treasury.protocolDuelSol = roundAmount(this.treasury.protocolDuelSol + duel.amount);
           duel.winner = TREASURY_WALLET;
         }
         continue;

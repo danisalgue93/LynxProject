@@ -425,7 +425,7 @@ describe('Lynx backend API', () => {
     expect(afterResolve.body.some((d: any) => d.id === created.body.id)).toBe(false);
   });
 
-  it('locks protocol stake for 1v1vP duels', async () => {
+  it('does not lock protocol SOL stake when creating a 1v1vP duel', async () => {
     const adminToken = await loginAdmin();
     const userToken = await registerUser('protocol-duel');
     const market = await createMarket(adminToken, { id: 'market-1v1vp', isTernary: true });
@@ -438,24 +438,32 @@ describe('Lynx backend API', () => {
       .send({ wallet: 'CREATOR', marketId: market.id, side: 'YES', amount: 0.1, type: '1v1vP' })
       .expect(201);
 
+    // The protocol never co-stakes SOL for 1v1vP duels: it only collects the
+    // creator's stake if it wins and mints LYNX if it loses, per
+    // resolve_protocol_duel on-chain. Its SOL balance must stay untouched.
     const protocolPortfolio = await request(app).get('/api/portfolio?wallet=LYNX_DEV_TREASURY').expect(200);
-    expect(protocolPortfolio.body.solBalance).toBe(0.9);
+    expect(protocolPortfolio.body.solBalance).toBe(1);
   });
 
-  it('does not debit creator if protocol side cannot fund a 1v1vP duel', async () => {
+  it('creates a 1v1vP duel even if the protocol treasury holds no SOL', async () => {
     const adminToken = await loginAdmin();
-    const userToken = await registerUser('protocol-insufficient');
-    const market = await createMarket(adminToken, { id: 'market-1v1vp-insufficient', isTernary: true });
+    const userToken = await registerUser('protocol-unfunded');
+    const market = await createMarket(adminToken, { id: 'market-1v1vp-unfunded', isTernary: true });
     await approveAndFund(userToken, 'CREATOR', { SOL: 101 });
+    // LYNX_DEV_TREASURY is intentionally left unfunded (starts at 0 SOL) to
+    // prove the protocol no longer needs a matching SOL balance to accept a
+    // 1v1vP duel.
 
-    await request(app)
+    const created = await request(app)
       .post('/api/duels')
       .set(auth(userToken))
       .send({ wallet: 'CREATOR', marketId: market.id, side: 'YES', amount: 101, type: '1v1vP' })
-      .expect(400);
+      .expect(201);
+
+    expect(created.body.amount).toBe(101);
 
     const creatorPortfolio = await request(app).get('/api/portfolio?wallet=CREATOR').expect(200);
-    expect(creatorPortfolio.body.solBalance).toBe(101);
+    expect(creatorPortfolio.body.solBalance).toBe(0);
   });
 
   it('clears indexed transactions on development reset', async () => {

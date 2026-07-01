@@ -125,6 +125,12 @@ export interface Proposal {
   category: 'protocol' | 'markets' | 'fees' | 'community';
   author: string;
   voters?: Record<string, 'yes' | 'no'>;
+  // Wallet -> stakedLynx captured once, at proposal-creation time. castVote()
+  // uses this (not the live balance) as vote weight so staking right before a
+  // vote and unstaking right after grants no weight. Proposals created before
+  // this field existed leave it undefined; castVote() falls back to the live
+  // balance for those so already-open proposals don't become unvotable.
+  stakeSnapshot?: Record<string, number>;
 }
 
 export interface Notification {

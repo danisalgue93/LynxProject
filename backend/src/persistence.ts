@@ -154,16 +154,17 @@ function duelToDb(d: Duel) {
 
 function proposalToDb(p: Proposal) {
   return {
-    id:          p.id,
-    title:       p.title,
-    description: p.description,
-    status:      p.status,
-    votesYes:    p.votesYes,
-    votesNo:     p.votesNo,
-    endTime:     new Date(p.endTime),
-    category:    p.category,
-    author:      p.author,
-    voters:      (p.voters ?? Prisma.JsonNull) as Prisma.InputJsonValue | typeof Prisma.JsonNull,
+    id:            p.id,
+    title:         p.title,
+    description:   p.description,
+    status:        p.status,
+    votesYes:      p.votesYes,
+    votesNo:       p.votesNo,
+    endTime:       new Date(p.endTime),
+    category:      p.category,
+    author:        p.author,
+    voters:        (p.voters ?? Prisma.JsonNull) as Prisma.InputJsonValue | typeof Prisma.JsonNull,
+    stakeSnapshot: (p.stakeSnapshot ?? Prisma.JsonNull) as Prisma.InputJsonValue | typeof Prisma.JsonNull,
   };
 }
 
@@ -328,16 +329,17 @@ function dbToDuel(r: any): Duel {
 
 function dbToProposal(r: any): Proposal {
   return {
-    id:          r.id,
-    title:       r.title,
-    description: r.description,
-    status:      r.status,
-    votesYes:    Number(r.votesYes),
-    votesNo:     Number(r.votesNo),
-    endTime:     r.endTime instanceof Date ? r.endTime.toISOString() : r.endTime,
-    category:    r.category,
-    author:      r.author,
-    voters:      (r.voters as Record<string, 'yes' | 'no'> | null) ?? undefined,
+    id:            r.id,
+    title:         r.title,
+    description:   r.description,
+    status:        r.status,
+    votesYes:      Number(r.votesYes),
+    votesNo:       Number(r.votesNo),
+    endTime:       r.endTime instanceof Date ? r.endTime.toISOString() : r.endTime,
+    category:      r.category,
+    author:        r.author,
+    voters:        (r.voters as Record<string, 'yes' | 'no'> | null) ?? undefined,
+    stakeSnapshot: (r.stakeSnapshot as Record<string, number> | null) ?? undefined,
   };
 }
 

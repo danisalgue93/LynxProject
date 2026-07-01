@@ -645,7 +645,7 @@ pub struct MintLynxDistribution<'info> {
     pub lynx_mint: Account<'info, Mint>,
     #[account(mut)]
     pub holder_lynx_account: Account<'info, TokenAccount>,
-    #[account(mut)]
+    #[account(mut, constraint = treasury_lynx_account.owner == config.treasury @ LynxError::Unauthorized)]
     pub treasury_lynx_account: Account<'info, TokenAccount>,
     #[account(mut)]
     pub initial_sale_lynx_account: Account<'info, TokenAccount>,

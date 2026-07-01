@@ -255,16 +255,17 @@ model Duel {
 // ─── Governance ───────────────────────────────────────────────────────────────
 
 model Proposal {
-  id          String   @id
-  title       String
-  description String
-  status      String   @default("active")
-  votesYes    Decimal  @default(0) @db.Decimal(28, 9)
-  votesNo     Decimal  @default(0) @db.Decimal(28, 9)
-  endTime     DateTime
-  category    String   @default("community")
-  author      String
-  voters      Json?
+  id            String   @id
+  title         String
+  description   String
+  status        String   @default("active")
+  votesYes      Decimal  @default(0) @db.Decimal(28, 9)
+  votesNo       Decimal  @default(0) @db.Decimal(28, 9)
+  endTime       DateTime
+  category      String   @default("community")
+  author        String
+  voters        Json?
+  stakeSnapshot Json?
 
   votes ProposalVote[]
 

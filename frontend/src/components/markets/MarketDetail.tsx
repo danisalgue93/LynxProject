@@ -334,15 +334,18 @@ export function MarketDetail({
     : isNo
       ? currentNoAmount
       : currentDrawAmount;
-  const oppositeSidePool = totalPool - currentSidePool;
 
   const newSidePool = currentSidePool + parsedAmount;
   const shareOfPool = newSidePool > 0 ? parsedAmount / newSidePool : 0;
 
-  const PROTOCOL_FEE = 0.1; // 10% fee on winnings
-  const netOppositePool = oppositeSidePool * (1 - PROTOCOL_FEE);
-  const estimatedReward = shareOfPool * netOppositePool;
-  const totalPayout = parsedAmount + estimatedReward;
+  // Mirrors backend/src/state.ts::claimPosition() exactly:
+  // netPool = poolAmount * (1 - totalFeeRate)  -> fee applies to the ENTIRE pool
+  // (winning + losing sides), not just to the winnings. totalFeeRate (10%) =
+  // STAKER_REWARD_FEE + TREASURY_EVENT_FEE, see backend/src/economy.ts.
+  const PROTOCOL_FEE = 0.1; // 10% total protocol fee, applied over the whole pool
+  const newTotalPool = totalPool + parsedAmount;
+  const netPool = newTotalPool * (1 - PROTOCOL_FEE);
+  const totalPayout = netPool * shareOfPool;
 
   const lynxDrop = parsedAmount * 0.3;
   // ----------------------------------

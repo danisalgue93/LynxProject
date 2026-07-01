@@ -7,7 +7,7 @@ import { useProgram } from '@/src/hooks/useProgram';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { eventBus } from '@/src/lib/eventBus';
 import { Market, Position } from '@/src/types';
-import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Line, LineChart } from 'recharts';
+import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Line, LineChart, type TooltipValueType } from 'recharts';
 import { apiUrl } from '@/src/lib/api';
 import { getManagedWalletAddress, useManagedAuthSession } from '@/src/lib/auth';
 import { useToast } from '@/src/context/ToastContext';
@@ -177,7 +177,7 @@ function MarketChart({ isLynxSol, market, chartType = 'line', chartRange = '1M',
               contentStyle={{ backgroundColor: '#0D0D0E', border: '1px solid #27272A', borderRadius: '4px' }}
               labelStyle={{ display: 'none' }}
               itemStyle={{ color: '#00FFD1', fontSize: '12px' }}
-              formatter={(value: number) => [`${value.toFixed(4)} SOL`, 'Price']}
+              formatter={(value: TooltipValueType | undefined) => [`${Number(value).toFixed(4)} SOL`, 'Price']}
             />
             <Line type="monotone" dataKey="price" stroke="#00FFD1" strokeWidth={2} dot={false} isAnimationActive={false} />
           </LineChart>
@@ -411,7 +411,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
     }
   };
 
-  const selectedMarket = !isLynxSol ? markets.find(m => m.id === selectedMarketId) : null;
+  const selectedMarket = !isLynxSol ? (markets.find(m => m.id === selectedMarketId) ?? null) : null;
   const lynxAsks = (lynxOrderBook?.asks || []).slice(0, 5);
   const lynxBids = (lynxOrderBook?.bids || []).slice(0, 5);
   const predAsks = (predictionOrderBook?.asks || []).slice(0, 5);
@@ -423,6 +423,8 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
 
   // My open orders (filter both bids and asks by wallet)
   const allOpenOrders = [...(lynxOrderBook?.bids || []), ...(lynxOrderBook?.asks || [])]
+    .filter((o: any) => o.owner === myWallet && o.status !== 'FILLED' && o.status !== 'CANCELLED');
+  const predOpenOrders = [...(predictionOrderBook?.bids || []), ...(predictionOrderBook?.asks || [])]
     .filter((o: any) => o.owner === myWallet && o.status !== 'FILLED' && o.status !== 'CANCELLED');
 
   const handleCancelOrder = async (orderId: string) => {
@@ -1007,6 +1009,73 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                       <span className="hidden lg:block text-[10px] text-[#52525B] font-mono">
                         ~ {(Number(order.remaining) * Number(order.price)).toFixed(4)} SOL
                       </span>
+                      <button
+                        onClick={() => handleCancelOrder(order.id)}
+                        disabled={cancellingId === order.id}
+                        className="flex items-center gap-1 px-2 lg:px-3 py-1 rounded bg-red-400/10 hover:bg-red-400/20 text-red-400 text-[9px] lg:text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50"
+                      >
+                        {cancellingId === order.id ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <XIcon className="w-3 h-3" />
+                        )}
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* My Open Orders (Prediction Market) */}
+        {!isLynxSol && predOpenOrders.length > 0 && (
+          <div className="mt-4 lg:mt-6 bg-[#0D0D0E] border border-[#1F1F23] rounded-xl overflow-hidden">
+            <div className="px-4 lg:px-6 py-3 border-b border-[#1F1F23] flex items-center justify-between">
+              <span className="text-[10px] lg:text-xs font-black text-white uppercase tracking-widest">
+                {t('orderbook.myOpenOrders', 'My Open Orders')}
+              </span>
+              <span className="text-[10px] text-[#52525B] font-bold">{predOpenOrders.length} active</span>
+            </div>
+            <div className="divide-y divide-[#1F1F23]">
+              {predOpenOrders.map((order: any) => {
+                const isNegative = order.position === Position.NO || order.position === Position.B;
+                const isDraw = order.position === Position.DRAW;
+                const positionLabel = isDraw
+                  ? 'DRAW'
+                  : order.position === Position.A
+                    ? t('orderbook.optA', 'OPT A')
+                    : order.position === Position.B
+                      ? t('orderbook.optB', 'OPT B')
+                      : order.position === Position.NO
+                        ? t('orderbook.no', 'NO')
+                        : t('orderbook.yes', 'YES');
+                const isPartial = order.status === 'PARTIAL_FILLED';
+                return (
+                  <div key={order.id} className="flex items-center justify-between px-4 lg:px-6 py-3 hover:bg-[#141417] transition-colors group">
+                    <div className="flex items-center gap-3 lg:gap-4 flex-1 min-w-0">
+                      <span className={cn(
+                        "text-[9px] lg:text-[11px] font-black uppercase px-2 py-0.5 rounded",
+                        isDraw
+                          ? "bg-blue-400/10 text-blue-400"
+                          : isNegative
+                            ? "bg-red-400/10 text-red-400"
+                            : (selectedMarket?.currency === 'LYNX' ? "bg-[#9945FF]/10 text-[#9945FF]" : "bg-[#00FFD1]/10 text-[#00FFD1]")
+                      )}>
+                        {positionLabel}
+                      </span>
+                      <span className="font-mono text-[10px] lg:text-xs text-white font-bold">
+                        {Number(order.remaining).toLocaleString()} {order.currency}
+                      </span>
+                      <span className="text-[10px] lg:text-xs text-[#52525B] font-mono">
+                        @ {Number(order.price).toFixed(3)}
+                      </span>
+                      {isPartial && (
+                        <span className="text-[9px] text-amber-400 font-bold uppercase">{t('orderbook.partial', 'Partial')}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 lg:gap-3 shrink-0">
                       <button
                         onClick={() => handleCancelOrder(order.id)}
                         disabled={cancellingId === order.id}

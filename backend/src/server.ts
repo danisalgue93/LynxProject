@@ -1090,6 +1090,10 @@ app.post('/api/markets/:id/trades', tradingRateLimit, asyncRoute(async (req, res
   });
   await persist();
   emit('market:updated', 'market' in result ? result.market : store.getMarket(req.params.id));
+  // A swap/market trade can move the pool price into range of resting
+  // prediction limit orders (see matchPredictionOrders), so the book for
+  // this market may have changed even though this wasn't a limit order.
+  emit('orderbook:updated', store.getOrderBook(req.params.id, req.params.id));
   res.json(result);
 }));
 
@@ -1434,7 +1438,8 @@ app.delete('/api/orders/:id', asyncRoute(async (req, res) => {
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
   const result = store.cancelOrder(wallet, req.params.id);
   await persist();
-  emit('orderbook:updated', store.getOrderBook('LYNX/SOL'));
+  const cancelledOrder = store.orders.get(req.params.id);
+  emit('orderbook:updated', store.getOrderBook(cancelledOrder?.pair ?? 'LYNX/SOL', cancelledOrder?.marketId));
   emitPortfolioUpdated(wallet, result.portfolio);
   res.json(result);
 }));
