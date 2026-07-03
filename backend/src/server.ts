@@ -857,7 +857,16 @@ app.post('/auth/wallet-login', maybeAuthRateLimit, asyncRoute(async (req, res) =
   // signature's mathematical validity was checked, not the message's intent or freshness.
   const WALLET_LOGIN_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
   let parsedMsg: { app?: string; action?: string; wallet?: string; issuedAt?: string } | null = null;
-  try { parsedMsg = JSON.parse(body.signatureMessage) as typeof parsedMsg; } catch { parsedMsg = null; }
+  try {
+    parsedMsg = JSON.parse(body.signatureMessage) as {
+      app?: string;
+      action?: string;
+      wallet?: string;
+      issuedAt?: string;
+    };
+  } catch {
+    parsedMsg = null;
+  }
   if (
     !parsedMsg ||
     parsedMsg.action !== 'LYNX_LOGIN' ||
