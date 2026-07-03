@@ -1,8 +1,26 @@
 import crypto from 'crypto';
 import { NextRequest } from 'next/server';
 
-export function clientKey(req: NextRequest) {
-  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'local';
+/**
+ * Returns a key to identify the request source for rate-limiting and OTP isolation.
+ *
+ * Priority:
+ *  1. `x-real-ip` — set by a trusted reverse proxy (Nginx) to the actual client IP.
+ *     More reliable than x-forwarded-for because it contains exactly one address.
+ *  2. `x-forwarded-for` first segment — fallback; still controllable by the client
+ *     if no upstream proxy overwrites it, so prefer x-real-ip wherever possible.
+ *  3. `'local'` — development fallback when neither header is present.
+ *
+ * Production note: ensure Nginx (or your load balancer) sets `X-Real-IP` and
+ * removes/overwrites any client-supplied `X-Forwarded-For` before the request
+ * reaches Next.js, so this value cannot be spoofed.
+ */
+export function clientKey(req: NextRequest): string {
+  const realIp = req.headers.get('x-real-ip')?.trim();
+  if (realIp) return realIp;
+  const forwarded = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+  if (forwarded) return forwarded;
+  return 'local';
 }
 
 export function hashSecret(value: string) {

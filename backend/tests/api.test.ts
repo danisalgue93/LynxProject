@@ -474,7 +474,7 @@ describe('Lynx backend API', () => {
 
     await request(app).post('/api/dev/reset').expect(200);
 
-    const response = await request(app).get('/api/transactions').expect(200);
+    const response = await request(app).get('/api/transactions?wallet=TESTER').expect(200);
     expect(response.body).toHaveLength(0);
   });
 

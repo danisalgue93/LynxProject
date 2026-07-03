@@ -293,24 +293,24 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
                      <div className="space-y-2">
                         <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest">
                            <span className="text-[#00FFD1]">{t('governance.yes', 'Yes')}</span>
-                           <span className="text-white">{(proposal.votesYes / (proposal.votesYes + proposal.votesNo) * 100).toFixed(1)}%</span>
+                           <span className="text-white">{((proposal.votesYes + proposal.votesNo) > 0 ? (proposal.votesYes / (proposal.votesYes + proposal.votesNo) * 100) : 0).toFixed(1)}%</span>
                         </div>
                         <div className="h-1.5 w-full bg-[#1F1F23] rounded-full overflow-hidden">
                            <div 
                               className="h-full bg-[#00FFD1]" 
-                              style={{ width: `${(proposal.votesYes / (proposal.votesYes + proposal.votesNo) * 100)}%` }}
+                              style={{ width: `${(proposal.votesYes + proposal.votesNo) > 0 ? (proposal.votesYes / (proposal.votesYes + proposal.votesNo) * 100) : 0}%` }}
                            />
                         </div>
                      </div>
                      <div className="space-y-2">
                         <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest">
                            <span className="text-[#52525B]">{t('governance.no', 'No')}</span>
-                           <span className="text-white">{(proposal.votesNo / (proposal.votesYes + proposal.votesNo) * 100).toFixed(1)}%</span>
+                           <span className="text-white">{((proposal.votesYes + proposal.votesNo) > 0 ? (proposal.votesNo / (proposal.votesYes + proposal.votesNo) * 100) : 0).toFixed(1)}%</span>
                         </div>
                         <div className="h-1.5 w-full bg-[#1F1F23] rounded-full overflow-hidden">
                            <div 
                               className="h-full bg-[#52525B]" 
-                              style={{ width: `${(proposal.votesNo / (proposal.votesYes + proposal.votesNo) * 100)}%` }}
+                              style={{ width: `${(proposal.votesYes + proposal.votesNo) > 0 ? (proposal.votesNo / (proposal.votesYes + proposal.votesNo) * 100) : 0}%` }}
                            />
                         </div>
                      </div>

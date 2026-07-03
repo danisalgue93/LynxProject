@@ -1,4 +1,18 @@
 /**
+ * @deprecated DEAD CODE — This file is NOT imported anywhere in the production codebase.
+ *
+ * WARNING: The payout formula here (amount / totalWinnerAmount) DIVERGES from the
+ * real formula in state.ts::claimPosition() (amount / winningPool × netPool). If
+ * you are considering reactivating this module, first reconcile both formulas.
+ *
+ * Fee constants (FEE_TOTAL_PERCENT, FEE_STAKING_SHARE, FEE_TREASURY_SHARE) may
+ * also be out of sync with economy.ts. Treat this file as a historical reference,
+ * not a source of truth.
+ *
+ * Resolution: delete this file, or convert it into a test that compares both
+ * formulas and fails CI if they diverge.
+ */
+/**
  * ⚠️ DEPRECATED / NO USADO EN PRODUCCIÓN ⚠️
  *
  * Este archivo NO está importado por ningún otro módulo del proyecto.

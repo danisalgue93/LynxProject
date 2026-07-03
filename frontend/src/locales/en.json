@@ -57,7 +57,16 @@
     "confirmEmail": "Confirm email",
     "recoverPassword": "Recover password",
     "signIn": "Sign in",
-    "connectedViaEmail": "Connected via email"
+    "connectedViaEmail": "Connected via email",
+    "confirmEmailSent": "Check your email — we sent you a verification link.",
+    "devTokenNote": "[DEV] Token pre-filled from API response.",
+    "emailAccount": "Email account",
+    "internalWallet": "Internal wallet",
+    "loginRequiredBody": "You need an account to {{action}}.",
+    "loginRequiredTitle": "Sign in required",
+    "passwordsMismatch": "New passwords do not match",
+    "thisAction": "continue",
+    "walletAccount": "Wallet account"
   },
   "status": {
     "OPEN": "OPEN",
@@ -98,7 +107,12 @@
     "createFailed": "Failed to create duel",
     "system": "System",
     "lynxParen": "(LYNX)",
-    "noAutoEmission": "(NO AUTO EMISSION)"
+    "noAutoEmission": "(NO AUTO EMISSION)",
+    "cancelFailed": "Failed to cancel duel",
+    "cancelPending": "Cancelling duel...",
+    "cancelRefund": "Cancel & Refund",
+    "cancelSuccess": "Duel cancelled. Your funds have been refunded.",
+    "cancelling": "Cancelling..."
   },
   "createDuel": {
     "title": "Forge 1v1 Duel",
@@ -398,7 +412,9 @@
     "market": "Market",
     "optA": "OPT A",
     "optB": "OPT B",
-    "myOpenOrders": "My Open Orders"
+    "myOpenOrders": "My Open Orders",
+    "cancelSuccess": "Order cancelled successfully.",
+    "depositSol": "Deposit SOL"
   },
   "portfolio": {
     "invalidSolAmount": "Enter a valid SOL amount.",
@@ -473,7 +489,8 @@
     "stakeLynx": "Stake LYNX",
     "unstakeLynx": "Unstake LYNX",
     "stakeTabLabel": "Stake",
-    "unstakeTabLabel": "Unstake"
+    "unstakeTabLabel": "Unstake",
+    "connectedViaEmail": "Connected via email"
   },
   "governance": {
     "loading": "Loading governance data...",
@@ -556,6 +573,8 @@
     "binary": "Binary Yes/No",
     "submit": "Sign and Register Market",
     "errorTitleRequired": "The event needs a title.",
-    "errorGeneric": "Could not create the market."
+    "errorGeneric": "Could not create the market.",
+    "cutoffDefaultWarning": "No date set — defaults to 24 h from now: {{date}}",
+    "resolveDefaultWarning": "No date set — defaults to cut-off + 24 h"
   }
 }

@@ -216,7 +216,7 @@ export function DuelCard({ duel }: DuelCardProps) {
              <div className={cn("text-[8px] md:text-[9px] font-bold px-1.5 py-0.5 rounded tracking-widest flex items-center gap-1", isLynx ? "bg-red-400/10 border border-red-400/30 text-red-400" : "bg-[#9945FF]/10 border border-[#9945FF]/30 text-[#9945FF]")}>
                 {isLynx ? (
                   <>
-                    <span className="whitespace-nowrap">-{(duel.amount * 2) * 0.15} LYNX</span>
+                    <span className="whitespace-nowrap">-{typeof duel.burnedAmount === 'number' ? duel.burnedAmount : (duel.amount * 2 * 0.15).toFixed(4)} LYNX</span>
                     <span className="opacity-70 text-[6px] md:text-[7px] whitespace-nowrap">({t('duels.lynxBurn', '15% BURN')})</span>
                   </>
                 ) : duel.isTernary ? (
@@ -236,7 +236,7 @@ export function DuelCard({ duel }: DuelCardProps) {
              <div className="text-[7px] md:text-[8px] uppercase font-bold text-[#71717A] tracking-widest leading-none mb-1">{isLynx ? t('duels.burn', 'Burn') : t('duels.endReward', 'End Reward')}</div>
              <div className={cn("text-[8px] md:text-[9px] font-bold tracking-widest flex flex-col items-end", isLynx ? "text-red-400" : "text-[#9945FF]")}>
                 {isLynx ? (
-                  <span className="whitespace-nowrap leading-none">-{(duel.amount * 2) * 0.15} LYNX</span>
+                  <span className="whitespace-nowrap leading-none">-{typeof duel.burnedAmount === 'number' ? duel.burnedAmount : (duel.amount * 2 * 0.15).toFixed(4)} LYNX</span>
                 ) : duel.isTernary ? (
                   <span className="whitespace-nowrap leading-none">+{duel.amount} LYNX</span>
                 ) : (

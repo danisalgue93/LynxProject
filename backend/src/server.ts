@@ -236,6 +236,7 @@ interface AuthUser {
   walletLinkedAt?: number;
   managedWalletAddress?: string;
   emailVerificationToken?: string;
+  emailVerificationExpiresAt?: number;
   passwordResetToken?: string;
   passwordResetExpiresAt?: number;
   createdAt: number;
@@ -446,7 +447,13 @@ function verifyWalletSignature(wallet: string, signatureMessage: string, signatu
   }
 }
 
-function requireSignedIntent(req: express.Request, res: express.Response) {
+/**
+ * Checks that a non-empty `signature` field is present in the request body.
+ * NOTE: This does NOT cryptographically verify the signature — it only asserts
+ * the field was provided. Actual cryptographic verification is done by
+ * verifyWalletSignature() or verifyOnChainSolDeposit() at each call site.
+ */
+function requireNonEmptySignature(req: express.Request, res: express.Response) {
   const signature = typeof req.body?.signature === 'string' ? req.body.signature.trim() : '';
   if (!signature) {
     res.status(400).json({ error: 'A wallet signature or on-chain transaction signature is required' });
@@ -666,6 +673,7 @@ app.post('/auth/register', maybeAuthRateLimit, asyncRoute(async (req, res) => {
     authMethod: 'email',
     emailVerified: !requireEmailVerification,
     emailVerificationToken: requireEmailVerification ? token('verify') : undefined,
+    emailVerificationExpiresAt: requireEmailVerification ? Date.now() + 24 * 60 * 60 * 1000 : undefined,
     managedWalletAddress: requireEmailVerification ? undefined : managedWalletForUser(userId, body.email),
     createdAt: Date.now()
   };
@@ -745,7 +753,12 @@ app.post('/auth/verify-email', maybeAuthRateLimit, asyncRoute(async (req, res) =
     token: z.string().min(12)
   }).parse(req.body);
 
-  const user = [...users.values()].find((candidate) => candidate.emailVerificationToken === body.token);
+  const now = Date.now();
+  const user = [...users.values()].find(
+    (candidate) =>
+      candidate.emailVerificationToken === body.token &&
+      (candidate.emailVerificationExpiresAt === undefined || candidate.emailVerificationExpiresAt > now)
+  );
   if (!user) {
     return res.status(400).json({ error: 'Invalid or expired verification token' });
   }
@@ -838,6 +851,22 @@ app.post('/auth/wallet-login', maybeAuthRateLimit, asyncRoute(async (req, res) =
     signatureMessage: z.string().min(1),
     signature: z.string().min(1),
   }).parse(req.body);
+
+  // Validate signatureMessage content to prevent replay attacks.
+  // A captured signature would otherwise be valid indefinitely because only the
+  // signature's mathematical validity was checked, not the message's intent or freshness.
+  const WALLET_LOGIN_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+  let parsedMsg: { app?: string; action?: string; wallet?: string; issuedAt?: string } | null = null;
+  try { parsedMsg = JSON.parse(body.signatureMessage) as typeof parsedMsg; } catch { parsedMsg = null; }
+  if (
+    !parsedMsg ||
+    parsedMsg.action !== 'LYNX_LOGIN' ||
+    parsedMsg.wallet !== body.wallet ||
+    !parsedMsg.issuedAt ||
+    Date.now() - new Date(parsedMsg.issuedAt).getTime() > WALLET_LOGIN_WINDOW_MS
+  ) {
+    return res.status(401).json({ error: 'Wallet login message is invalid or expired. Please try again.' });
+  }
 
   if (!verifyWalletSignature(body.wallet, body.signatureMessage, body.signature)) {
     return res.status(401).json({ error: 'Wallet signature verification failed' });
@@ -1024,7 +1053,7 @@ app.post('/api/markets', asyncRoute(async (req, res) => {
     onChainMarket: z.string().optional()
   }).parse(req.body);
 
-  if (!requireSignedIntent(req, res)) return;
+  if (!requireNonEmptySignature(req, res)) return;
 
   const now = Date.now();
   const cutoffAt = body.cutoffAt || now + 1000 * 60 * 60 * 24;
@@ -1077,8 +1106,9 @@ app.post('/api/markets/:id/trades', tradingRateLimit, asyncRoute(async (req, res
     limitPrice: z.number().positive().optional()
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
-  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
+  if (!requireApprovedWallet(res, wallet)) return;
 
   const result = store.executePredictionTrade({
     wallet,
@@ -1153,8 +1183,9 @@ app.post('/api/duels', tradingRateLimit, asyncRoute(async (req, res) => {
     type: z.enum(['1v1', '1v1vP']).optional()
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
-  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
+  if (!requireApprovedWallet(res, wallet)) return;
 
   const duel = store.createDuel({
     wallet,
@@ -1175,8 +1206,9 @@ app.post('/api/duels/:id/accept', asyncRoute(async (req, res) => {
     side: positionSchema.optional()
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
-  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
+  if (!requireApprovedWallet(res, wallet)) return;
   const duel = store.acceptDuel({ wallet, duelId: req.params.id, side: body.side });
   await persist();
   emit('duel:accepted', duel);
@@ -1187,8 +1219,9 @@ app.delete('/api/duels/:id', asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
   const body = z.object({ wallet: z.string() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
-  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
+  if (!requireApprovedWallet(res, wallet)) return;
   const result = store.cancelDuel({ wallet, duelId: req.params.id });
   await persist();
   emit('duel:cancelled', result.duel);
@@ -1220,8 +1253,9 @@ app.post('/api/orders', tradingRateLimit, asyncRoute(async (req, res) => {
     path: ['price']
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
-  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
+  if (!requireApprovedWallet(res, wallet)) return;
 
   const result = store.placeOrder({
     wallet,
@@ -1261,7 +1295,7 @@ app.post('/api/ledger/approve', asyncRoute(async (req, res) => {
     signature: z.string().min(8),
     signatureMessage: z.string().optional()
   }).parse(req.body);
-  if (!requireSignedIntent(req, res)) return;
+  if (!requireNonEmptySignature(req, res)) return;
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet) return;
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
@@ -1292,7 +1326,7 @@ app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
     if (body.provider === 'EXTERNAL_WALLET') {
       // Real on-chain deposits must carry the confirmed transaction signature
       // and are verified against the Solana blockchain before crediting.
-      if (!requireSignedIntent(req, res)) return;
+      if (!requireNonEmptySignature(req, res)) return;
       if (body.currency !== 'SOL') {
         res.status(400).json({ error: 'Only SOL deposits can currently be verified on-chain' });
         return;
@@ -1358,8 +1392,15 @@ app.post('/api/ledger/withdraw', asyncRoute(async (req, res) => {
     reference: z.string().optional()
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
-  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
+  if (!requireApprovedWallet(res, wallet)) return;
+  // On-chain LYNX (SPL) withdrawals are not yet implemented — only SOL is supported.
+  // Blocking explicitly prevents an internal debit without an on-chain movement.
+  if (body.currency === 'LYNX') {
+    return res.status(501).json({ error: 'LYNX withdrawals are not yet available. Only SOL withdrawals are currently supported.' });
+  }
+
   if (process.env.NODE_ENV !== 'test' && body.currency === 'SOL') {
     // RACE-CONDITION FIX: Deduct the internal balance synchronously BEFORE the
     // async on-chain transfer. If the on-chain send fails we restore the balance.
@@ -1422,8 +1463,9 @@ app.post('/api/positions/:id/claim', asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
   const body = z.object({ wallet: z.string() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
-  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
+  if (!requireApprovedWallet(res, wallet)) return;
   const result = store.claimPosition(wallet, req.params.id);
   await persist();
   emitPortfolioUpdated(wallet, result.portfolio);
@@ -1434,8 +1476,9 @@ app.delete('/api/orders/:id', asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
   const body = z.object({ wallet: z.string() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
-  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
+  if (!requireApprovedWallet(res, wallet)) return;
   const result = store.cancelOrder(wallet, req.params.id);
   await persist();
   const cancelledOrder = store.orders.get(req.params.id);
@@ -1448,8 +1491,9 @@ app.post('/api/staking/stake', tradingRateLimit, asyncRoute(async (req, res) => 
   if (!requireAuth(req, res)) return;
   const body = z.object({ wallet: z.string(), amount: z.number().positive() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
-  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
+  if (!requireApprovedWallet(res, wallet)) return;
   const portfolio = store.stake(wallet, body.amount);
   await persist();
   emitPortfolioUpdated(wallet, portfolio);
@@ -1460,8 +1504,9 @@ app.post('/api/staking/unstake', tradingRateLimit, asyncRoute(async (req, res) =
   if (!requireAuth(req, res)) return;
   const body = z.object({ wallet: z.string(), amount: z.number().positive() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
-  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
+  if (!requireApprovedWallet(res, wallet)) return;
   const portfolio = store.unstake(wallet, body.amount);
   await persist();
   emitPortfolioUpdated(wallet, portfolio);
@@ -1472,8 +1517,9 @@ app.post('/api/staking/claim', tradingRateLimit, asyncRoute(async (req, res) => 
   if (!requireAuth(req, res)) return;
   const body = z.object({ wallet: z.string() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
-  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
+  if (!requireApprovedWallet(res, wallet)) return;
   const result = store.claimRewards(wallet);
   await persist();
   emitPortfolioUpdated(wallet, result.portfolio);
@@ -1511,8 +1557,9 @@ app.post('/api/proposals/:id/vote', asyncRoute(async (req, res) => {
     voteType: z.enum(['yes', 'no'])
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
-  if (!wallet || !requireApprovedWallet(res, wallet)) return;
+  if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (process.env.NODE_ENV !== 'test' && !requireAuthMatchesWallet(req, res, wallet)) return;
+  if (!requireApprovedWallet(res, wallet)) return;
   const proposal = store.castVote({ wallet, proposalId: req.params.id, voteType: body.voteType });
   await persist();
   emit('dao:proposal-updated', proposal);
@@ -1603,8 +1650,8 @@ app.post('/api/dev/reset', asyncRoute(async (req, res) => {
 Sentry.setupExpressErrorHandler(app);
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  const message = error instanceof Error ? error.message : 'Internal Server Error';
-  const normalizedMessage = message.toLowerCase();
+  const rawMessage = error instanceof Error ? error.message : 'Internal Server Error';
+  const normalizedMessage = rawMessage.toLowerCase();
   const status = error instanceof ZodError
     ? 400
     : normalizedMessage.includes('not found')
@@ -1625,11 +1672,14 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
           normalizedMessage.includes('expired')
         ? 400
         : 500;
-  // 500s are captured by sentryErrorHandler above; log them locally too
+  // For 500s: log full details server-side, send only generic message to client
+  // to avoid leaking Prisma/RPC internals to potential attackers.
   if (status === 500) {
-    logger.error({ err: message }, 'unhandled-error');
+    logger.error({ err: rawMessage }, 'unhandled-error');
+    res.status(500).json({ error: 'Internal Server Error' });
+    return;
   }
-  res.status(status).json({ error: message });
+  res.status(status).json({ error: rawMessage });
 });
 
 async function start() {

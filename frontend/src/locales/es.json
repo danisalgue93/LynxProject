@@ -57,7 +57,16 @@
     "confirmEmail": "Confirmar email",
     "recoverPassword": "Recuperar contraseña",
     "signIn": "Iniciar sesión",
-    "connectedViaEmail": "Conectado vía email"
+    "connectedViaEmail": "Conectado vía email",
+    "confirmEmailSent": "Revisa tu correo — te hemos enviado un enlace de verificación.",
+    "devTokenNote": "[DEV] Token pre-relleno desde la respuesta de la API.",
+    "emailAccount": "Cuenta de email",
+    "internalWallet": "Cartera interna",
+    "loginRequiredBody": "Necesitas una cuenta para {{action}}.",
+    "loginRequiredTitle": "Inicio de sesión requerido",
+    "passwordsMismatch": "Las contraseñas nuevas no coinciden",
+    "thisAction": "continuar",
+    "walletAccount": "Cuenta de cartera"
   },
   "status": {
     "OPEN": "ABIERTO",
@@ -98,7 +107,12 @@
     "createFailed": "No se pudo crear el duelo",
     "system": "Sistema",
     "lynxParen": "(LYNX)",
-    "noAutoEmission": "(SIN EMISIÓN AUTOMÁTICA)"
+    "noAutoEmission": "(SIN EMISIÓN AUTOMÁTICA)",
+    "cancelFailed": "No se pudo cancelar el duelo",
+    "cancelPending": "Cancelando duelo...",
+    "cancelRefund": "Cancelar y reembolsar",
+    "cancelSuccess": "Duelo cancelado. Tus fondos han sido reembolsados.",
+    "cancelling": "Cancelando..."
   },
   "createDuel": {
     "title": "Forjar Duelo 1v1",
@@ -398,7 +412,9 @@
     "market": "Mercado",
     "optA": "OPC A",
     "optB": "OPC B",
-    "myOpenOrders": "Mis Órdenes Abiertas"
+    "myOpenOrders": "Mis Órdenes Abiertas",
+    "cancelSuccess": "Orden cancelada correctamente.",
+    "depositSol": "Depositar SOL"
   },
   "portfolio": {
     "invalidSolAmount": "Introduce una cantidad de SOL válida.",
@@ -473,7 +489,8 @@
     "stakeLynx": "Stakear LYNX",
     "unstakeLynx": "Quitar Stake de LYNX",
     "stakeTabLabel": "Stake",
-    "unstakeTabLabel": "Quitar Stake"
+    "unstakeTabLabel": "Quitar Stake",
+    "connectedViaEmail": "Conectado mediante email"
   },
   "governance": {
     "loading": "Cargando datos de gobernanza...",
@@ -556,6 +573,8 @@
     "binary": "Binario Sí/No",
     "submit": "Firmar y registrar mercado",
     "errorTitleRequired": "El evento necesita un título.",
-    "errorGeneric": "No se pudo crear el mercado."
+    "errorGeneric": "No se pudo crear el mercado.",
+    "cutoffDefaultWarning": "Sin fecha — se usará 24 h desde ahora: {{date}}",
+    "resolveDefaultWarning": "Sin fecha — se usará cut-off + 24 h"
   }
 }

@@ -15,7 +15,11 @@ interface MarketCardProps {
 
 export function MarketCard({ market, onClick }: MarketCardProps) {
   const { t } = useTranslation();
-  const isCutoff = market.status === MarketStatus.CUT_OFF;
+  const statusLabel = market.status === MarketStatus.RESOLVED
+    ? t('marketCard.resolved', 'RESOLVED')
+    : market.status === MarketStatus.CUT_OFF || market.status === MarketStatus.EXPIRED
+    ? t('marketCard.closed', 'CLOSED')
+    : t('marketCard.active', 'ACTIVE');
   const isLynx = market.currency === 'LYNX';
   const poolAmount = market.poolAmount || 0;
   const yesPct = poolAmount > 0 ? (market.yesAmount / poolAmount) * 100 : 0;
@@ -63,7 +67,7 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
           </span>
           <div className="flex items-center gap-1 text-[#52525B] text-[7px] md:text-[10px] font-bold uppercase tracking-wider">
             <Clock className="w-2.5 h-2.5 md:w-3 md:h-3" />
-            {isCutoff ? t('marketCard.resolved', 'RESOLVED') : t('marketCard.active', 'ACTIVE')}
+            {statusLabel}
           </div>
         </div>
 

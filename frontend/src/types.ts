@@ -55,6 +55,7 @@ export interface Duel {
   rival?: string;
   amount: number;
   currency: 'SOL' | 'LYNX';
+  burnedAmount?: number;  // Total LYNX burned across both sides (backend-computed)
   status: DuelStatus;
   positionA: Position;
   positionB: Position;

@@ -71,7 +71,9 @@ cripto/
 ```bash
 # 1. Build and deploy the program
 cd cripto
-anchor build
+# Build without IDL generation (required due to proc_macro2::Span::source_file
+# compatibility issue in anchor-syn 0.30.1 — see README_DEPLOY.md)
+anchor build --no-idl
 anchor deploy --provider.cluster devnet
 
 # 2. Initialize the protocol (creates config PDA, LYNX mint, vaults)

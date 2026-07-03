@@ -335,15 +335,21 @@ export function MarketDetail({
       ? currentNoAmount
       : currentDrawAmount;
 
-  const newSidePool = currentSidePool + parsedAmount;
-  const shareOfPool = newSidePool > 0 ? parsedAmount / newSidePool : 0;
+  // For LYNX markets, 15% of the gross bet is burned before crediting the pool.
+  // claimPosition() uses position.amount (= post-burn net) as the user's share.
+  // Using the gross parsedAmount here would over-estimate payout for LYNX markets.
+  const LYNX_BURN_RATE = 0.15;
+  const isLynxMarket = market.currency === 'LYNX';
+  const creditAmount = isLynxMarket ? parsedAmount * (1 - LYNX_BURN_RATE) : parsedAmount;
 
-  // Mirrors backend/src/state.ts::claimPosition() exactly:
-  // netPool = poolAmount * (1 - totalFeeRate)  -> fee applies to the ENTIRE pool
-  // (winning + losing sides), not just to the winnings. totalFeeRate (10%) =
-  // STAKER_REWARD_FEE + TREASURY_EVENT_FEE, see backend/src/economy.ts.
-  const PROTOCOL_FEE = 0.1; // 10% total protocol fee, applied over the whole pool
-  const newTotalPool = totalPool + parsedAmount;
+  const newSidePool = currentSidePool + creditAmount;
+  const shareOfPool = newSidePool > 0 ? creditAmount / newSidePool : 0;
+
+  // Mirrors backend/src/state.ts::claimPosition():
+  // netPool = poolAmount * (1 - totalFeeRate) where totalFeeRate (10%) =
+  // STAKER_REWARD_FEE + TREASURY_EVENT_FEE (see backend/src/economy.ts).
+  const PROTOCOL_FEE = 0.1;
+  const newTotalPool = totalPool + creditAmount;
   const netPool = newTotalPool * (1 - PROTOCOL_FEE);
   const totalPayout = netPool * shareOfPool;
 
