@@ -78,7 +78,8 @@ npm run dev         # http://localhost:3001 only
 The admin panel should NEVER be exposed publicly. Run it:
 - On the same machine as your Solana validator/admin node
 - Behind a VPN or SSH tunnel
-- With `ADMIN_ALLOWED_HOSTS` set to specific IPs only
+- With `ADMIN_ALLOWED_HOSTS` set to specific hosts only
+- With `ADMIN_TRUST_PROXY_HEADERS=false`, unless a trusted proxy overwrites IP headers
 
 ### Environment variables
 
@@ -92,6 +93,7 @@ The admin panel should NEVER be exposed publicly. Run it:
 | `TELEGRAM_BOT_TOKEN` | ✅ | Telegram bot for OTP delivery |
 | `TELEGRAM_CHAT_ID` | ✅ | Your private Telegram chat ID |
 | `ADMIN_ALLOWED_HOSTS` | ✅ | Comma-separated allowed host:port values |
+| `ADMIN_TRUST_PROXY_HEADERS` | optional | `true` only behind a trusted proxy/tunnel that overwrites IP headers |
 | `ADMIN_DEV_MODE` | dev only | `true` to skip Telegram OTP |
 | `MOCK_MARKETS` | dev only | `true` to use mock market data |
 

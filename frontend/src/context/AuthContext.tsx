@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { apiUrl } from '../lib/api';
+import { apiUrl, clearAccessToken, setAccessToken } from '../lib/api';
 import { clearManagedAuthSession, saveManagedAuthSession } from '../lib/auth';
 
 export interface AuthUser {
@@ -32,30 +32,49 @@ interface AuthContextType {
   isLoading: boolean;
 }
 
+const AUTH_FETCH_TIMEOUT_MS = 30_000;
+
+// This file predates apiFetch() in lib/api.ts and still calls fetch()
+// directly, so it never got that helper's AbortController timeout — a
+// hung backend left login/register/etc. spinning forever. This mirrors
+// the same abort+timeout pattern (and the same timeout error message)
+// without switching these calls over to apiFetch() itself, which would
+// also pull in apiFetch's automatic Authorization header and 401
+// refresh-retry behavior — a bigger behavior change than this fix calls for.
+async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = AUTH_FETCH_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw new Error('Request timed out. Please check your connection and try again.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const STORAGE_KEY_TOKEN = 'lynx_auth_token';
-const STORAGE_KEY_REFRESH = 'lynx_refresh_token';
 const STORAGE_KEY_USER = 'lynx_auth_user';
+const LEGACY_STORAGE_KEY_TOKEN = 'lynx_auth_token';
+const LEGACY_STORAGE_KEY_REFRESH = 'lynx_refresh_token';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const applySession = (data: { user: AuthUser; token: string; refreshToken?: string }) => {
-    setToken(data.token);
-    setUser(data.user);
-    localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
-    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data.user));
-    if (data.refreshToken) {
-      localStorage.setItem(STORAGE_KEY_REFRESH, data.refreshToken);
-    }
-    if (data.user.authMethod === 'email' && data.user.managedWalletAddress) {
+  const rememberUser = (nextUser: AuthUser) => {
+    setUser(nextUser);
+    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(nextUser));
+    if (nextUser.authMethod === 'email' && nextUser.managedWalletAddress) {
       saveManagedAuthSession({
         provider: 'email-password',
-        email: data.user.email,
-        walletAddress: data.user.managedWalletAddress,
+        email: nextUser.email,
+        walletAddress: nextUser.managedWalletAddress,
         loginAt: Date.now(),
       });
     } else {
@@ -63,77 +82,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const refreshUser = async () => {
-    const storedToken = localStorage.getItem(STORAGE_KEY_TOKEN);
-    if (!storedToken) return;
+  const clearSession = () => {
+    setUser(null);
+    setToken(null);
+    clearAccessToken();
+    localStorage.removeItem(STORAGE_KEY_USER);
+    localStorage.removeItem(LEGACY_STORAGE_KEY_TOKEN);
+    localStorage.removeItem(LEGACY_STORAGE_KEY_REFRESH);
+    clearManagedAuthSession();
+  };
 
+  const applySession = (data: { user: AuthUser; token: string }) => {
+    setToken(data.token);
+    setAccessToken(data.token);
+    rememberUser(data.user);
+  };
+
+  const refreshUser = async () => {
     try {
-      const response = await fetch(apiUrl('/auth/me'), {
-        headers: {
-          Authorization: `Bearer ${storedToken}`
-        }
+      const response = await fetchWithTimeout(apiUrl('/auth/refresh'), {
+        method: 'POST',
+        credentials: 'include',
       });
       if (!response.ok) {
-        localStorage.removeItem(STORAGE_KEY_TOKEN);
-        localStorage.removeItem(STORAGE_KEY_REFRESH);
-        localStorage.removeItem(STORAGE_KEY_USER);
-        setToken(null);
-        setUser(null);
+        clearSession();
         return;
       }
       const data = await response.json();
-      // Backend currently returns a bare user object; a future token-rotation
-      // response would look like { user, token }. Handle both shapes.
-      const userData = data.user ?? data;
-      const newToken = data.token ?? null;
-      setUser(userData);
-      localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(userData));
-      if (newToken) {
-        setToken(newToken);
-        localStorage.setItem(STORAGE_KEY_TOKEN, newToken);
-      }
-      if (userData.authMethod === 'email' && userData.managedWalletAddress) {
-        saveManagedAuthSession({
-          provider: 'email-password',
-          email: userData.email,
-          walletAddress: userData.managedWalletAddress,
-          loginAt: Date.now(),
-        });
-      }
+      applySession(data);
     } catch {
-      setUser(null);
-      setToken(null);
-      localStorage.removeItem(STORAGE_KEY_TOKEN);
-      localStorage.removeItem(STORAGE_KEY_REFRESH);
-      localStorage.removeItem(STORAGE_KEY_USER);
+      clearSession();
     }
   };
 
-  // Load from localStorage on mount
   useEffect(() => {
-    const storedToken = localStorage.getItem(STORAGE_KEY_TOKEN);
-    const storedUser = localStorage.getItem(STORAGE_KEY_USER);
+    localStorage.removeItem(LEGACY_STORAGE_KEY_TOKEN);
+    localStorage.removeItem(LEGACY_STORAGE_KEY_REFRESH);
 
-    if (storedToken && storedUser) {
+    const storedUser = localStorage.getItem(STORAGE_KEY_USER);
+    if (storedUser) {
       try {
-        setToken(storedToken);
         setUser(JSON.parse(storedUser));
-        refreshUser().finally(() => setIsLoading(false));
       } catch {
-        // Corrupted localStorage — clear and start fresh
-        localStorage.removeItem(STORAGE_KEY_TOKEN);
-        localStorage.removeItem(STORAGE_KEY_REFRESH);
         localStorage.removeItem(STORAGE_KEY_USER);
-        setIsLoading(false);
       }
-    } else {
-      setIsLoading(false);
     }
+
+    refreshUser().finally(() => setIsLoading(false));
   }, []);
 
   const login = async (email: string, password: string) => {
-    const response = await fetch(apiUrl('/auth/login'), {
+    const response = await fetchWithTimeout(apiUrl('/auth/login'), {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password })
     });
@@ -143,13 +144,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(error.error || 'Login failed');
     }
 
-    const data = await response.json();
-    applySession(data);
+    applySession(await response.json());
   };
 
   const register = async (email: string, password: string): Promise<{ requiresEmailVerification?: boolean; devVerificationToken?: string; email?: string } | void> => {
-    const response = await fetch(apiUrl('/auth/register'), {
+    const response = await fetchWithTimeout(apiUrl('/auth/register'), {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password })
     });
@@ -160,15 +161,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const data = await response.json();
-    if (data.requiresEmailVerification) {
-      return data;
-    }
+    if (data.requiresEmailVerification) return data;
     applySession(data);
   };
 
   const verifyEmail = async (verificationToken: string) => {
-    const response = await fetch(apiUrl('/auth/verify-email'), {
+    const response = await fetchWithTimeout(apiUrl('/auth/verify-email'), {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: verificationToken })
     });
@@ -178,13 +178,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(error.error || 'Email verification failed');
     }
 
-    const data = await response.json();
-    applySession(data);
+    applySession(await response.json());
   };
 
   const requestPasswordReset = async (email: string) => {
-    const response = await fetch(apiUrl('/auth/request-password-reset'), {
+    const response = await fetchWithTimeout(apiUrl('/auth/request-password-reset'), {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email })
     });
@@ -196,8 +196,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const resetPassword = async (resetToken: string, password: string) => {
-    const response = await fetch(apiUrl('/auth/reset-password'), {
+    const response = await fetchWithTimeout(apiUrl('/auth/reset-password'), {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: resetToken, password })
     });
@@ -209,8 +210,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const changePassword = async (currentPassword: string, newPassword: string) => {
     if (!token) throw new Error('Authentication required');
-    const response = await fetch(apiUrl('/auth/change-password'), {
+    const response = await fetchWithTimeout(apiUrl('/auth/change-password'), {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`
@@ -224,8 +226,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const loginWithWallet = async (wallet: string, signatureMessage: string, signature: string) => {
-    const response = await fetch(apiUrl('/auth/wallet-login'), {
+    const response = await fetchWithTimeout(apiUrl('/auth/wallet-login'), {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ wallet, signatureMessage, signature }),
     });
@@ -235,17 +238,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(error.error || 'Wallet login failed');
     }
 
-    const data = await response.json();
-    applySession(data);
+    applySession(await response.json());
   };
 
   const linkWallet = async (wallet: string, signatureMessage: string, signature: string) => {
-    if (!token) {
-      throw new Error('Authentication required to link wallet');
-    }
+    if (!token) throw new Error('Authentication required to link wallet');
 
-    const response = await fetch(apiUrl('/auth/link-wallet'), {
+    const response = await fetchWithTimeout(apiUrl('/auth/link-wallet'), {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`
@@ -258,18 +259,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(error.error || 'Wallet linking failed');
     }
 
-    const data = await response.json();
-    setUser(data);
-    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data));
+    rememberUser(await response.json());
   };
 
   const unlinkWallet = async () => {
-    if (!token) {
-      throw new Error('Authentication required to unlink wallet');
-    }
+    if (!token) throw new Error('Authentication required to unlink wallet');
 
-    const response = await fetch(apiUrl('/auth/unlink-wallet'), {
+    const response = await fetchWithTimeout(apiUrl('/auth/unlink-wallet'), {
       method: 'DELETE',
+      credentials: 'include',
       headers: {
         Authorization: `Bearer ${token}`
       }
@@ -280,18 +278,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(error.error || 'Wallet unlink failed');
     }
 
-    const data = await response.json();
-    setUser(data);
-    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(data));
+    rememberUser(await response.json());
   };
 
   const logout = () => {
-    setUser(null);
-    setToken(null);
-    localStorage.removeItem(STORAGE_KEY_TOKEN);
-    localStorage.removeItem(STORAGE_KEY_REFRESH);
-    localStorage.removeItem(STORAGE_KEY_USER);
-    clearManagedAuthSession();
+    fetchWithTimeout(apiUrl('/auth/logout'), {
+      method: 'POST',
+      credentials: 'include',
+    }).catch(() => undefined);
+    clearSession();
   };
 
   return (

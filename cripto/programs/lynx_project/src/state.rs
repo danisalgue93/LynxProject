@@ -13,12 +13,11 @@ pub struct ProtocolConfig {
     pub reward_per_token_scaled: u128,
     pub emergency_delay: i64,
     pub bump: u8,
-    pub stake_vault_bump: u8,
     pub rewards_vault_bump: u8,
 }
 
 impl ProtocolConfig {
-    pub const LEN: usize = 8 + 32 * 5 + 8 * 4 + 16 + 1 * 3 + 32;
+    pub const LEN: usize = 8 + 32 * 5 + 8 * 4 + 16 + 1 * 2 + 33;
 }
 
 #[account]
@@ -53,6 +52,24 @@ pub struct Market {
     pub burned_lynx: u64,
     pub bump: u8,
     pub vault_bump: u8,
+    // Bump for the per-market LYNX token vault PDA (seeds = [b"lynx_vault", market.key()]).
+    // Previously market_lynx_vault was an arbitrary token account validated only by
+    // mint+owner, so the same account could be reused across multiple LYNX markets and
+    // mix custody between them. Storing the bump here lets buy_position_lynx_with_burn /
+    // claim_market_lynx pin the vault to this specific market via seeds instead.
+    pub lynx_vault_bump: u8,
+    // LYNX mint ratio (bps), captured once in finalize_market_and_fees when this
+    // market resolves (Currency::SOL only). mint_lynx_distribution reads this
+    // fixed value instead of recomputing current_mint_ratio_bps() on every
+    // per-position claim, so every winner of THIS market gets the same ratio
+    // regardless of when they claim or how much the global LYNX supply has
+    // moved via unrelated markets/duels in the meantime. Zero until resolved.
+    pub mint_ratio_bps: u64,
+    // Set by sweep_unclaimed_market_sol / sweep_unclaimed_market_lynx when a market
+    // resolves with winning_total == 0 (nobody backed the winning outcome) and its
+    // pool has been swept to the treasury so it doesn't stay stuck in vault /
+    // market_lynx_vault forever. Guards against sweeping the same market twice.
+    pub swept: bool,
 }
 
 impl Market {
@@ -69,7 +86,10 @@ impl Market {
         + 8 * 6
         + 1
         + 1
-        + 32;
+        + 1
+        + 8    // mint_ratio_bps (carved out of the reserve below; total LEN unchanged)
+        + 1    // swept (carved out of the reserve below; total LEN unchanged)
+        + 23;  // remaining reserve
 }
 
 #[account]

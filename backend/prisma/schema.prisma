@@ -78,6 +78,11 @@ enum LedgerType {
   STAKE
   UNSTAKE
   APPROVE
+  TRADE
+  SETTLEMENT
+  EMISSION
+  BURN
+  REFUND
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -151,6 +156,8 @@ model UserPosition {
   currency   String
   claimed    Boolean  @default(false)
   createdAt  DateTime @default(now())
+  solPrincipal           Decimal? @db.Decimal(28, 9)
+  lynxBoostSolEquivalent Decimal? @db.Decimal(28, 9)
 
   market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
 
@@ -302,16 +309,16 @@ model Notification {
 }
 
 model LedgerEntry {
-  id        String   @id
+  id        String     @id
   wallet    String
-  type      String
+  type      LedgerType
   currency  String?
-  amount    Decimal? @db.Decimal(28, 9)
+  amount    Decimal?   @db.Decimal(28, 9)
   provider  String?
   status    String
   reference String?
   metadata  Json?
-  createdAt DateTime @default(now())
+  createdAt DateTime   @default(now())
 
   @@index([wallet])
   @@index([type])
@@ -361,5 +368,6 @@ model Treasury {
   lynx                Decimal @default(0) @db.Decimal(28, 9)
   lynxForInitialSale  Decimal @default(0) @db.Decimal(28, 9)
   lynxBurned          Decimal @default(0) @db.Decimal(28, 9)
+  lynxTotalMinted     Decimal @default(0) @db.Decimal(28, 9)
   protocolDuelSol     Decimal @default(0) @db.Decimal(28, 9)
 }

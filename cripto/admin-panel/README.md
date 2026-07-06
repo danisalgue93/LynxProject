@@ -33,6 +33,7 @@ npm run dev  # Binds to 127.0.0.1:3001 only
 | `TELEGRAM_BOT_TOKEN` | ✅ | Telegram bot token for OTP delivery |
 | `TELEGRAM_CHAT_ID` | ✅ | Telegram chat ID for OTP delivery |
 | `ADMIN_ALLOWED_HOSTS` | Optional | Comma-separated allowed hosts (default: localhost:3001) |
+| `ADMIN_TRUST_PROXY_HEADERS` | Optional | Set to `true` only behind a trusted proxy/tunnel that overwrites client IP headers |
 | `ADMIN_DEV_MODE` | Dev only | Returns OTP in API response — never enable in production |
 | `MOCK_MARKETS` | Dev only | Returns mock market data instead of fetching from chain |
 
@@ -44,6 +45,7 @@ The admin panel should **never** be publicly accessible. Deploy it:
 - Behind a VPN or private tunnel (e.g., Tailscale, Cloudflare Access)
 
 Set `ADMIN_ALLOWED_HOSTS` to only include the hosts from which the panel will be accessed.
+Leave `ADMIN_TRUST_PROXY_HEADERS=false` unless the panel is reachable only through a proxy/tunnel that overwrites `X-Real-IP` and `X-Forwarded-For`; otherwise spoofed headers can bypass per-IP rate limits.
 
 ## Market resolution flow
 

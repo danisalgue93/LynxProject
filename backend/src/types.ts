@@ -43,6 +43,16 @@ export interface UserPosition {
   currency: Currency;
   claimed: boolean;
   createdAt: number;
+  // SOL originally staked into this position when it was opened (SOL markets
+  // only, fixed at creation time). Used as the cap for how much LYNX can be
+  // burned into this position later: the SOL-equivalent value of all LYNX
+  // burned into a position can never exceed solPrincipal. Undefined for
+  // positions in LYNX markets or positions created before this field existed.
+  solPrincipal?: number;
+  // Cumulative SOL-equivalent value (at burn time) of all LYNX burned into
+  // this position so far. Tracked separately from `amount` so the cap above
+  // can be checked without re-deriving it from trade history.
+  lynxBoostSolEquivalent?: number;
 }
 
 export interface WalletState {

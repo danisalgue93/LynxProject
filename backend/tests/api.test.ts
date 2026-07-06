@@ -1,6 +1,13 @@
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { app, store } from '../src/server.js';
+import {
+  getMintRatio,
+  LYNX_PARTICIPANT_SHARE,
+  LYNX_TREASURY_SHARE,
+  LYNX_INITIAL_SALE_SHARE,
+  roundAmount
+} from '../src/economy.js';
 
 const sig = 'TEST_SIGNATURE_123';
 
@@ -54,10 +61,14 @@ async function approveWallet(token: string, wallet: string) {
     .expect(200);
 }
 
-async function fundWallet(token: string, wallet: string, currency: 'SOL' | 'LYNX', amount: number) {
+async function fundWallet(_token: string, wallet: string, currency: 'SOL' | 'LYNX', amount: number) {
+  const adminToken = await loginAdmin();
+  if (!store.isWalletApproved(wallet)) {
+    await approveWallet(adminToken, wallet);
+  }
   await request(app)
     .post('/api/ledger/deposit')
-    .set(auth(token))
+    .set(auth(adminToken))
     .send({ wallet, currency, amount, provider: 'INTERNAL', reference: `test-${wallet}-${currency}` })
     .expect(201);
 }
@@ -70,6 +81,11 @@ async function approveAndFund(token: string, wallet: string, balances: Partial<R
 
 describe('Lynx backend API', () => {
   beforeEach(() => {
+    app.locals.testBypassAuth = true;
+    app.locals.solWithdrawalSender = async () => ({
+      ok: true,
+      signature: `TEST_WITHDRAWAL_${Date.now()}_${Math.random().toString(36).slice(2)}`
+    });
     store.seed();
   });
 
@@ -80,8 +96,31 @@ describe('Lynx backend API', () => {
       .expect(200);
 
     expect(response.body.token).toBeTypeOf('string');
+    expect(response.body.refreshToken).toBeUndefined();
     expect(response.body.user.email).toBe('admin@lynx.local');
     expect(response.body.user.role).toBe('admin');
+    const cookie = response.headers['set-cookie']?.join('; ');
+    expect(cookie).toContain('lynx_refresh=');
+    expect(cookie).toContain('HttpOnly');
+    expect(cookie).toContain('SameSite=Strict');
+  });
+
+  it('refreshes access tokens from the httpOnly refresh cookie', async () => {
+    const login = await request(app)
+      .post('/auth/login')
+      .send({ email: 'admin@lynx.local', password: 'admin123' })
+      .expect(200);
+    const cookie = login.headers['set-cookie'] as string[];
+    expect(cookie).toBeDefined();
+
+    const refreshed = await request(app)
+      .post('/auth/refresh')
+      .set('Cookie', cookie)
+      .expect(200);
+
+    expect(refreshed.body.token).toBeTypeOf('string');
+    expect(refreshed.body.refreshToken).toBeUndefined();
+    expect(refreshed.body.user.email).toBe('admin@lynx.local');
   });
 
   it('starts without demo markets by default', async () => {
@@ -153,7 +192,7 @@ describe('Lynx backend API', () => {
     expect(response.body.position.amount).toBe(85);
   });
 
-  it('uses the 30/10/60 LYNX emission split after SOL event resolution', async () => {
+  it('uses the 85/0/15 LYNX emission split after SOL event resolution', async () => {
     const adminToken = await loginAdmin();
     const aToken = await registerUser('emitter-a');
     const bToken = await registerUser('emitter-b');
@@ -180,10 +219,56 @@ describe('Lynx backend API', () => {
 
     const a = await request(app).get('/api/portfolio?wallet=EMITTER_A').expect(200);
     const b = await request(app).get('/api/portfolio?wallet=EMITTER_B').expect(200);
-    expect(a.body.lynxBalance).toBe(1.8);
-    expect(b.body.lynxBalance).toBe(1.2);
-    expect(store.treasury.lynx).toBe(1);
-    expect(store.treasury.lynxForInitialSale).toBe(6);
+    // Fresh seed() means circulating supply is 0 -> tier-1 mint ratio (1.00),
+    // and the SOL pool is 6 + 4 = 10, so totalEmission = 10.
+    expect(a.body.lynxBalance).toBe(5.1);
+    expect(b.body.lynxBalance).toBe(3.4);
+    expect(store.treasury.lynx).toBe(0);
+    expect(store.treasury.lynxForInitialSale).toBe(1.5);
+  });
+
+  it('splits 100% of the calculated LYNX emission across participant/treasury/initial-sale shares, with none lost', async () => {
+    const adminToken = await loginAdmin();
+    const aToken = await registerUser('emitter-a-full');
+    const bToken = await registerUser('emitter-b-full');
+    const market = await createMarket(adminToken, { id: 'market-emission-full' });
+    await approveAndFund(aToken, 'EMITTER_A_FULL', { SOL: 6 });
+    await approveAndFund(bToken, 'EMITTER_B_FULL', { SOL: 4 });
+
+    await request(app)
+      .post(`/api/markets/${market.id}/trades`)
+      .set(auth(aToken))
+      .send({ wallet: 'EMITTER_A_FULL', amount: 6, position: 'YES', tradeType: 'swap' })
+      .expect(200);
+    await request(app)
+      .post(`/api/markets/${market.id}/trades`)
+      .set(auth(bToken))
+      .send({ wallet: 'EMITTER_B_FULL', amount: 4, position: 'NO', tradeType: 'swap' })
+      .expect(200);
+
+    const treasuryLynxBefore = store.treasury.lynx;
+    const treasuryInitialSaleBefore = store.treasury.lynxForInitialSale;
+
+    await request(app)
+      .post(`/api/admin/markets/${market.id}/resolve`)
+      .set(auth(adminToken))
+      .send({ result: 'YES', source: 'manual', confirmation: 'RESOLVE YES' })
+      .expect(200);
+
+    const a = await request(app).get('/api/portfolio?wallet=EMITTER_A_FULL').expect(200);
+    const b = await request(app).get('/api/portfolio?wallet=EMITTER_B_FULL').expect(200);
+
+    // The three shares must always add up to exactly 100% of the ratio-adjusted
+    // total emission — no LYNX should be lost or invented across the split.
+    expect(LYNX_PARTICIPANT_SHARE + LYNX_TREASURY_SHARE + LYNX_INITIAL_SALE_SHARE).toBe(1);
+
+    const poolAmount = 10; // 6 + 4 SOL, no burn applies to SOL markets
+    const totalEmission = roundAmount(poolAmount * getMintRatio(0));
+    const participantMinted = roundAmount(a.body.lynxBalance + b.body.lynxBalance);
+    const treasuryMinted = roundAmount(store.treasury.lynx - treasuryLynxBefore);
+    const initialSaleMinted = roundAmount(store.treasury.lynxForInitialSale - treasuryInitialSaleBefore);
+
+    expect(roundAmount(participantMinted + treasuryMinted + initialSaleMinted)).toBe(totalEmission);
   });
 
   it('supports 1v1 LYNX duels from active LYNX markets and burns both sides', async () => {
@@ -240,8 +325,7 @@ describe('Lynx backend API', () => {
     expect(wallet).toBeTruthy();
     await approveWallet(userToken, wallet);
 
-    const originalEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
+    app.locals.testBypassAuth = false;
     try {
       // EXTERNAL_WALLET claims a real deposit but supplies no transaction signature.
       await request(app)
@@ -260,7 +344,7 @@ describe('Lynx backend API', () => {
       const portfolio = await request(app).get(`/api/portfolio?wallet=${wallet}`).set(auth(userToken)).expect(200);
       expect(portfolio.body.solBalance).not.toBe(999999);
     } finally {
-      process.env.NODE_ENV = originalEnv;
+      app.locals.testBypassAuth = true;
     }
   });
 
@@ -467,18 +551,23 @@ describe('Lynx backend API', () => {
   });
 
   it('clears indexed transactions on development reset', async () => {
+    const userToken = await registerUser('tx-reset-user');
+    const adminToken = await loginAdmin();
+
     await request(app)
       .post('/api/transactions')
+      .set(auth(userToken))
       .send({ signature: 'TEST_SIGNATURE', wallet: 'TESTER' })
       .expect(200);
 
-    await request(app).post('/api/dev/reset').expect(200);
+    await request(app).post('/api/dev/reset').set(auth(adminToken)).expect(200);
 
     const response = await request(app).get('/api/transactions?wallet=TESTER').expect(200);
     expect(response.body).toHaveLength(0);
   });
 
   it('rejects repeated DAO votes from the same approved wallet', async () => {
+    const adminToken = await loginAdmin();
     const userToken = await registerUser('dao-voter');
     await approveAndFund(userToken, 'VOTER', { LYNX: 50 });
     await request(app)
@@ -488,7 +577,7 @@ describe('Lynx backend API', () => {
       .expect(200);
     const proposal = await request(app)
       .post('/api/proposals')
-      .set(auth(userToken))
+      .set(auth(adminToken))
       .send({ title: 'DAO vote test', description: 'Test proposal', category: 'protocol' })
       .expect(201);
 
@@ -527,8 +616,7 @@ describe('Lynx backend API', () => {
       .send({ title: 'Hijack test', description: 'Test proposal', category: 'protocol' })
       .expect(201);
 
-    const originalEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
+    app.locals.testBypassAuth = false;
     try {
       // The attacker is authenticated as themselves but tries to cast a vote
       // using the victim's wallet address — this must be rejected.
@@ -538,7 +626,7 @@ describe('Lynx backend API', () => {
         .send({ wallet: 'VICTIM_VOTER', voteType: 'yes' })
         .expect(403);
     } finally {
-      process.env.NODE_ENV = originalEnv;
+      app.locals.testBypassAuth = true;
     }
 
     // The victim must still be free to cast their own vote afterwards.
@@ -573,8 +661,7 @@ describe('Lynx backend API', () => {
       .expect(201);
     const attackerToken = attackerRegister.body.token as string;
 
-    const originalEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
+    app.locals.testBypassAuth = false;
     try {
       // The attacker is authenticated as themselves but tries to trigger the
       // claim using the victim's wallet address — this must be rejected.
@@ -584,7 +671,7 @@ describe('Lynx backend API', () => {
         .send({ wallet: 'CLAIM_VICTIM' })
         .expect(403);
     } finally {
-      process.env.NODE_ENV = originalEnv;
+      app.locals.testBypassAuth = true;
     }
 
     // The victim must still be free to claim their own payout afterwards.
@@ -717,5 +804,152 @@ describe('Lynx backend API', () => {
     // Staked balance (50) was debited from lynxBalance on stake, then the
     // 4.25 LYNX reward is credited back on claim.
     expect(portfolio.body.lynxBalance).toBe(4.25);
+  });
+
+  describe('boosting a SOL-market position by burning LYNX', () => {
+    async function seedLynxSolBid(adminToken: string, price: number, amount: number) {
+      // A resting BUY order on LYNX/SOL is what makes that price the "best
+      // bid" the boost feature values burned LYNX against.
+      const bidderToken = await registerUser('lynx-sol-bidder');
+      await approveAndFund(adminToken, 'LYNX_SOL_BIDDER', { SOL: amount * price + 10 });
+      await request(app)
+        .post('/api/orders')
+        .set(auth(bidderToken))
+        .send({ wallet: 'LYNX_SOL_BIDDER', pair: 'LYNX/SOL', side: 'BUY', amount, price, currency: 'LYNX', tradeType: 'limit' })
+        .expect(201);
+    }
+
+    it('lets a user burn LYNX to add weight to their own open SOL position, valued at the best LYNX/SOL bid', async () => {
+      const adminToken = await loginAdmin();
+      const market = await createMarket(adminToken, { id: 'market-lynx-boost-basic' });
+      await seedLynxSolBid(adminToken, 0.5, 1000);
+
+      const userToken = await registerUser('boost-user');
+      await approveAndFund(userToken, 'BOOST_USER', { SOL: 1, LYNX: 10 });
+
+      const trade = await request(app)
+        .post(`/api/markets/${market.id}/trades`)
+        .set(auth(userToken))
+        .send({ wallet: 'BOOST_USER', amount: 1, position: 'YES', tradeType: 'swap' })
+        .expect(200);
+
+      const positionId = trade.body.position.id;
+      expect(trade.body.position.solPrincipal).toBe(1);
+
+      const treasuryBurnedBefore = store.treasury.lynxBurned;
+      const marketBefore = await request(app).get(`/api/markets/${market.id}`).expect(200);
+      expect(marketBefore.body.poolAmount).toBe(1);
+      expect(marketBefore.body.yesAmount).toBe(1);
+
+      // Burning 2 LYNX at a 0.5 SOL best bid = 1 SOL of equivalent weight,
+      // exactly matching the 1 SOL principal cap.
+      const boost = await request(app)
+        .post(`/api/positions/${positionId}/boost-with-lynx`)
+        .set(auth(userToken))
+        .send({ wallet: 'BOOST_USER', lynxAmount: 2 })
+        .expect(200);
+
+      expect(boost.body.solEquivalent).toBe(1);
+      expect(boost.body.position.amount).toBe(2);
+      expect(boost.body.position.lynxBoostSolEquivalent).toBe(1);
+      expect(boost.body.market.poolAmount).toBe(2);
+      expect(boost.body.market.yesAmount).toBe(2);
+
+      // LYNX was burned, not transferred: it left the user's balance and was
+      // recorded against the protocol's burned counter, not credited to the
+      // treasury or the pool as LYNX.
+      expect(store.treasury.lynxBurned - treasuryBurnedBefore).toBe(2);
+
+      const portfolio = await request(app).get('/api/portfolio?wallet=BOOST_USER').expect(200);
+      expect(portfolio.body.lynxBalance).toBe(8);
+    });
+
+    it('rejects a burn that would push the SOL-equivalent weight past the original SOL principal', async () => {
+      const adminToken = await loginAdmin();
+      const market = await createMarket(adminToken, { id: 'market-lynx-boost-cap' });
+      await seedLynxSolBid(adminToken, 0.5, 1000);
+
+      const userToken = await registerUser('boost-cap-user');
+      await approveAndFund(userToken, 'BOOST_CAP_USER', { SOL: 1, LYNX: 10 });
+
+      const trade = await request(app)
+        .post(`/api/markets/${market.id}/trades`)
+        .set(auth(userToken))
+        .send({ wallet: 'BOOST_CAP_USER', amount: 1, position: 'YES', tradeType: 'swap' })
+        .expect(200);
+
+      // 3 LYNX at 0.5 SOL = 1.5 SOL equivalent, which is over the 1 SOL cap.
+      const rejected = await request(app)
+        .post(`/api/positions/${trade.body.position.id}/boost-with-lynx`)
+        .set(auth(userToken))
+        .send({ wallet: 'BOOST_CAP_USER', lynxAmount: 3 })
+        .expect(400);
+      expect(rejected.body.error).toMatch(/boost cap/i);
+
+      // A first, in-range burn should succeed and count toward the cap...
+      await request(app)
+        .post(`/api/positions/${trade.body.position.id}/boost-with-lynx`)
+        .set(auth(userToken))
+        .send({ wallet: 'BOOST_CAP_USER', lynxAmount: 1 })
+        .expect(200);
+
+      // ...so a second burn that would only tip the *cumulative* total over
+      // the cap must also be rejected, even though it alone would fit.
+      const secondRejected = await request(app)
+        .post(`/api/positions/${trade.body.position.id}/boost-with-lynx`)
+        .set(auth(userToken))
+        .send({ wallet: 'BOOST_CAP_USER', lynxAmount: 2 })
+        .expect(400);
+      expect(secondRejected.body.error).toMatch(/boost cap/i);
+    });
+
+    it('refuses to let a user boost a position from a wallet they do not own', async () => {
+      const adminToken = await loginAdmin();
+      const market = await createMarket(adminToken, { id: 'market-lynx-boost-hijack' });
+      await seedLynxSolBid(adminToken, 0.5, 1000);
+
+      const victimToken = await registerUser('boost-victim');
+      await approveAndFund(victimToken, 'BOOST_VICTIM', { SOL: 1 });
+      const trade = await request(app)
+        .post(`/api/markets/${market.id}/trades`)
+        .set(auth(victimToken))
+        .send({ wallet: 'BOOST_VICTIM', amount: 1, position: 'YES', tradeType: 'swap' })
+        .expect(200);
+
+      const attackerToken = await registerUser('boost-attacker');
+      await approveAndFund(attackerToken, 'BOOST_ATTACKER', { LYNX: 10 });
+
+      app.locals.testBypassAuth = false;
+      try {
+        await request(app)
+          .post(`/api/positions/${trade.body.position.id}/boost-with-lynx`)
+          .set(auth(attackerToken))
+          .send({ wallet: 'BOOST_VICTIM', lynxAmount: 1 })
+          .expect(403);
+      } finally {
+        app.locals.testBypassAuth = true;
+      }
+    });
+
+    it('refuses to boost a position in a LYNX-currency market', async () => {
+      const adminToken = await loginAdmin();
+      const market = await createMarket(adminToken, { id: 'market-lynx-boost-wrong-currency', currency: 'LYNX' });
+      await seedLynxSolBid(adminToken, 0.5, 1000);
+
+      const userToken = await registerUser('boost-wrong-currency-user');
+      await approveAndFund(userToken, 'BOOST_WRONG_CURRENCY', { LYNX: 10 });
+      const trade = await request(app)
+        .post(`/api/markets/${market.id}/trades`)
+        .set(auth(userToken))
+        .send({ wallet: 'BOOST_WRONG_CURRENCY', amount: 5, position: 'YES', tradeType: 'swap' })
+        .expect(200);
+
+      const rejected = await request(app)
+        .post(`/api/positions/${trade.body.position.id}/boost-with-lynx`)
+        .set(auth(userToken))
+        .send({ wallet: 'BOOST_WRONG_CURRENCY', lynxAmount: 1 })
+        .expect(400);
+      expect(rejected.body.error).toMatch(/SOL/i);
+    });
   });
 });

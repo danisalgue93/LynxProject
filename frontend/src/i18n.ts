@@ -69,7 +69,17 @@ export const initializeLanguage = async () => {
        return;
     }
 
-    const response = await fetch('https://ipapi.co/json/');
+    // Non-critical, best-effort geolocation lookup — cap it short (2.5s) so a
+    // slow/down ipapi.co can't block i18n init; the existing catch below
+    // already falls back to English on any error, AbortError included.
+    const geoController = new AbortController();
+    const geoTimeoutId = setTimeout(() => geoController.abort(), 2500);
+    let response: Response;
+    try {
+      response = await fetch('https://ipapi.co/json/', { signal: geoController.signal });
+    } finally {
+      clearTimeout(geoTimeoutId);
+    }
     if (!response.ok) throw new Error('API Error');
     
     const data = await response.json();

@@ -96,7 +96,7 @@ export function DocsView() {
       content: t('docs.step7Content', "In 1v1vP Duels, the protocol participates by emitting LYNX equal to the SOL wagered by users. If the protocol wins, the SOL goes to the Treasury. If it loses, the emitted LYNX is awarded to the players."),
       color: "#9945FF",
       details: [
-        { label: "Protocol Matches", value: "1:1 with LYNX", highlight: true },
+        { label: "Protocol Matches", value: "Dynamic (see emission schedule)", highlight: true },
         { label: "If Protocol Loses", value: "+LYNX to Players" }
       ]
     },

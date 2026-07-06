@@ -36,10 +36,12 @@ pub enum LynxError {
     InsufficientFunds,
     #[msg("Duel has expired")]
     DuelExpired,
-    #[msg("Duel has not expired")]
-    DuelNotExpired,
     #[msg("Rival must choose a different outcome")]
     SameDuelOutcome,
     #[msg("Invalid duel type for this instruction")]
     InvalidDuelType,
+    #[msg("Market has already been swept")]
+    AlreadySwept,
+    #[msg("There is nothing to sweep for this market")]
+    NothingToSweep,
 }

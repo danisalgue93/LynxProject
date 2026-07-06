@@ -1,3 +1,9 @@
+// In-memory rate limiting — REQUIRES this admin panel to run as a single
+// process/instance (as documented in the project README: local dev or one
+// instance behind a VPN/localhost tunnel, never scaled to multiple replicas).
+// If this ever needs to run as more than one instance, back this with a
+// shared store (Redis/Postgres) instead — otherwise the limit can be
+// bypassed by spreading requests across instances.
 const buckets = new Map<string, { count: number; resetAt: number }>();
 
 // Purge expired rate-limit buckets to prevent memory growth

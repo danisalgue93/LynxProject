@@ -18,6 +18,16 @@ export interface Persistence {
   save(store: LynxState): Promise<void>;
   loadAuthUsers<T>(): Promise<[string, T][] | undefined>;
   saveAuthUsers<T>(users: [string, T][]): Promise<void>;
+  // DB-level belt-and-suspenders guard against double voting. Attempts to
+  // durably record a single (proposalId, wallet) vote via the ProposalVote
+  // table's UNIQUE(proposalId, wallet) constraint. Returns false if a vote
+  // for that pair already exists — this still protects against a double
+  // vote even if the in-memory `voters` check in state.ts were ever bypassed
+  // (e.g. after a restart that reloads a stale/incomplete Proposal.voters
+  // snapshot from Postgres). The memory driver has no durable storage at all
+  // (see the warning logged in createPersistence()), so it always returns
+  // true there — consistent with everything else being volatile in that mode.
+  recordVote(proposalId: string, wallet: string, voteType: 'yes' | 'no', weight: number): Promise<boolean>;
 }
 
 const TREASURY_ID = 'default';
@@ -72,6 +82,8 @@ function positionToDb(p: UserPosition) {
     currency:   p.currency,
     claimed:    p.claimed,
     createdAt:  msToDate(p.createdAt),
+    solPrincipal:           p.solPrincipal ?? null,
+    lynxBoostSolEquivalent: p.lynxBoostSolEquivalent ?? null,
   };
 }
 
@@ -247,6 +259,8 @@ function dbToPosition(r: any): UserPosition {
     currency:   r.currency,
     claimed:    r.claimed,
     createdAt:  dateToMs(r.createdAt),
+    solPrincipal:           r.solPrincipal != null ? Number(r.solPrincipal) : undefined,
+    lynxBoostSolEquivalent: r.lynxBoostSolEquivalent != null ? Number(r.lynxBoostSolEquivalent) : undefined,
   };
 }
 
@@ -410,7 +424,8 @@ export function createPersistence(): Persistence {
       load: async () => undefined,
       save: async () => undefined,
       loadAuthUsers: async () => undefined,
-      saveAuthUsers: async () => undefined
+      saveAuthUsers: async () => undefined,
+      recordVote: async () => true
     };
   }
 
@@ -450,7 +465,8 @@ export function createPersistence(): Persistence {
       load: async () => undefined,
       save: async () => undefined,
       loadAuthUsers: async () => undefined,
-      saveAuthUsers: async () => undefined
+      saveAuthUsers: async () => undefined,
+      recordVote: async () => true
     };
   }
 
@@ -536,6 +552,7 @@ export function createPersistence(): Persistence {
           lynx:               Number(treasury.lynx),
           lynxForInitialSale: Number(treasury.lynxForInitialSale),
           lynxBurned:         Number(treasury.lynxBurned),
+          lynxTotalMinted:    Number(treasury.lynxTotalMinted),
           protocolDuelSol:    Number(treasury.protocolDuelSol),
         };
       }
@@ -684,6 +701,18 @@ export function createPersistence(): Persistence {
           update: store.treasury,
         });
       });
+    },
+
+    async recordVote(proposalId, wallet, voteType, weight) {
+      try {
+        await prisma.proposalVote.create({
+          data: { id: `${proposalId}:${wallet}`, proposalId, wallet, voteType, weight }
+        });
+        return true;
+      } catch (err: any) {
+        if (err?.code === 'P2002') return false; // UNIQUE(proposalId, wallet) violation — already voted
+        throw err;
+      }
     },
 
   async loadAuthUsers<T>() {

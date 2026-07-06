@@ -2,11 +2,12 @@ import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { setOtp } from '@/lib/otp-store';
 import { rateLimit } from '@/lib/rate-limit';
-import { assertEnv, clientKey, hashSecret, isDevMode, sendTelegram, timingSafeEqualText } from '@/lib/security';
+import { assertEnv, clientKey, hashSecret, isDevMode, notifyRateLimitHit, sendTelegram, timingSafeEqualText } from '@/lib/security';
 
 export async function POST(req: NextRequest) {
   const key = clientKey(req);
   if (!rateLimit(`password:${key}`, 5, 15 * 60 * 1000)) {
+    notifyRateLimitHit('password', key, 15 * 60 * 1000);
     return NextResponse.json({ error: 'Too many attempts' }, { status: 429 });
   }
 

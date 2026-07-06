@@ -84,8 +84,13 @@ async function startServer() {
     if (walletAddress) url.searchParams.set('walletAddress', walletAddress);
 
     if (secretKey) {
+      // MoonPay signs ONLY the query string (everything from "?" onward),
+      // never the pathname. Signing `${url.pathname}${url.search}` produced
+      // an extra leading "/" (e.g. "/?apiKey=...") that never matches the
+      // signature MoonPay recomputes server-side, so the widget silently
+      // rejected the URL whenever MOONPAY_SECRET_KEY was configured.
       const signature = createHmac('sha256', secretKey)
-        .update(`${url.pathname}${url.search}`)
+        .update(url.search)
         .digest('base64');
       url.searchParams.set('signature', signature);
     }

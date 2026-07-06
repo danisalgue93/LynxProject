@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit } from '@/lib/rate-limit';
 import { requireAdminSession } from '@/lib/session';
 import { resolveMarketManually, type OutcomeName } from '@/lib/solana';
-import { clientKey, sendTelegram } from '@/lib/security';
+import { clientKey, notifyRateLimitHit, sendTelegram } from '@/lib/security';
 
 const OUTCOMES = new Set(['Yes', 'No', 'Draw']);
 
@@ -12,6 +12,7 @@ export async function POST(req: NextRequest) {
 
     const key = clientKey(req);
     if (!rateLimit(`resolve:${key}`, 3, 60 * 60 * 1000)) {
+      notifyRateLimitHit('resolve', key, 60 * 60 * 1000);
       return NextResponse.json({ error: 'Too many resolve attempts' }, { status: 429 });
     }
 

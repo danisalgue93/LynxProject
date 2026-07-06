@@ -85,7 +85,7 @@ export function PublicPage() {
     const onTx = (e: Event) => {
       const d = (e as CustomEvent<{ signature: string; link: string; wallet?: string }>).detail;
       if (!d || !d.signature) return;
-      const id = `tx-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+      const id = `tx-${Date.now()}-${crypto.randomUUID()}`;
       setTxToasts((s) => [{ id, signature: d.signature, link: d.link, wallet: d.wallet }, ...s]);
       setTimeout(() => setTxToasts((s) => s.filter(t => t.id !== id)), 12000);
     };

@@ -1,9 +1,10 @@
 import { randomUUID } from 'crypto';
 import {
   GLOBAL_TRADE_FEE,
-  LYNX_EMISSION_PER_SOL,
+  getMintRatio,
   LYNX_EVENT_BURN,
   LYNX_INITIAL_SALE_SHARE,
+  LYNX_INITIAL_SALE_PRICE,
   LYNX_PARTICIPANT_SHARE,
   LYNX_TREASURY_SHARE,
   STAKER_REWARD_FEE,
@@ -30,6 +31,9 @@ import type {
 
 const STARTING_SOL = 0;
 const STARTING_LYNX = 0;
+const LYNX_BURN_TWAP_WINDOW_MS = 30 * 60 * 1000;
+const LYNX_BURN_TWAP_MIN_TRADES = 3;
+const LYNX_BURN_TWAP_MIN_VOLUME = 50;
 
 function id(prefix: string) {
   return `${prefix}_${randomUUID()}`;
@@ -84,6 +88,7 @@ export class LynxState {
     lynx: 0,
     lynxForInitialSale: 0,
     lynxBurned: 0,
+    lynxTotalMinted: 0,
     protocolDuelSol: 0
   };
 
@@ -102,7 +107,7 @@ export class LynxState {
     this.notifications.clear();
     this.transactions.clear();
     this.ledger.clear();
-    this.treasury = { sol: 0, lynx: 0, lynxForInitialSale: 0, lynxBurned: 0, protocolDuelSol: 0 };
+    this.treasury = { sol: 0, lynx: 0, lynxForInitialSale: 0, lynxBurned: 0, lynxTotalMinted: 0, protocolDuelSol: 0 };
 
     if (process.env.LYNX_SEED_DEMO_DATA !== 'true') {
       return;
@@ -496,7 +501,8 @@ export class LynxState {
       entryPrice: this.estimatePositionPrice(market.id, position),
       currency: market.currency,
       claimed: false,
-      createdAt: nowMs()
+      createdAt: nowMs(),
+      ...(market.currency === 'SOL' ? { solPrincipal: creditedToPool, lynxBoostSolEquivalent: 0 } : {})
     };
     this.positions.set(userPosition.id, userPosition);
 
@@ -532,6 +538,8 @@ export class LynxState {
     price?: number;
     currency: Currency;
     tradeType?: 'limit' | 'market';
+    maxPrice?: number;
+    minPrice?: number;
   }) {
     assertPositiveAmount(input.amount);
 
@@ -541,7 +549,9 @@ export class LynxState {
         wallet: input.wallet,
         side: input.side,
         amount: input.amount,
-        currency: input.currency
+        currency: input.currency,
+        maxPrice: input.maxPrice,
+        minPrice: input.minPrice
       });
     }
 
@@ -616,11 +626,14 @@ export class LynxState {
     side: OrderSide;
     amount: number;
     currency: Currency;
+    maxPrice?: number;
+    minPrice?: number;
   }) {
     const wallet = this.getWallet(input.wallet);
 
     const opposite = [...this.orders.values()]
       .filter((candidate) =>
+        candidate.owner !== wallet.wallet &&
         candidate.pair === 'LYNX/SOL' &&
         candidate.side !== input.side &&
         candidate.status !== 'FILLED' &&
@@ -634,6 +647,11 @@ export class LynxState {
     let worstPrice = 0;
     for (const maker of opposite) {
       if (remainingToFill <= 0) break;
+      // Price protection: once the book reaches a price worse than the
+      // client-supplied bound, stop walking it. Levels are sorted so every
+      // subsequent maker is the same price or worse, so it's safe to break.
+      if (input.side === 'BUY' && typeof input.maxPrice === 'number' && maker.price > input.maxPrice) break;
+      if (input.side === 'SELL' && typeof input.minPrice === 'number' && maker.price < input.minPrice) break;
       const amount = Math.min(remainingToFill, maker.remaining);
       totalNotional = roundAmount(totalNotional + amount * maker.price);
       worstPrice = maker.price;
@@ -642,7 +660,14 @@ export class LynxState {
 
     const fillableAmount = roundAmount(input.amount - remainingToFill);
     if (fillableAmount <= 0) {
-      throw new Error('No liquidity available for market order');
+      const boundGiven =
+        (input.side === 'BUY' && typeof input.maxPrice === 'number') ||
+        (input.side === 'SELL' && typeof input.minPrice === 'number');
+      throw new Error(
+        boundGiven
+          ? 'No liquidity available within the specified max/min price'
+          : 'No liquidity available for market order'
+      );
     }
 
     let lockedCurrency: Currency;
@@ -780,8 +805,13 @@ export class LynxState {
     if (!duel) throw new Error('Duel not found');
     if (duel.status !== 'OPEN') throw new Error('Only OPEN duels can be cancelled');
     if (duel.creator !== input.wallet) throw new Error('Only the creator can cancel their duel');
-    // Refund the gross amount the creator deposited (the burn is forfeit — consistent with LYNX burn semantics)
-    const refundAmount = duel.grossAmount ?? duel.amount;
+    // Refund the net amount the creator actually has at stake — the burn (if any,
+    // LYNX duels only) is forfeit and was already applied to treasury.lynxBurned /
+    // market.burnedAmount at creation time in createDuel(). Refunding grossAmount
+    // here would hand the burned portion back to the wallet while leaving those
+    // burn counters inflated, letting circulating supply be undercounted for free
+    // and pushing getMintRatio() up with zero real cost.
+    const refundAmount = duel.amount;
     const wallet = this.getWallet(input.wallet);
     if (duel.currency === 'SOL') {
       wallet.solBalance = roundAmount(wallet.solBalance + refundAmount);
@@ -836,6 +866,38 @@ export class LynxState {
 
     this.resolveDuelsForMarket(market);
     this.notifyParticipants(market);
+
+    // If nobody holds a position on the winning side, netPool has no one to
+    // pay out to and would otherwise sit forever as poolAmount with no
+    // matching claimed payout or treasury income. Sweep it to treasury now
+    // instead of leaving the books permanently out of sync.
+    const winningPool =
+      result === 'YES' || result === 'A'
+        ? market.yesAmount
+        : result === 'NO' || result === 'B'
+        ? market.noAmount
+        : (market.drawAmount ?? 0);
+
+    if (winningPool <= 0 && market.poolAmount > 0) {
+      const totalFeeRate = STAKER_REWARD_FEE + TREASURY_EVENT_FEE;
+      const unclaimedNetPool = roundAmount(market.poolAmount * (1 - totalFeeRate));
+      if (unclaimedNetPool > 0) {
+        if (market.currency === 'SOL') {
+          this.treasury.sol = roundAmount(this.treasury.sol + unclaimedNetPool);
+        } else {
+          this.treasury.lynx = roundAmount(this.treasury.lynx + unclaimedNetPool);
+        }
+        this.addLedgerEntry({
+          wallet: TREASURY_WALLET,
+          type: 'FEE',
+          currency: market.currency,
+          amount: unclaimedNetPool,
+          status: 'COMPLETED',
+          metadata: { marketId: market.id, mode: 'unclaimed-pool-no-winners' }
+        });
+      }
+    }
+
     return market;
   }
 
@@ -883,7 +945,18 @@ export class LynxState {
     return snapshot;
   }
 
-  castVote(input: { wallet: string; proposalId: string; voteType: 'yes' | 'no' }) {
+  // `recordVote` is an optional DB-level guard (Persistence#recordVote) backed
+  // by the ProposalVote table's UNIQUE(proposalId, wallet) constraint. It is
+  // called after the in-memory checks below but before any state mutation, so
+  // it acts as a belt-and-suspenders check: if a future bug in the in-memory
+  // `voters` check (or a restart that reloads a stale/incomplete snapshot)
+  // ever let a duplicate through, the durable constraint still rejects it —
+  // and since nothing has been mutated yet at that point, no rollback is
+  // needed. When omitted (e.g. some tests), behaves exactly as before.
+  async castVote(
+    input: { wallet: string; proposalId: string; voteType: 'yes' | 'no' },
+    recordVote?: (proposalId: string, wallet: string, voteType: 'yes' | 'no', weight: number) => Promise<boolean>
+  ) {
     const proposal = this.proposals.get(input.proposalId);
     if (!proposal) throw new Error('Proposal not found');
     if (proposal.status !== 'active') throw new Error('Proposal is not active');
@@ -897,6 +970,10 @@ export class LynxState {
     // undefined) fall back to the live balance, same as before this fix.
     const weight = proposal.stakeSnapshot ? (proposal.stakeSnapshot[wallet.wallet] ?? 0) : wallet.stakedLynx;
     if (weight === 0) throw new Error('Requires a staked LYNX balance to vote');
+    if (recordVote) {
+      const recorded = await recordVote(proposal.id, wallet.wallet, input.voteType, weight);
+      if (!recorded) throw new Error('Wallet already voted on this proposal');
+    }
     if (input.voteType === 'yes') proposal.votesYes = roundAmount(proposal.votesYes + weight);
     else proposal.votesNo = roundAmount(proposal.votesNo + weight);
     proposal.voters[wallet.wallet] = input.voteType;
@@ -943,6 +1020,27 @@ export class LynxState {
     return { pair, marketId, bids, asks, recentTrades };
   }
 
+  // Volume-weighted TWAP over actually executed trades (this.trades is only
+  // populated when matchLynxOrder crosses against a real resting order —
+  // never by an order that merely rests on the book). Resting orders cannot
+  // be used to manipulate this price, since placing an order alone never
+  // creates a Trade entry. Returns null if there isn't enough real trading
+  // activity to trust the resulting price.
+  getLynxTwapPrice(pair = 'LYNX/SOL', marketId?: string, windowMs = LYNX_BURN_TWAP_WINDOW_MS) {
+    const since = nowMs() - windowMs;
+    const trades = [...this.trades.values()]
+      .filter((trade) => trade.pair === pair && (!marketId || trade.marketId === marketId) && trade.createdAt >= since);
+
+    if (trades.length < LYNX_BURN_TWAP_MIN_TRADES) return null;
+
+    const totalVolume = trades.reduce((sum, trade) => sum + trade.amount, 0);
+    if (totalVolume < LYNX_BURN_TWAP_MIN_VOLUME) return null;
+
+    const weightedSum = trades.reduce((sum, trade) => sum + trade.price * trade.amount, 0);
+    const twap = weightedSum / totalVolume;
+    return twap > 0 ? twap : null;
+  }
+
   klines(symbol = 'LYNX', interval = '1d', limit = 100, marketId?: string): Candle[] {
     const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
     const ms = interval === '15m'
@@ -975,7 +1073,7 @@ export class LynxState {
     }
 
     const candles: Candle[] = [];
-    let lastClose = trades[0]?.price ?? 0.004;
+    let lastClose = trades[0]?.price ?? LYNX_INITIAL_SALE_PRICE;
     for (let time = start; time < end; time += ms) {
       const bucketTrades = buckets.get(time) ?? [];
       if (bucketTrades.length === 0) {
@@ -1079,6 +1177,7 @@ export class LynxState {
     const opposite = [...this.orders.values()]
       .filter((candidate) =>
         candidate.id !== order.id &&
+        candidate.owner !== order.owner &&
         candidate.pair === 'LYNX/SOL' &&
         candidate.side !== order.side &&
         candidate.status !== 'FILLED' &&
@@ -1144,21 +1243,26 @@ export class LynxState {
     if (market.status !== 'OPEN' && market.status !== 'ACTIVE') return;
 
     const MAX_PASSES = 200;
+
+    // Build the resting-order working set once instead of re-filtering and
+    // re-sorting the entire global orders map (across every market) on each
+    // pass. Filled orders are dropped from this array at the end of each
+    // pass, so later passes only ever touch orders that are still open.
+    let resting = [...this.orders.values()]
+      .filter((candidate) =>
+        candidate.pair === market.id &&
+        candidate.status === 'OPEN' &&
+        candidate.remaining > 0 &&
+        candidate.position
+      )
+      .sort((a, b) => a.createdAt - b.createdAt);
+
     let filledSomething = true;
     let passes = 0;
 
-    while (filledSomething && passes < MAX_PASSES) {
+    while (filledSomething && resting.length > 0 && passes < MAX_PASSES) {
       filledSomething = false;
       passes++;
-
-      const resting = [...this.orders.values()]
-        .filter((candidate) =>
-          candidate.pair === market.id &&
-          candidate.status === 'OPEN' &&
-          candidate.remaining > 0 &&
-          candidate.position
-        )
-        .sort((a, b) => a.createdAt - b.createdAt);
 
       for (const order of resting) {
         const position = order.position!;
@@ -1192,7 +1296,8 @@ export class LynxState {
           entryPrice,
           currency: market.currency,
           claimed: false,
-          createdAt: nowMs()
+          createdAt: nowMs(),
+          ...(market.currency === 'SOL' ? { solPrincipal: creditedToPool, lynxBoostSolEquivalent: 0 } : {})
         };
         this.positions.set(userPosition.id, userPosition);
 
@@ -1223,6 +1328,8 @@ export class LynxState {
 
         filledSomething = true;
       }
+
+      if (filledSomething) resting = resting.filter((order) => order.remaining > 0);
     }
   }
 
@@ -1263,9 +1370,15 @@ export class LynxState {
     }
   }
 
+  private getCirculatingSupply(): number {
+    return roundAmount(this.treasury.lynxTotalMinted - this.treasury.lynxBurned);
+  }
+
   private mintLynxForSolvedSolMarket(market: Market) {
     if (market.currency !== 'SOL' || market.poolAmount <= 0) return;
-    const totalEmission = roundAmount(market.poolAmount * LYNX_EMISSION_PER_SOL);
+    const ratio = getMintRatio(this.getCirculatingSupply());
+    const totalEmission = roundAmount(market.poolAmount * ratio);
+    this.treasury.lynxTotalMinted = roundAmount(this.treasury.lynxTotalMinted + totalEmission);
     const participantEmission = roundAmount(totalEmission * LYNX_PARTICIPANT_SHARE);
     const treasuryEmission = roundAmount(totalEmission * LYNX_TREASURY_SHARE);
     const initialSaleEmission = roundAmount(totalEmission * LYNX_INITIAL_SALE_SHARE);
@@ -1295,7 +1408,7 @@ export class LynxState {
         side: 'SELL',
         amount: initialSaleEmission,
         remaining: initialSaleEmission,
-        price: 0.004,
+        price: LYNX_INITIAL_SALE_PRICE,
         currency: 'LYNX',
         status: 'OPEN',
         createdAt: nowMs()
@@ -1305,7 +1418,9 @@ export class LynxState {
 
   private mintProtocolDuelLynx(walletAddress: string, protocolSolCounterpart: number) {
     if (protocolSolCounterpart <= 0) return;
-    const minted = roundAmount(protocolSolCounterpart * LYNX_EMISSION_PER_SOL);
+    const ratio = getMintRatio(this.getCirculatingSupply());
+    const minted = roundAmount(protocolSolCounterpart * ratio);
+    this.treasury.lynxTotalMinted = roundAmount(this.treasury.lynxTotalMinted + minted);
     const wallet = this.getWallet(walletAddress);
     wallet.lynxBalance = roundAmount(wallet.lynxBalance + minted);
     this.addLedgerEntry({
@@ -1417,12 +1532,12 @@ export class LynxState {
 
   private seedLynxBook() {
     const levels = [
-      ['BUY', 0.0050, 8250],
-      ['BUY', 0.0049, 16500],
-      ['BUY', 0.0048, 24750],
-      ['SELL', 0.0051, 12500],
-      ['SELL', 0.0052, 25000],
-      ['SELL', 0.0053, 37500]
+      ['BUY', 0.64, 8250],
+      ['BUY', 0.63, 16500],
+      ['BUY', 0.62, 24750],
+      ['SELL', 0.66, 12500],
+      ['SELL', 0.67, 25000],
+      ['SELL', 0.68, 37500]
     ] as const;
     for (const [side, price, amount] of levels) {
       const orderId = id('order');
@@ -1439,6 +1554,86 @@ export class LynxState {
         createdAt: nowMs()
       });
     }
+  }
+
+  // Let a user who already has an open SOL-market position burn LYNX to add
+  // weight to that same position, increasing their share of the winning
+  // pool. LYNX is valued at a volume-weighted TWAP of recently executed
+  // LYNX/SOL trades (never a resting order's price) and burned in full — no
+  // fee is taken, since the LYNX itself is destroyed rather than traded. The
+  // SOL-equivalent value of everything ever burned into this position is
+  // capped at the SOL originally staked into it (solPrincipal), so a 1 SOL
+  // position can never be boosted past the weight of 2 SOL.
+  boostPositionWithLynxBurn(walletAddress: string, positionId: string, lynxAmount: number) {
+    assertPositiveAmount(lynxAmount);
+
+    const position = this.positions.get(positionId);
+    if (!position) throw new Error('Position not found');
+    if (position.wallet !== walletAddress) throw new Error('Position does not belong to this wallet');
+    if (position.claimed) throw new Error('Position already claimed');
+    if (position.currency !== 'SOL') throw new Error('LYNX burn boost is only available on SOL-currency positions');
+
+    const market = this.markets.get(position.marketId);
+    if (!market) throw new Error('Market not found');
+    if (market.currency !== 'SOL') throw new Error('LYNX burn boost is only available on SOL markets');
+    assertMarketAcceptsEntries(market);
+
+    const solPrincipal = position.solPrincipal ?? 0;
+    if (solPrincipal <= 0) {
+      throw new Error('This position has no tracked SOL principal and is not eligible for a LYNX burn boost');
+    }
+
+    const twapPrice = this.getLynxTwapPrice('LYNX/SOL');
+    if (!twapPrice || twapPrice <= 0) {
+      throw new Error('Not enough recent LYNX/SOL trading activity to value the burn');
+    }
+
+    const wallet = this.getWallet(walletAddress);
+    if (wallet.lynxBalance < lynxAmount) throw new Error('Insufficient LYNX balance');
+
+    const solEquivalent = roundAmount(lynxAmount * twapPrice);
+    const alreadyBoosted = position.lynxBoostSolEquivalent ?? 0;
+    const remainingCap = roundAmount(solPrincipal - alreadyBoosted);
+    if (remainingCap <= 0) {
+      throw new Error('This position has already reached its LYNX burn boost cap');
+    }
+    if (solEquivalent > remainingCap) {
+      throw new Error(`Cannot burn that much LYNX: it would exceed the boost cap for this position (max additional SOL-equivalent weight: ${remainingCap})`);
+    }
+
+    this.debit(wallet, 'LYNX', lynxAmount);
+    this.treasury.lynxBurned = roundAmount(this.treasury.lynxBurned + lynxAmount);
+    market.burnedAmount = roundAmount(market.burnedAmount + lynxAmount);
+
+    position.amount = roundAmount(position.amount + solEquivalent);
+    position.lynxBoostSolEquivalent = roundAmount(alreadyBoosted + solEquivalent);
+
+    market.poolAmount = roundAmount(market.poolAmount + solEquivalent);
+    const normalizedPosition = normalizePosition(position.position, market.isTernary);
+    if (normalizedPosition === 'YES' || normalizedPosition === 'A') {
+      market.yesAmount = roundAmount(market.yesAmount + solEquivalent);
+    } else if (normalizedPosition === 'NO' || normalizedPosition === 'B') {
+      market.noAmount = roundAmount(market.noAmount + solEquivalent);
+    } else if (normalizedPosition === 'DRAW') {
+      market.drawAmount = roundAmount((market.drawAmount ?? 0) + solEquivalent);
+    }
+
+    this.addLedgerEntry({
+      wallet: wallet.wallet,
+      type: 'BURN',
+      currency: 'LYNX',
+      amount: lynxAmount,
+      status: 'COMPLETED',
+      metadata: { marketId: market.id, positionId: position.id, mode: 'position:lynx-boost', solEquivalent, price: twapPrice }
+    });
+
+    this.pushNotification(walletAddress, {
+      type: 'trade',
+      title: 'Position boosted with LYNX',
+      message: `Burned ${lynxAmount} LYNX (~${solEquivalent} SOL) to boost your position in "${market.title}".`
+    });
+
+    return { position, market, solEquivalent, price: twapPrice, portfolio: this.getPortfolio(walletAddress) };
   }
 
   // Claim winning position payout.
@@ -1519,7 +1714,7 @@ export class LynxState {
   }
 
   private syntheticCandles(symbol: string, ms: number, limit: number): Candle[] {
-    const basePrice = symbol.toUpperCase() === 'SOL' ? 145 : 0.004;
+    const basePrice = symbol.toUpperCase() === 'SOL' ? 145 : LYNX_INITIAL_SALE_PRICE;
     const end = Math.ceil(Date.now() / ms) * ms;
     const candles: Candle[] = [];
     // Deterministic pseudo-random in [0, 1), seeded by candle time so the

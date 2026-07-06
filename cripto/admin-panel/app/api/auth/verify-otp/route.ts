@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { deleteOtp, getOtp, setOtp } from '@/lib/otp-store';
 import { rateLimit } from '@/lib/rate-limit';
-import { clientKey, hashSecret, timingSafeEqualText } from '@/lib/security';
+import { clientKey, hashSecret, notifyRateLimitHit, timingSafeEqualText } from '@/lib/security';
 import { getSession } from '@/lib/session';
 
 export async function POST(req: NextRequest) {
   const key = clientKey(req);
   if (!rateLimit(`otp:${key}`, 8, 15 * 60 * 1000)) {
+    notifyRateLimitHit('otp', key, 15 * 60 * 1000);
     return NextResponse.json({ error: 'Too many attempts' }, { status: 429 });
   }
 

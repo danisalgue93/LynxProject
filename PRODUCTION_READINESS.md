@@ -83,11 +83,8 @@
 | Item | Impact | Notes |
 |------|--------|-------|
 | **LYNX withdrawal** | Medium | Returns 501 — SPL transfer not yet implemented |
-| **LYNX market claim (on-chain)** | High | No `claim_market_lynx` Anchor instruction; LYNX markets are functional off-chain only |
 | **Anchor integration tests** | High | No automated tests for the smart contract — must be added before mainnet |
-| **JWT in localStorage** | Low-Med | Acceptable for MVP; move refresh token to `httpOnly` cookie for hardened production |
 | **In-memory store at scale** | Med | Full `findMany()` loads are fine to ~10k records per type; use Prisma queries directly for larger datasets |
-| **`settlement.ts`** | Low | Dead code with divergent payout formula — delete before it causes confusion |
 
 ---
 
@@ -102,4 +99,3 @@
 - [ ] Anchor integration tests written and passing
 - [ ] Admin panel deployed to private network or behind VPN
 - [ ] `ADMIN_KEYPAIR_BS58` rotated and stored in secrets manager
-- [ ] `settlement.ts` deleted from codebase

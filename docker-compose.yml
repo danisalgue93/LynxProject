@@ -31,6 +31,17 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Redis (distributed rate limiting) ─────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [lynx]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # ── Prisma migrations (runs once then exits) ──────────────────────────────────
   migrate:
     build:
@@ -57,6 +68,7 @@ services:
       PORT:                 4000
       DATABASE_URL:         postgresql://${POSTGRES_USER:-lynx}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lynx_market}?schema=public
       STORE_DRIVER:         prisma
+      REDIS_URL:            redis://redis:6379
       JWT_SECRET:           ${JWT_SECRET:?JWT_SECRET is required}
       REFRESH_SECRET:       ${REFRESH_SECRET:?REFRESH_SECRET is required}
       JWT_EXPIRY:           ${JWT_EXPIRY:-15m}
@@ -78,6 +90,8 @@ services:
       SENTRY_DSN:           ${SENTRY_DSN:-}
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
