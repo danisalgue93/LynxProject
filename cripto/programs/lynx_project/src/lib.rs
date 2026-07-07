@@ -30,11 +30,223 @@ pub mod lynx_project {
         config.emergency_delay = emergency_delay;
         config.bump = ctx.bumps.config;
         config.rewards_vault_bump = ctx.bumps.rewards_vault;
+        config.paused = false;
+        config.multisig_initialized = false;
         ctx.accounts.rewards_vault.bump = ctx.bumps.rewards_vault;
         Ok(())
     }
 
+    // Bootstrap del multisig de gobernanza (2-de-2, o el M-de-N que se elija).
+    // Solo puede llamarse una vez, y solo por el admin unico original (el que
+    // salio de initialize_protocol). A partir de este momento transfer_admin()
+    // con clave unica queda deshabilitado: toda accion sensible (rotar admin,
+    // pausar el protocolo, resolver un mercado por la via de fallback admin,
+    // anadir/quitar firmantes) tiene que pasar por propose_action/approve_action/
+    // execute_action con el umbral de aprobaciones del multisig.
+    pub fn init_multisig(ctx: Context<InitMultisig>, signers: Vec<Pubkey>, threshold: u8) -> Result<()> {
+        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.config.admin, LynxError::Unauthorized);
+        require!(!ctx.accounts.config.multisig_initialized, LynxError::Unauthorized);
+        require!(!signers.is_empty(), LynxError::TooFewSigners);
+        require!(signers.len() <= MAX_MULTISIG_SIGNERS, LynxError::TooManySigners);
+        require!(threshold >= 1 && (threshold as usize) <= signers.len(), LynxError::InvalidThreshold);
+
+        let mut arr = [Pubkey::default(); MAX_MULTISIG_SIGNERS];
+        for (i, s) in signers.iter().enumerate() {
+            arr[i] = *s;
+        }
+
+        let ms = &mut ctx.accounts.multisig;
+        ms.config = ctx.accounts.config.key();
+        ms.signers = arr;
+        ms.signer_count = signers.len() as u8;
+        ms.threshold = threshold;
+        ms.proposal_seq = 0;
+        ms.bump = ctx.bumps.multisig;
+
+        ctx.accounts.config.multisig_initialized = true;
+        Ok(())
+    }
+
+    pub fn propose_action(ctx: Context<ProposeAction>, action: GovernanceAction) -> Result<()> {
+        let multisig = &mut ctx.accounts.multisig;
+        require!(is_multisig_signer(multisig, ctx.accounts.proposer.key()), LynxError::NotAMultisigSigner);
+
+        let now = Clock::get()?.unix_timestamp;
+        let proposal = &mut ctx.accounts.proposal;
+        proposal.multisig = multisig.key();
+        proposal.proposer = ctx.accounts.proposer.key();
+        proposal.proposal_id = multisig.proposal_seq;
+        proposal.action = action;
+        proposal.approvals = [Pubkey::default(); MAX_MULTISIG_SIGNERS];
+        proposal.approvals[0] = ctx.accounts.proposer.key();
+        proposal.approval_count = 1;
+        proposal.threshold_reached_ts = if 1u8 >= multisig.threshold { now } else { 0 };
+        proposal.executed = false;
+        proposal.cancelled = false;
+        proposal.created_ts = now;
+        proposal.expires_ts = now.checked_add(PROPOSAL_TTL_SECONDS).ok_or(LynxError::MathOverflow)?;
+        proposal.bump = ctx.bumps.proposal;
+
+        multisig.proposal_seq = multisig.proposal_seq.checked_add(1).ok_or(LynxError::MathOverflow)?;
+        Ok(())
+    }
+
+    pub fn approve_action(ctx: Context<ApproveAction>) -> Result<()> {
+        let multisig = &ctx.accounts.multisig;
+        require!(is_multisig_signer(multisig, ctx.accounts.signer.key()), LynxError::NotAMultisigSigner);
+
+        let now = Clock::get()?.unix_timestamp;
+        let proposal = &mut ctx.accounts.proposal;
+        require!(!proposal.executed, LynxError::ProposalAlreadyExecuted);
+        require!(!proposal.cancelled, LynxError::ProposalCancelled);
+        require!(now < proposal.expires_ts, LynxError::ProposalExpired);
+        require!(
+            !proposal.approvals.iter().any(|a| *a == ctx.accounts.signer.key()),
+            LynxError::AlreadyApproved
+        );
+
+        let slot = proposal.approval_count as usize;
+        require!(slot < MAX_MULTISIG_SIGNERS, LynxError::TooManySigners);
+        proposal.approvals[slot] = ctx.accounts.signer.key();
+        proposal.approval_count = proposal.approval_count.checked_add(1).ok_or(LynxError::MathOverflow)?;
+
+        if proposal.threshold_reached_ts == 0 && proposal.approval_count >= multisig.threshold {
+            proposal.threshold_reached_ts = now;
+        }
+        Ok(())
+    }
+
+    pub fn cancel_proposal(ctx: Context<CancelProposal>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let proposal = &mut ctx.accounts.proposal;
+        require!(!proposal.executed, LynxError::ProposalAlreadyExecuted);
+        require!(!proposal.cancelled, LynxError::ProposalCancelled);
+        let is_proposer = ctx.accounts.signer.key() == proposal.proposer;
+        let is_expired = now >= proposal.expires_ts;
+        require!(is_proposer || is_expired, LynxError::NotProposer);
+        require!(
+            is_proposer || is_multisig_signer(&ctx.accounts.multisig, ctx.accounts.signer.key()),
+            LynxError::NotAMultisigSigner
+        );
+        proposal.cancelled = true;
+        Ok(())
+    }
+
+    // Ejecuta una GovernanceProposal cuyo `action` es de las variantes que solo
+    // tocan ProtocolConfig/Multisig (no requieren la cuenta Market). Para
+    // ResolveMarketAdmin hay que usar execute_resolve_market_admin, que exige
+    // ademas la cuenta Market/vault/treasury correctas.
+    pub fn execute_action(ctx: Context<ExecuteAction>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let proposal = &mut ctx.accounts.proposal;
+        require!(!proposal.executed, LynxError::ProposalAlreadyExecuted);
+        require!(!proposal.cancelled, LynxError::ProposalCancelled);
+        require!(now < proposal.expires_ts, LynxError::ProposalExpired);
+        require!(proposal.threshold_reached_ts != 0, LynxError::ThresholdNotMet);
+        require!(
+            now >= proposal.threshold_reached_ts.checked_add(GOVERNANCE_EXECUTION_DELAY_SECONDS).ok_or(LynxError::MathOverflow)?,
+            LynxError::TimelockNotElapsed
+        );
+
+        let config = &mut ctx.accounts.config;
+        let multisig = &mut ctx.accounts.multisig;
+        match proposal.action {
+            GovernanceAction::TransferAdmin { new_admin } => {
+                config.admin = new_admin;
+            }
+            GovernanceAction::SetPaused { paused } => {
+                config.paused = paused;
+            }
+            GovernanceAction::AddSigner { signer } => {
+                require!(!is_multisig_signer(multisig, signer), LynxError::SignerAlreadyPresent);
+                let count = multisig.signer_count as usize;
+                require!(count < MAX_MULTISIG_SIGNERS, LynxError::TooManySigners);
+                multisig.signers[count] = signer;
+                multisig.signer_count = multisig.signer_count.checked_add(1).ok_or(LynxError::MathOverflow)?;
+            }
+            GovernanceAction::RemoveSigner { signer } => {
+                let count = multisig.signer_count as usize;
+                require!((multisig.threshold as usize) < count, LynxError::TooFewSigners);
+                let mut found = false;
+                for i in 0..count {
+                    if multisig.signers[i] == signer {
+                        found = true;
+                        for j in i..count - 1 {
+                            multisig.signers[j] = multisig.signers[j + 1];
+                        }
+                        multisig.signers[count - 1] = Pubkey::default();
+                        break;
+                    }
+                }
+                require!(found, LynxError::NotAMultisigSigner);
+                multisig.signer_count = multisig.signer_count.checked_sub(1).ok_or(LynxError::MathOverflow)?;
+            }
+            GovernanceAction::SetThreshold { threshold } => {
+                require!(threshold >= 1 && threshold <= multisig.signer_count, LynxError::InvalidThreshold);
+                multisig.threshold = threshold;
+            }
+            GovernanceAction::ResolveMarketAdmin { .. } => {
+                return err!(LynxError::ActionMismatch);
+            }
+        }
+
+        proposal.executed = true;
+        Ok(())
+    }
+
+    // Variante de execute_action especifica para GovernanceAction::ResolveMarketAdmin,
+    // que si necesita las cuentas Market/vault/rewards_vault/treasury para poder
+    // mover fondos de verdad (via finalize_market_and_fees). Solo aplicable como
+    // fallback cuando el oraculo nunca llamo a propose_resolution dentro de
+    // ORACLE_TIMEOUT_SECONDS (ver require de mas abajo).
+    pub fn execute_resolve_market_admin(ctx: Context<ExecuteResolveMarketAdmin>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let proposal = &mut ctx.accounts.proposal;
+        require!(!proposal.executed, LynxError::ProposalAlreadyExecuted);
+        require!(!proposal.cancelled, LynxError::ProposalCancelled);
+        require!(now < proposal.expires_ts, LynxError::ProposalExpired);
+        require!(proposal.threshold_reached_ts != 0, LynxError::ThresholdNotMet);
+        require!(
+            now >= proposal.threshold_reached_ts.checked_add(GOVERNANCE_EXECUTION_DELAY_SECONDS).ok_or(LynxError::MathOverflow)?,
+            LynxError::TimelockNotElapsed
+        );
+
+        let result = match proposal.action {
+            GovernanceAction::ResolveMarketAdmin { market, result } => {
+                require_keys_eq!(market, ctx.accounts.market.key(), LynxError::ActionMismatch);
+                result
+            }
+            _ => return err!(LynxError::ActionMismatch),
+        };
+
+        require!(result_is_valid(result, ctx.accounts.market.is_ternary), LynxError::InvalidOutcome);
+        require!(now >= ctx.accounts.market.oracle_deadline, LynxError::OracleTimeoutNotReached);
+        require!(
+            ctx.accounts.market.status == MarketStatus::CutOff
+                || ctx.accounts.market.status == MarketStatus::Active
+                || ctx.accounts.market.status == MarketStatus::Open,
+            LynxError::InvalidStatus
+        );
+
+        finalize_market_and_fees(
+            &mut ctx.accounts.config,
+            &mut ctx.accounts.market,
+            &ctx.accounts.vault.to_account_info(),
+            &ctx.accounts.rewards_vault.to_account_info(),
+            &ctx.accounts.treasury.to_account_info(),
+            result,
+        )?;
+
+        proposal.executed = true;
+        Ok(())
+    }
+
     pub fn transfer_admin(ctx: Context<TransferAdmin>, new_admin: Pubkey) -> Result<()> {
+        // Una vez que el multisig esta inicializado, la unica via para rotar el
+        // admin es una GovernanceAction::TransferAdmin aprobada por el umbral de
+        // firmantes (ver execute_action). Esto evita que una sola clave admin
+        // filtrada pueda seguir rotando el admin unilateralmente (C3 del informe).
+        require!(!ctx.accounts.config.multisig_initialized, LynxError::Unauthorized);
         require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.config.admin, LynxError::Unauthorized);
         ctx.accounts.config.admin = new_admin;
         Ok(())
@@ -93,6 +305,7 @@ pub mod lynx_project {
 
     pub fn buy_position_sol(ctx: Context<BuyPositionSol>, outcome: Outcome, lamports: u64) -> Result<()> {
         require!(lamports > 0, LynxError::InvalidAmount);
+        require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
         require!(outcome_is_tradeable(outcome, ctx.accounts.market.is_ternary), LynxError::InvalidOutcome);
 
         let now = Clock::get()?.unix_timestamp;
@@ -124,6 +337,7 @@ pub mod lynx_project {
 
     pub fn buy_position_lynx_with_burn(ctx: Context<BuyPositionLynxWithBurn>, outcome: Outcome, amount: u64) -> Result<()> {
         require!(amount > 0, LynxError::InvalidAmount);
+        require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
         require!(outcome_is_tradeable(outcome, ctx.accounts.market.is_ternary), LynxError::InvalidOutcome);
         require!(ctx.accounts.market.currency == Currency::LYNX, LynxError::InvalidCurrency);
 
@@ -186,6 +400,484 @@ pub mod lynx_project {
         Ok(())
     }
 
+    // --- Ordenes limite de mercados de prediccion (100% on-chain, ver state.rs) ---
+    pub fn create_prediction_limit_order_sol(
+        ctx: Context<CreatePredictionLimitOrderSol>,
+        order_id: u64,
+        outcome: Outcome,
+        lamports: u64,
+        limit_price_bps: u64,
+        expires_ts: i64,
+    ) -> Result<()> {
+        require!(lamports > 0, LynxError::InvalidAmount);
+        require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
+        require!(limit_price_bps <= BPS_DENOMINATOR, LynxError::InvalidAmount);
+        require!(outcome_is_tradeable(outcome, ctx.accounts.market.is_ternary), LynxError::InvalidOutcome);
+        require!(ctx.accounts.market.currency == Currency::SOL, LynxError::InvalidCurrency);
+
+        let now = Clock::get()?.unix_timestamp;
+        require!(
+            ctx.accounts.market.status == MarketStatus::Open || ctx.accounts.market.status == MarketStatus::Active,
+            LynxError::MarketClosed
+        );
+        require!(now < ctx.accounts.market.cutoff_ts, LynxError::MarketClosed);
+        require!(now < expires_ts && expires_ts <= ctx.accounts.market.cutoff_ts, LynxError::InvalidExpiry);
+
+        invoke(
+            &system_instruction::transfer(&ctx.accounts.owner.key(), &ctx.accounts.escrow.key(), lamports),
+            &[
+                ctx.accounts.owner.to_account_info(),
+                ctx.accounts.escrow.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+        )?;
+
+        let order = &mut ctx.accounts.order;
+        order.id = order_id;
+        order.owner = ctx.accounts.owner.key();
+        order.market = ctx.accounts.market.key();
+        order.outcome = outcome;
+        order.amount = lamports;
+        order.limit_price_bps = limit_price_bps;
+        order.status = PredictionOrderStatus::Open;
+        order.created_ts = now;
+        order.expires_ts = expires_ts;
+        order.bump = ctx.bumps.order;
+        order.escrow_bump = ctx.bumps.escrow;
+
+        ctx.accounts.escrow.order = order.key();
+        ctx.accounts.escrow.bump = ctx.bumps.escrow;
+        Ok(())
+    }
+
+    // Permissionless a proposito: cualquiera (nuestro backend como keeper, o
+    // cualquier bot de terceros) puede intentar ejecutar una orden limite. El
+    // programa valida la condicion de precio on-chain, asi que un keeper no
+    // puede forzar un fill a mal precio ni robar el escrow: si la condicion no
+    // se cumple, la instruccion simplemente falla.
+    pub fn execute_prediction_limit_order_sol(ctx: Context<ExecutePredictionLimitOrderSol>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        {
+            let order = &ctx.accounts.order;
+            require!(order.status == PredictionOrderStatus::Open, LynxError::InvalidStatus);
+            require!(now < order.expires_ts, LynxError::OrderExpired);
+        }
+        let market = &mut ctx.accounts.market;
+        require!(
+            market.status == MarketStatus::Open || market.status == MarketStatus::Active,
+            LynxError::MarketClosed
+        );
+        require!(market.pool_total > 0, LynxError::MarketNotFillable);
+
+        let outcome = ctx.accounts.order.outcome;
+        let current_price_bps = implied_price_bps(market, outcome)?;
+        require!(current_price_bps < ctx.accounts.order.limit_price_bps, LynxError::LimitNotReached);
+
+        let amount = ctx.accounts.order.amount;
+        transfer_lamports(&ctx.accounts.escrow.to_account_info(), &ctx.accounts.vault.to_account_info(), amount)?;
+        add_market_amounts(market, outcome, amount)?;
+        write_position(
+            &mut ctx.accounts.position,
+            market.key(),
+            ctx.accounts.order.owner,
+            outcome,
+            amount,
+            ctx.bumps.position,
+        )?;
+
+        ctx.accounts.order.status = PredictionOrderStatus::Filled;
+        Ok(())
+    }
+
+    // El propio dueno puede cancelar en cualquier momento mientras siga Open;
+    // cualquiera puede "limpiar" (permissionless) una orden ya expirada, pero
+    // el reembolso SIEMPRE va a order.owner, nunca a quien firma la tx.
+    pub fn cancel_prediction_limit_order_sol(ctx: Context<CancelPredictionLimitOrderSol>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let order = &mut ctx.accounts.order;
+        require!(order.status == PredictionOrderStatus::Open, LynxError::InvalidStatus);
+        let is_owner = ctx.accounts.signer.key() == order.owner;
+        let is_expired = now >= order.expires_ts;
+        require!(is_owner || is_expired, LynxError::Unauthorized);
+        require_keys_eq!(ctx.accounts.owner.key(), order.owner, LynxError::Unauthorized);
+
+        let amount = order.amount;
+        transfer_lamports(&ctx.accounts.escrow.to_account_info(), &ctx.accounts.owner.to_account_info(), amount)?;
+        order.status = PredictionOrderStatus::Cancelled;
+        Ok(())
+    }
+
+    pub fn create_prediction_limit_order_lynx(
+        ctx: Context<CreatePredictionLimitOrderLynx>,
+        order_id: u64,
+        outcome: Outcome,
+        amount: u64,
+        limit_price_bps: u64,
+        expires_ts: i64,
+    ) -> Result<()> {
+        require!(amount > 0, LynxError::InvalidAmount);
+        require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
+        require!(limit_price_bps <= BPS_DENOMINATOR, LynxError::InvalidAmount);
+        require!(outcome_is_tradeable(outcome, ctx.accounts.market.is_ternary), LynxError::InvalidOutcome);
+        require!(ctx.accounts.market.currency == Currency::LYNX, LynxError::InvalidCurrency);
+
+        let now = Clock::get()?.unix_timestamp;
+        require!(
+            ctx.accounts.market.status == MarketStatus::Open || ctx.accounts.market.status == MarketStatus::Active,
+            LynxError::MarketClosed
+        );
+        require!(now < ctx.accounts.market.cutoff_ts, LynxError::MarketClosed);
+        require!(now < expires_ts && expires_ts <= ctx.accounts.market.cutoff_ts, LynxError::InvalidExpiry);
+
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.user_lynx_account.to_account_info(),
+                    to: ctx.accounts.escrow.to_account_info(),
+                    authority: ctx.accounts.owner.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        let order = &mut ctx.accounts.order;
+        order.id = order_id;
+        order.owner = ctx.accounts.owner.key();
+        order.market = ctx.accounts.market.key();
+        order.outcome = outcome;
+        order.amount = amount;
+        order.limit_price_bps = limit_price_bps;
+        order.status = PredictionOrderStatus::Open;
+        order.created_ts = now;
+        order.expires_ts = expires_ts;
+        order.bump = ctx.bumps.order;
+        order.escrow_bump = ctx.bumps.escrow;
+        Ok(())
+    }
+
+    pub fn execute_prediction_limit_order_lynx(ctx: Context<ExecutePredictionLimitOrderLynx>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        {
+            let order = &ctx.accounts.order;
+            require!(order.status == PredictionOrderStatus::Open, LynxError::InvalidStatus);
+            require!(now < order.expires_ts, LynxError::OrderExpired);
+        }
+        let market = &mut ctx.accounts.market;
+        require!(
+            market.status == MarketStatus::Open || market.status == MarketStatus::Active,
+            LynxError::MarketClosed
+        );
+        require!(market.pool_total > 0, LynxError::MarketNotFillable);
+
+        let outcome = ctx.accounts.order.outcome;
+        let current_price_bps = implied_price_bps(market, outcome)?;
+        require!(current_price_bps < ctx.accounts.order.limit_price_bps, LynxError::LimitNotReached);
+
+        let order_id_bytes = ctx.accounts.order.id.to_le_bytes();
+        let order_owner = ctx.accounts.order.owner;
+        let order_seeds: &[&[u8]] = &[
+            b"pred_order",
+            market.key().as_ref(),
+            order_owner.as_ref(),
+            order_id_bytes.as_ref(),
+            &[ctx.accounts.order.bump],
+        ];
+
+        let gross_amount = ctx.accounts.order.amount;
+        let burn_amount = bps(gross_amount, LYNX_EVENT_BURN_BPS)?;
+        if burn_amount > 0 {
+            token::burn(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Burn {
+                        mint: ctx.accounts.lynx_mint.to_account_info(),
+                        from: ctx.accounts.escrow.to_account_info(),
+                        authority: ctx.accounts.order.to_account_info(),
+                    },
+                    &[order_seeds],
+                ),
+                burn_amount,
+            )?;
+        }
+        market.lynx_vault_bump = ctx.bumps.market_lynx_vault;
+        let net_amount = gross_amount.checked_sub(burn_amount).ok_or(LynxError::MathOverflow)?;
+        if net_amount > 0 {
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.escrow.to_account_info(),
+                        to: ctx.accounts.market_lynx_vault.to_account_info(),
+                        authority: ctx.accounts.order.to_account_info(),
+                    },
+                    &[order_seeds],
+                ),
+                net_amount,
+            )?;
+        }
+
+        market.burned_lynx = market.burned_lynx.checked_add(burn_amount).ok_or(LynxError::MathOverflow)?;
+        ctx.accounts.config.total_lynx_burned = ctx
+            .accounts
+            .config
+            .total_lynx_burned
+            .checked_add(burn_amount)
+            .ok_or(LynxError::MathOverflow)?;
+
+        add_market_amounts(market, outcome, net_amount)?;
+        write_position(
+            &mut ctx.accounts.position,
+            market.key(),
+            order_owner,
+            outcome,
+            net_amount,
+            ctx.bumps.position,
+        )?;
+
+        ctx.accounts.order.status = PredictionOrderStatus::Filled;
+        Ok(())
+    }
+
+    pub fn cancel_prediction_limit_order_lynx(ctx: Context<CancelPredictionLimitOrderLynx>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let is_owner = ctx.accounts.signer.key() == ctx.accounts.order.owner;
+        let is_expired = now >= ctx.accounts.order.expires_ts;
+        require!(ctx.accounts.order.status == PredictionOrderStatus::Open, LynxError::InvalidStatus);
+        require!(is_owner || is_expired, LynxError::Unauthorized);
+        require_keys_eq!(ctx.accounts.owner_lynx_account.owner, ctx.accounts.order.owner, LynxError::Unauthorized);
+
+        let amount = ctx.accounts.order.amount;
+        let order_id_bytes = ctx.accounts.order.id.to_le_bytes();
+        let order_owner = ctx.accounts.order.owner;
+        let order_bump = ctx.accounts.order.bump;
+        let order_seeds: &[&[u8]] = &[
+            b"pred_order",
+            ctx.accounts.market.key().as_ref(),
+            order_owner.as_ref(),
+            order_id_bytes.as_ref(),
+            &[order_bump],
+        ];
+
+        if amount > 0 {
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.escrow.to_account_info(),
+                        to: ctx.accounts.owner_lynx_account.to_account_info(),
+                        authority: ctx.accounts.order.to_account_info(),
+                    },
+                    &[order_seeds],
+                ),
+                amount,
+            )?;
+        }
+        ctx.accounts.order.status = PredictionOrderStatus::Cancelled;
+        Ok(())
+    }
+
+    // --- Libro de ordenes LYNX/SOL on-chain (spot, ver state.rs) ---
+    pub fn place_spot_order_buy(
+        ctx: Context<PlaceSpotOrderBuy>,
+        order_id: u64,
+        amount: u64,
+        price_scaled: u128,
+        expires_ts: i64,
+    ) -> Result<()> {
+        require!(amount > 0, LynxError::InvalidAmount);
+        require!(price_scaled > 0, LynxError::InvalidAmount);
+        require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
+        let now = Clock::get()?.unix_timestamp;
+        require!(now < expires_ts, LynxError::InvalidExpiry);
+
+        let sol_amount = spot_sol_amount(amount, price_scaled)?;
+        invoke(
+            &system_instruction::transfer(&ctx.accounts.owner.key(), &ctx.accounts.escrow.key(), sol_amount),
+            &[
+                ctx.accounts.owner.to_account_info(),
+                ctx.accounts.escrow.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+        )?;
+
+        let order = &mut ctx.accounts.order;
+        order.id = order_id;
+        order.owner = ctx.accounts.owner.key();
+        order.side = SpotOrderSide::Buy;
+        order.price_scaled = price_scaled;
+        order.amount = amount;
+        order.remaining = amount;
+        order.status = SpotOrderStatus::Open;
+        order.created_ts = now;
+        order.expires_ts = expires_ts;
+        order.bump = ctx.bumps.order;
+        order.escrow_bump = ctx.bumps.escrow;
+
+        ctx.accounts.escrow.order = order.key();
+        ctx.accounts.escrow.bump = ctx.bumps.escrow;
+        Ok(())
+    }
+
+    pub fn place_spot_order_sell(
+        ctx: Context<PlaceSpotOrderSell>,
+        order_id: u64,
+        amount: u64,
+        price_scaled: u128,
+        expires_ts: i64,
+    ) -> Result<()> {
+        require!(amount > 0, LynxError::InvalidAmount);
+        require!(price_scaled > 0, LynxError::InvalidAmount);
+        require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
+        let now = Clock::get()?.unix_timestamp;
+        require!(now < expires_ts, LynxError::InvalidExpiry);
+
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.user_lynx_account.to_account_info(),
+                    to: ctx.accounts.escrow.to_account_info(),
+                    authority: ctx.accounts.owner.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        let order = &mut ctx.accounts.order;
+        order.id = order_id;
+        order.owner = ctx.accounts.owner.key();
+        order.side = SpotOrderSide::Sell;
+        order.price_scaled = price_scaled;
+        order.amount = amount;
+        order.remaining = amount;
+        order.status = SpotOrderStatus::Open;
+        order.created_ts = now;
+        order.expires_ts = expires_ts;
+        order.bump = ctx.bumps.order;
+        order.escrow_bump = ctx.bumps.escrow;
+        Ok(())
+    }
+
+    // Permissionless: cualquiera (nuestro backend como keeper, un bot de
+    // terceros, o uno de los dos dueños de las ordenes) puede cranquear un
+    // match. El precio de ejecucion SIEMPRE es el de la orden mas antigua
+    // (maker) de las dos, nunca lo elige quien envia la transaccion, y el
+    // programa exige que los precios crucen antes de mover nada.
+    pub fn match_spot_orders(ctx: Context<MatchSpotOrders>, fill_amount: u64) -> Result<()> {
+        require!(fill_amount > 0, LynxError::InvalidAmount);
+        let now = Clock::get()?.unix_timestamp;
+        {
+            let buy = &ctx.accounts.buy_order;
+            let sell = &ctx.accounts.sell_order;
+            require!(buy.side == SpotOrderSide::Buy, LynxError::SameSide);
+            require!(sell.side == SpotOrderSide::Sell, LynxError::SameSide);
+            require!(buy.status == SpotOrderStatus::Open, LynxError::InvalidStatus);
+            require!(sell.status == SpotOrderStatus::Open, LynxError::InvalidStatus);
+            require!(now < buy.expires_ts, LynxError::OrderExpired);
+            require!(now < sell.expires_ts, LynxError::OrderExpired);
+            require!(fill_amount <= buy.remaining, LynxError::FillTooLarge);
+            require!(fill_amount <= sell.remaining, LynxError::FillTooLarge);
+            require!(buy.price_scaled >= sell.price_scaled, LynxError::PriceMismatch);
+        }
+
+        let maker_is_buy = ctx.accounts.buy_order.created_ts <= ctx.accounts.sell_order.created_ts;
+        let exec_price = if maker_is_buy { ctx.accounts.buy_order.price_scaled } else { ctx.accounts.sell_order.price_scaled };
+        let sol_amount = spot_sol_amount(fill_amount, exec_price)?;
+        let fee = bps(sol_amount, GLOBAL_TRADE_FEE_BPS)?;
+        let net_to_seller = sol_amount.checked_sub(fee).ok_or(LynxError::MathOverflow)?;
+
+        require_keys_eq!(ctx.accounts.seller_wallet.key(), ctx.accounts.sell_order.owner, LynxError::ActionMismatch);
+        require_keys_eq!(ctx.accounts.buyer_lynx_account.owner, ctx.accounts.buy_order.owner, LynxError::ActionMismatch);
+
+        transfer_lamports(&ctx.accounts.buy_escrow.to_account_info(), &ctx.accounts.seller_wallet.to_account_info(), net_to_seller)?;
+        if fee > 0 {
+            transfer_lamports(&ctx.accounts.buy_escrow.to_account_info(), &ctx.accounts.treasury.to_account_info(), fee)?;
+        }
+
+        let sell_order_id_bytes = ctx.accounts.sell_order.id.to_le_bytes();
+        let sell_owner = ctx.accounts.sell_order.owner;
+        let sell_order_seeds: &[&[u8]] = &[
+            b"spot_order",
+            sell_owner.as_ref(),
+            sell_order_id_bytes.as_ref(),
+            &[ctx.accounts.sell_order.bump],
+        ];
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.sell_escrow.to_account_info(),
+                    to: ctx.accounts.buyer_lynx_account.to_account_info(),
+                    authority: ctx.accounts.sell_order.to_account_info(),
+                },
+                &[sell_order_seeds],
+            ),
+            fill_amount,
+        )?;
+
+        let buy_order = &mut ctx.accounts.buy_order;
+        buy_order.remaining = buy_order.remaining.checked_sub(fill_amount).ok_or(LynxError::MathOverflow)?;
+        if buy_order.remaining == 0 { buy_order.status = SpotOrderStatus::Filled; }
+
+        let sell_order = &mut ctx.accounts.sell_order;
+        sell_order.remaining = sell_order.remaining.checked_sub(fill_amount).ok_or(LynxError::MathOverflow)?;
+        if sell_order.remaining == 0 { sell_order.status = SpotOrderStatus::Filled; }
+
+        Ok(())
+    }
+
+    pub fn cancel_spot_order_buy(ctx: Context<CancelSpotOrderBuy>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let order = &mut ctx.accounts.order;
+        require!(order.status == SpotOrderStatus::Open, LynxError::InvalidStatus);
+        let is_owner = ctx.accounts.signer.key() == order.owner;
+        let is_expired = now >= order.expires_ts;
+        require!(is_owner || is_expired, LynxError::Unauthorized);
+        require_keys_eq!(ctx.accounts.owner.key(), order.owner, LynxError::Unauthorized);
+
+        let refund = spot_sol_amount(order.remaining, order.price_scaled)?;
+        if refund > 0 {
+            transfer_lamports(&ctx.accounts.escrow.to_account_info(), &ctx.accounts.owner.to_account_info(), refund)?;
+        }
+        order.remaining = 0;
+        order.status = SpotOrderStatus::Cancelled;
+        Ok(())
+    }
+
+    pub fn cancel_spot_order_sell(ctx: Context<CancelSpotOrderSell>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let is_owner = ctx.accounts.signer.key() == ctx.accounts.order.owner;
+        let is_expired = now >= ctx.accounts.order.expires_ts;
+        require!(ctx.accounts.order.status == SpotOrderStatus::Open, LynxError::InvalidStatus);
+        require!(is_owner || is_expired, LynxError::Unauthorized);
+        require_keys_eq!(ctx.accounts.owner_lynx_account.owner, ctx.accounts.order.owner, LynxError::Unauthorized);
+
+        let remaining = ctx.accounts.order.remaining;
+        let order_id_bytes = ctx.accounts.order.id.to_le_bytes();
+        let order_owner = ctx.accounts.order.owner;
+        let order_bump = ctx.accounts.order.bump;
+        let order_seeds: &[&[u8]] = &[b"spot_order", order_owner.as_ref(), order_id_bytes.as_ref(), &[order_bump]];
+
+        if remaining > 0 {
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.escrow.to_account_info(),
+                        to: ctx.accounts.owner_lynx_account.to_account_info(),
+                        authority: ctx.accounts.order.to_account_info(),
+                    },
+                    &[order_seeds],
+                ),
+                remaining,
+            )?;
+        }
+        ctx.accounts.order.remaining = 0;
+        ctx.accounts.order.status = SpotOrderStatus::Cancelled;
+        Ok(())
+    }
+
     pub fn cut_off_market(ctx: Context<CutOffMarket>) -> Result<()> {
         let market = &mut ctx.accounts.market;
         require!(market.status == MarketStatus::Open || market.status == MarketStatus::Active, LynxError::InvalidStatus);
@@ -194,24 +886,60 @@ pub mod lynx_project {
         Ok(())
     }
 
-    pub fn resolve_market_oracle(ctx: Context<ResolveMarketOracle>, result: Outcome) -> Result<()> {
+    // Antes: resolve_market_oracle movia los fondos en el mismo instante en que
+    // el oraculo firmaba. Ahora solo registra la propuesta; los fondos no se
+    // mueven hasta finalize_resolution(), y cualquier firmante del multisig
+    // puede frenarla con dispute_resolution() dentro de DISPUTE_WINDOW_SECONDS.
+    pub fn propose_resolution(ctx: Context<ProposeResolution>, result: Outcome) -> Result<()> {
         require!(result_is_valid(result, ctx.accounts.market.is_ternary), LynxError::InvalidOutcome);
         require_keys_eq!(ctx.accounts.oracle_authority.key(), ctx.accounts.market.oracle_authority, LynxError::Unauthorized);
-        require!(Clock::get()?.unix_timestamp >= ctx.accounts.market.resolve_ts, LynxError::ResolveTimeNotReached);
-        finalize_market_and_fees(
-            &mut ctx.accounts.config,
-            &mut ctx.accounts.market,
-            &ctx.accounts.vault.to_account_info(),
-            &ctx.accounts.rewards_vault.to_account_info(),
-            &ctx.accounts.treasury.to_account_info(),
-            result,
-        )
+        let now = Clock::get()?.unix_timestamp;
+        require!(now >= ctx.accounts.market.resolve_ts, LynxError::ResolveTimeNotReached);
+
+        let market = &mut ctx.accounts.market;
+        require!(
+            market.status == MarketStatus::Open || market.status == MarketStatus::Active || market.status == MarketStatus::CutOff,
+            LynxError::InvalidStatus
+        );
+        market.status = MarketStatus::PendingResolution;
+        market.proposed_result = result;
+        market.proposed_ts = now;
+        Ok(())
     }
 
-    pub fn resolve_market_admin(ctx: Context<ResolveMarketAdmin>, result: Outcome) -> Result<()> {
-        require!(result_is_valid(result, ctx.accounts.market.is_ternary), LynxError::InvalidOutcome);
-        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.config.admin, LynxError::Unauthorized);
-        require!(Clock::get()?.unix_timestamp >= ctx.accounts.market.oracle_deadline, LynxError::OracleTimeoutNotReached);
+    // Cualquier firmante del multisig (no solo el admin) puede disputar una
+    // resolucion propuesta mientras siga dentro de la ventana de disputa. Esto
+    // devuelve el mercado a CutOff sin mover ningun fondo; a partir de ahi hace
+    // falta una nueva propuesta del oraculo, o -si el timeout de oraculo ya
+    // paso- el camino de fallback via governance (propose_action con
+    // ResolveMarketAdmin + execute_resolve_market_admin).
+    pub fn dispute_resolution(ctx: Context<DisputeResolution>) -> Result<()> {
+        require!(is_multisig_signer(&ctx.accounts.multisig, ctx.accounts.signer.key()), LynxError::NotAMultisigSigner);
+        let now = Clock::get()?.unix_timestamp;
+        let market = &mut ctx.accounts.market;
+        require!(market.status == MarketStatus::PendingResolution, LynxError::MarketNotPendingResolution);
+        require!(
+            now < market.proposed_ts.checked_add(DISPUTE_WINDOW_SECONDS).ok_or(LynxError::MathOverflow)?,
+            LynxError::DisputeWindowElapsed
+        );
+        market.status = MarketStatus::CutOff;
+        market.proposed_result = Outcome::Unresolved;
+        market.proposed_ts = 0;
+        Ok(())
+    }
+
+    // Permissionless a proposito: una vez que paso la ventana de disputa sin que
+    // ningun firmante del multisig la frenara, cualquiera puede "cranquear" la
+    // finalizacion real (mover fondos a treasury/rewards_vault segun las fees).
+    // No hace falta que sea el oraculo ni el admin quien la dispare.
+    pub fn finalize_resolution(ctx: Context<FinalizeResolution>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        require!(ctx.accounts.market.status == MarketStatus::PendingResolution, LynxError::MarketNotPendingResolution);
+        require!(
+            now >= ctx.accounts.market.proposed_ts.checked_add(DISPUTE_WINDOW_SECONDS).ok_or(LynxError::MathOverflow)?,
+            LynxError::DisputeWindowNotElapsed
+        );
+        let result = ctx.accounts.market.proposed_result;
         finalize_market_and_fees(
             &mut ctx.accounts.config,
             &mut ctx.accounts.market,
@@ -498,6 +1226,7 @@ pub mod lynx_project {
 
     pub fn create_duel(ctx: Context<CreateDuel>, duel_id: u64, amount: u64, creator_outcome: Outcome, duel_type: DuelType, expires_ts: i64) -> Result<()> {
         require!(amount > 0, LynxError::InvalidAmount);
+        require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
         require!(outcome_is_tradeable(creator_outcome, ctx.accounts.parent_market.is_ternary), LynxError::InvalidOutcome);
         require!(ctx.accounts.parent_market.currency == Currency::SOL, LynxError::InvalidCurrency);
         require!(ctx.accounts.parent_market.status == MarketStatus::Open || ctx.accounts.parent_market.status == MarketStatus::Active, LynxError::MarketClosed);
@@ -543,6 +1272,7 @@ pub mod lynx_project {
     }
 
     pub fn accept_duel(ctx: Context<AcceptDuel>, rival_outcome: Outcome) -> Result<()> {
+        require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
         let duel = &mut ctx.accounts.duel;
         require!(duel.duel_type == DuelType::OneVOne, LynxError::InvalidDuelType);
         require!(duel.status == DuelStatus::Open, LynxError::InvalidStatus);
@@ -707,6 +1437,8 @@ pub struct CreateMarket<'info> {
 #[derive(Accounts)]
 #[instruction(outcome: Outcome)]
 pub struct BuyPositionSol<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProtocolConfig>,
     #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
     pub market: Account<'info, Market>,
     #[account(mut, seeds = [b"vault", market.key().as_ref()], bump = vault.bump)]
@@ -761,13 +1493,329 @@ pub struct BuyPositionLynxWithBurn<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction(order_id: u64, outcome: Outcome)]
+pub struct CreatePredictionLimitOrderSol<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProtocolConfig>,
+    #[account(seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
+    pub market: Account<'info, Market>,
+    #[account(
+        init,
+        payer = owner,
+        space = PredictionOrder::LEN,
+        seeds = [b"pred_order", market.key().as_ref(), owner.key().as_ref(), order_id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub order: Account<'info, PredictionOrder>,
+    #[account(
+        init,
+        payer = owner,
+        space = PredictionOrderEscrowSol::LEN,
+        seeds = [b"pred_order_escrow_sol", order.key().as_ref()],
+        bump
+    )]
+    pub escrow: Account<'info, PredictionOrderEscrowSol>,
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct ExecutePredictionLimitOrderSol<'info> {
+    #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
+    pub market: Account<'info, Market>,
+    #[account(mut, seeds = [b"vault", market.key().as_ref()], bump = vault.bump)]
+    pub vault: Account<'info, MarketVault>,
+    #[account(
+        mut,
+        seeds = [b"pred_order", market.key().as_ref(), order.owner.as_ref(), order.id.to_le_bytes().as_ref()],
+        bump = order.bump
+    )]
+    pub order: Account<'info, PredictionOrder>,
+    #[account(mut, seeds = [b"pred_order_escrow_sol", order.key().as_ref()], bump = order.escrow_bump)]
+    pub escrow: Account<'info, PredictionOrderEscrowSol>,
+    #[account(
+        init_if_needed,
+        payer = payer,
+        space = UserPosition::LEN,
+        seeds = [b"position", market.key().as_ref(), order.owner.as_ref(), &[order.outcome.as_seed()]],
+        bump
+    )]
+    pub position: Account<'info, UserPosition>,
+    // Cualquiera puede pagar por la ejecucion (un keeper); el fill en si le
+    // pertenece siempre a order.owner, nunca a quien paga esta transaccion.
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct CancelPredictionLimitOrderSol<'info> {
+    #[account(seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
+    pub market: Account<'info, Market>,
+    #[account(
+        mut,
+        seeds = [b"pred_order", market.key().as_ref(), order.owner.as_ref(), order.id.to_le_bytes().as_ref()],
+        bump = order.bump
+    )]
+    pub order: Account<'info, PredictionOrder>,
+    #[account(mut, seeds = [b"pred_order_escrow_sol", order.key().as_ref()], bump = order.escrow_bump)]
+    pub escrow: Account<'info, PredictionOrderEscrowSol>,
+    /// CHECK: debe ser igual a order.owner; es quien recibe el reembolso.
+    #[account(mut, address = order.owner)]
+    pub owner: UncheckedAccount<'info>,
+    // Quien firma y paga la tx: puede ser el propio owner, o cualquiera si la
+    // orden ya expiro (ver require en cancel_prediction_limit_order_sol).
+    pub signer: Signer<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(order_id: u64, outcome: Outcome)]
+pub struct CreatePredictionLimitOrderLynx<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Box<Account<'info, ProtocolConfig>>,
+    #[account(seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
+    pub market: Box<Account<'info, Market>>,
+    #[account(
+        init,
+        payer = owner,
+        space = PredictionOrder::LEN,
+        seeds = [b"pred_order", market.key().as_ref(), owner.key().as_ref(), order_id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub order: Box<Account<'info, PredictionOrder>>,
+    #[account(mut, address = config.lynx_mint)]
+    pub lynx_mint: Box<Account<'info, Mint>>,
+    #[account(mut)]
+    pub user_lynx_account: Box<Account<'info, TokenAccount>>,
+    // Token account cuya AUTHORITY es la propia cuenta `order` (PDA), no el
+    // usuario ni config: solo execute_/cancel_prediction_limit_order_lynx,
+    // firmando con las seeds de `order`, pueden mover estos fondos.
+    #[account(
+        init,
+        payer = owner,
+        seeds = [b"pred_order_escrow_lynx", order.key().as_ref()],
+        bump,
+        token::mint = lynx_mint,
+        token::authority = order,
+    )]
+    pub escrow: Box<Account<'info, TokenAccount>>,
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct ExecutePredictionLimitOrderLynx<'info> {
+    #[account(mut, seeds = [b"config"], bump = config.bump)]
+    pub config: Box<Account<'info, ProtocolConfig>>,
+    #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
+    pub market: Box<Account<'info, Market>>,
+    #[account(
+        mut,
+        seeds = [b"pred_order", market.key().as_ref(), order.owner.as_ref(), order.id.to_le_bytes().as_ref()],
+        bump = order.bump
+    )]
+    pub order: Box<Account<'info, PredictionOrder>>,
+    #[account(mut, seeds = [b"pred_order_escrow_lynx", order.key().as_ref()], bump = order.escrow_bump)]
+    pub escrow: Box<Account<'info, TokenAccount>>,
+    #[account(mut, address = config.lynx_mint)]
+    pub lynx_mint: Box<Account<'info, Mint>>,
+    #[account(
+        init_if_needed,
+        payer = payer,
+        seeds = [b"lynx_vault", market.key().as_ref()],
+        bump,
+        token::mint = lynx_mint,
+        token::authority = config,
+    )]
+    pub market_lynx_vault: Box<Account<'info, TokenAccount>>,
+    #[account(
+        init_if_needed,
+        payer = payer,
+        space = UserPosition::LEN,
+        seeds = [b"position", market.key().as_ref(), order.owner.as_ref(), &[order.outcome.as_seed()]],
+        bump
+    )]
+    pub position: Box<Account<'info, UserPosition>>,
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct CancelPredictionLimitOrderLynx<'info> {
+    #[account(seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
+    pub market: Account<'info, Market>,
+    #[account(
+        mut,
+        seeds = [b"pred_order", market.key().as_ref(), order.owner.as_ref(), order.id.to_le_bytes().as_ref()],
+        bump = order.bump
+    )]
+    pub order: Account<'info, PredictionOrder>,
+    #[account(mut, seeds = [b"pred_order_escrow_lynx", order.key().as_ref()], bump = order.escrow_bump)]
+    pub escrow: Account<'info, TokenAccount>,
+    // Debe ser la token account del propio order.owner; se valida en la
+    // instruccion (require_keys_eq! sobre owner_lynx_account.owner).
+    #[account(mut)]
+    pub owner_lynx_account: Account<'info, TokenAccount>,
+    pub signer: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+#[instruction(order_id: u64)]
+pub struct PlaceSpotOrderBuy<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProtocolConfig>,
+    #[account(
+        init,
+        payer = owner,
+        space = SpotOrder::LEN,
+        seeds = [b"spot_order", owner.key().as_ref(), order_id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub order: Account<'info, SpotOrder>,
+    #[account(
+        init,
+        payer = owner,
+        space = SpotOrderEscrowSol::LEN,
+        seeds = [b"spot_order_escrow_sol", order.key().as_ref()],
+        bump
+    )]
+    pub escrow: Account<'info, SpotOrderEscrowSol>,
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(order_id: u64)]
+pub struct PlaceSpotOrderSell<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Box<Account<'info, ProtocolConfig>>,
+    #[account(
+        init,
+        payer = owner,
+        space = SpotOrder::LEN,
+        seeds = [b"spot_order", owner.key().as_ref(), order_id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub order: Box<Account<'info, SpotOrder>>,
+    #[account(mut, address = config.lynx_mint)]
+    pub lynx_mint: Box<Account<'info, Mint>>,
+    #[account(mut)]
+    pub user_lynx_account: Box<Account<'info, TokenAccount>>,
+    #[account(
+        init,
+        payer = owner,
+        seeds = [b"spot_order_escrow_lynx", order.key().as_ref()],
+        bump,
+        token::mint = lynx_mint,
+        token::authority = order,
+    )]
+    pub escrow: Box<Account<'info, TokenAccount>>,
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct MatchSpotOrders<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Box<Account<'info, ProtocolConfig>>,
+    #[account(
+        mut,
+        seeds = [b"spot_order", buy_order.owner.as_ref(), buy_order.id.to_le_bytes().as_ref()],
+        bump = buy_order.bump
+    )]
+    pub buy_order: Box<Account<'info, SpotOrder>>,
+    #[account(mut, seeds = [b"spot_order_escrow_sol", buy_order.key().as_ref()], bump = buy_order.escrow_bump)]
+    pub buy_escrow: Box<Account<'info, SpotOrderEscrowSol>>,
+    #[account(
+        mut,
+        seeds = [b"spot_order", sell_order.owner.as_ref(), sell_order.id.to_le_bytes().as_ref()],
+        bump = sell_order.bump
+    )]
+    pub sell_order: Box<Account<'info, SpotOrder>>,
+    #[account(mut, seeds = [b"spot_order_escrow_lynx", sell_order.key().as_ref()], bump = sell_order.escrow_bump)]
+    pub sell_escrow: Box<Account<'info, TokenAccount>>,
+    // Wallet del vendedor (sell_order.owner), destino del SOL neto. Validado
+    // en la instruccion con require_keys_eq!.
+    /// CHECK: validado contra sell_order.owner dentro de la instruccion
+    #[account(mut)]
+    pub seller_wallet: UncheckedAccount<'info>,
+    // Token account de LYNX del comprador (buy_order.owner), destino del LYNX
+    // comprado. Validado en la instruccion con require_keys_eq! sobre .owner.
+    #[account(mut)]
+    pub buyer_lynx_account: Box<Account<'info, TokenAccount>>,
+    /// CHECK: checked against config.treasury
+    #[account(mut, address = config.treasury)]
+    pub treasury: UncheckedAccount<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct CancelSpotOrderBuy<'info> {
+    #[account(
+        mut,
+        seeds = [b"spot_order", order.owner.as_ref(), order.id.to_le_bytes().as_ref()],
+        bump = order.bump
+    )]
+    pub order: Account<'info, SpotOrder>,
+    #[account(mut, seeds = [b"spot_order_escrow_sol", order.key().as_ref()], bump = order.escrow_bump)]
+    pub escrow: Account<'info, SpotOrderEscrowSol>,
+    /// CHECK: debe ser igual a order.owner; recibe el reembolso
+    #[account(mut, address = order.owner)]
+    pub owner: UncheckedAccount<'info>,
+    pub signer: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct CancelSpotOrderSell<'info> {
+    #[account(
+        mut,
+        seeds = [b"spot_order", order.owner.as_ref(), order.id.to_le_bytes().as_ref()],
+        bump = order.bump
+    )]
+    pub order: Account<'info, SpotOrder>,
+    #[account(mut, seeds = [b"spot_order_escrow_lynx", order.key().as_ref()], bump = order.escrow_bump)]
+    pub escrow: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub owner_lynx_account: Account<'info, TokenAccount>,
+    pub signer: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
 pub struct CutOffMarket<'info> {
     #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
     pub market: Account<'info, Market>,
 }
 
 #[derive(Accounts)]
-pub struct ResolveMarketOracle<'info> {
+pub struct ProposeResolution<'info> {
+    #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
+    pub market: Account<'info, Market>,
+    pub oracle_authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct DisputeResolution<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProtocolConfig>,
+    #[account(seeds = [b"multisig", config.key().as_ref()], bump = multisig.bump)]
+    pub multisig: Account<'info, Multisig>,
+    #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
+    pub market: Account<'info, Market>,
+    pub signer: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct FinalizeResolution<'info> {
     #[account(mut, seeds = [b"config"], bump = config.bump)]
     pub config: Account<'info, ProtocolConfig>,
     #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
@@ -776,23 +1824,87 @@ pub struct ResolveMarketOracle<'info> {
     pub vault: Account<'info, MarketVault>,
     #[account(mut, seeds = [b"rewards_vault"], bump = rewards_vault.bump)]
     pub rewards_vault: Account<'info, RewardsVault>,
-    pub oracle_authority: Signer<'info>,
     /// CHECK: checked against config.treasury
     #[account(mut, address = config.treasury)]
     pub treasury: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
-pub struct ResolveMarketAdmin<'info> {
+pub struct InitMultisig<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
     #[account(mut, seeds = [b"config"], bump = config.bump)]
     pub config: Account<'info, ProtocolConfig>,
+    #[account(init, payer = admin, space = Multisig::LEN, seeds = [b"multisig", config.key().as_ref()], bump)]
+    pub multisig: Account<'info, Multisig>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct ProposeAction<'info> {
+    #[account(mut, seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProtocolConfig>,
+    #[account(mut, seeds = [b"multisig", config.key().as_ref()], bump = multisig.bump)]
+    pub multisig: Account<'info, Multisig>,
+    #[account(
+        init,
+        payer = proposer,
+        space = GovernanceProposal::LEN,
+        seeds = [b"gov_proposal", multisig.key().as_ref(), multisig.proposal_seq.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub proposal: Account<'info, GovernanceProposal>,
+    #[account(mut)]
+    pub proposer: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct ApproveAction<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProtocolConfig>,
+    #[account(seeds = [b"multisig", config.key().as_ref()], bump = multisig.bump)]
+    pub multisig: Account<'info, Multisig>,
+    #[account(mut, has_one = multisig)]
+    pub proposal: Account<'info, GovernanceProposal>,
+    pub signer: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct CancelProposal<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProtocolConfig>,
+    #[account(seeds = [b"multisig", config.key().as_ref()], bump = multisig.bump)]
+    pub multisig: Account<'info, Multisig>,
+    #[account(mut, has_one = multisig)]
+    pub proposal: Account<'info, GovernanceProposal>,
+    pub signer: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct ExecuteAction<'info> {
+    #[account(mut, seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProtocolConfig>,
+    #[account(mut, seeds = [b"multisig", config.key().as_ref()], bump = multisig.bump)]
+    pub multisig: Account<'info, Multisig>,
+    #[account(mut, has_one = multisig)]
+    pub proposal: Account<'info, GovernanceProposal>,
+}
+
+#[derive(Accounts)]
+pub struct ExecuteResolveMarketAdmin<'info> {
+    #[account(mut, seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProtocolConfig>,
+    #[account(seeds = [b"multisig", config.key().as_ref()], bump = multisig.bump)]
+    pub multisig: Account<'info, Multisig>,
+    #[account(mut, has_one = multisig)]
+    pub proposal: Account<'info, GovernanceProposal>,
     #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
     pub market: Account<'info, Market>,
     #[account(mut, seeds = [b"vault", market.key().as_ref()], bump = vault.bump)]
     pub vault: Account<'info, MarketVault>,
     #[account(mut, seeds = [b"rewards_vault"], bump = rewards_vault.bump)]
     pub rewards_vault: Account<'info, RewardsVault>,
-    pub admin: Signer<'info>,
     /// CHECK: checked against config.treasury
     #[account(mut, address = config.treasury)]
     pub treasury: UncheckedAccount<'info>,
@@ -966,6 +2078,8 @@ pub struct CreateDuel<'info> {
 
 #[derive(Accounts)]
 pub struct AcceptDuel<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProtocolConfig>,
     #[account(mut, seeds = [b"duel", duel.parent_market.as_ref(), duel.creator.as_ref(), duel.id.to_le_bytes().as_ref()], bump = duel.bump)]
     pub duel: Account<'info, Duel>,
     #[account(seeds = [b"market", parent_market.id.to_le_bytes().as_ref()], bump = parent_market.bump, constraint = parent_market.key() == duel.parent_market @ LynxError::InvalidStatus)]
@@ -1073,7 +2187,13 @@ fn finalize_market_and_fees<'info>(
     treasury: &AccountInfo<'info>,
     result: Outcome,
 ) -> Result<()> {
-    require!(market.status == MarketStatus::CutOff || market.status == MarketStatus::Active || market.status == MarketStatus::Open, LynxError::InvalidStatus);
+    require!(
+        market.status == MarketStatus::CutOff
+            || market.status == MarketStatus::Active
+            || market.status == MarketStatus::Open
+            || market.status == MarketStatus::PendingResolution,
+        LynxError::InvalidStatus
+    );
     market.status = MarketStatus::Resolved;
     market.result = result;
     market.resolved_ts = Clock::get()?.unix_timestamp;
@@ -1115,6 +2235,45 @@ fn finalize_market_and_fees<'info>(
 
 fn outcome_is_tradeable(outcome: Outcome, is_ternary: bool) -> bool {
     matches!(outcome, Outcome::Yes | Outcome::No) || (is_ternary && outcome == Outcome::Draw)
+}
+
+// Precio implicito del pool para un outcome, en basis points (0..10000),
+// igual que estimatePositionPrice() calculaba en el backend off-chain. El
+// llamador debe comprobar market.pool_total > 0 antes de invocar esto (un
+// pool vacio no tiene un precio implicito significativo).
+fn implied_price_bps(market: &Market, outcome: Outcome) -> Result<u64> {
+    let numerator = match outcome {
+        Outcome::Yes => market.yes_total,
+        Outcome::No => market.no_total,
+        Outcome::Draw => market.draw_total,
+        Outcome::Unresolved => return err!(LynxError::InvalidOutcome),
+    };
+    numerator
+        .checked_mul(BPS_DENOMINATOR)
+        .ok_or(LynxError::MathOverflow)?
+        .checked_div(market.pool_total)
+        .ok_or_else(|| error!(LynxError::MathOverflow))
+}
+
+// Convierte una cantidad de micro-LYNX a lamports al precio dado (escalado
+// por PRICE_SCALE). Usa u128 internamente para evitar overflow con
+// cantidades grandes antes de volver a u64.
+fn spot_sol_amount(micro_lynx: u64, price_scaled: u128) -> Result<u64> {
+    let product = (micro_lynx as u128).checked_mul(price_scaled).ok_or(LynxError::MathOverflow)?;
+    let lamports = product.checked_div(PRICE_SCALE).ok_or(LynxError::MathOverflow)?;
+    u64::try_from(lamports).map_err(|_| error!(LynxError::MathOverflow))
+}
+
+// Comprueba si `key` es uno de los signer_count firmantes activos del multisig.
+// No usamos simplemente `.contains()` sobre el array completo porque los huecos
+// no usados estan a Pubkey::default(), que nunca debe considerarse un firmante
+// valido (evita que una cuenta "vacia"/system-program-owned cuele como firmante).
+fn is_multisig_signer(multisig: &Multisig, key: Pubkey) -> bool {
+    if key == Pubkey::default() {
+        return false;
+    }
+    let count = multisig.signer_count as usize;
+    multisig.signers[..count].iter().any(|s| *s == key)
 }
 
 fn result_is_valid(outcome: Outcome, is_ternary: bool) -> bool {

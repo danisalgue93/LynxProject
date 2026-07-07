@@ -26,8 +26,10 @@ cripto/
 | `buy_position_sol` | Buyer | Permissionless — deposits SOL |
 | `buy_position_lynx_with_burn` | Buyer | Burns 15% LYNX, deposits remainder |
 | `cut_off_market` | Anyone | Permissionless once `cutoff_ts` is reached |
-| `resolve_market_oracle` | Oracle authority | After `resolve_ts` |
-| `resolve_market_admin` | Admin | After `oracle_deadline` (oracle fallback) |
+| `propose_resolution` | Oracle authority | After `resolve_ts`; sets `PendingResolution`, no funds move yet |
+| `dispute_resolution` | Any multisig signer | Within 24h dispute window, reverts to `CutOff` |
+| `finalize_resolution` | Anyone (permissionless) | After 24h dispute window elapses undisputed; moves funds |
+| `init_multisig` / `propose_action` / `approve_action` / `execute_action` / `execute_resolve_market_admin` | Admin multisig (M-of-N, e.g. 2-of-2) | Governance fallback path when the oracle never proposes a result before `oracle_deadline`; replaces the old single-key `resolve_market_admin` |
 | `claim_market_sol` | Winning position owner | After market is Resolved |
 | `mint_lynx_distribution` | Position owner | Mints LYNX participation rewards |
 
@@ -88,7 +90,7 @@ PROGRAM_ID=<deployed_program_id> node scripts/init_protocol.cjs
 
 ## Security notes
 
-- The admin keypair used for `resolve_market_admin` is stored only in the admin panel's environment variables, never in the frontend or backend.
+- Cada admin del multisig (2-de-2) corre su propia instancia del panel con su propia `ADMIN_KEYPAIR_BS58`, nunca la misma clave compartida entre ambos; estas claves solo viven en las variables de entorno de cada panel, nunca en el frontend ni en el backend.
 - The oracle authority keypair (`oracle_authority`) is a separate key with narrower permissions — it can only resolve markets, not administer the protocol.
 - All arithmetic uses `checked_*` operations to prevent overflow/underflow.
 - All vault transfers verify rent-exemption before withdrawing.

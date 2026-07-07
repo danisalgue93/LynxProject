@@ -177,6 +177,7 @@ export function MarketDetail({
   const [selectedSide, setSelectedSide] = useState<Position>(Position.YES);
   const [isPending, setIsPending] = useState(false);
   const [claimablePosId, setClaimablePosId] = useState<string | null>(null);
+  const [claimablePosition, setClaimablePosition] = useState<any | null>(null);
   const [isClaiming, setIsClaiming] = useState(false);
   const [claimResult, setClaimResult] = useState<{
     payout: number;
@@ -201,6 +202,7 @@ export function MarketDetail({
               (market.result === "NO" && p.position === "B")),
         );
         setClaimablePosId(winPos?.id ?? null);
+        setClaimablePosition(winPos ?? null);
       });
     }
   }, [market.id, market.status, market.result, fetchPositions]);
@@ -225,7 +227,7 @@ export function MarketDetail({
       await executeTransaction(
         async () => {
           await executeTrade(
-            market.id,
+            market,
             parseFloat(betAmount) || 0,
             selectedSide,
             "swap",
@@ -264,10 +266,11 @@ export function MarketDetail({
     try {
       await executeTransaction(
         async () => {
-          const result = await claimPosition(claimablePosId);
+          const result = await claimPosition(claimablePosition ?? claimablePosId);
           if (result) {
             setClaimResult(result);
             setClaimablePosId(null);
+            setClaimablePosition(null);
           }
           return `claim-${claimablePosId}-${Date.now()}`;
         },

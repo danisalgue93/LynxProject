@@ -389,8 +389,8 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
     setIsPending(true);
     try {
       await executeTrade(
-        selectedMarketId, 
-        predOrderAmount, 
+        selectedMarket ?? selectedMarketId,
+        predOrderAmount,
         predSide,
         predTradeType,
         predTradeType === 'limit' ? predOrderPrice : undefined
@@ -427,14 +427,15 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
   const predOpenOrders = [...(predictionOrderBook?.bids || []), ...(predictionOrderBook?.asks || [])]
     .filter((o: any) => o.owner === myWallet && o.status !== 'FILLED' && o.status !== 'CANCELLED');
 
-  const handleCancelOrder = async (orderId: string) => {
+  const handleCancelOrder = async (order: any) => {
+    const orderId = typeof order === 'string' ? order : order?.id;
     if (readOnly) {
       onAuthRequired?.(t('orderbook.actionCancelOrder', 'cancel orders'));
       return;
     }
     setCancellingId(orderId);
     try {
-      await cancelOrder(orderId);
+      await cancelOrder(order);
       addToast({
         type: 'success',
         message: t('orderbook.cancelSuccess', 'Order cancelled successfully.'),
@@ -1010,7 +1011,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                         ~ {(Number(order.remaining) * Number(order.price)).toFixed(4)} SOL
                       </span>
                       <button
-                        onClick={() => handleCancelOrder(order.id)}
+                        onClick={() => handleCancelOrder(order)}
                         disabled={cancellingId === order.id}
                         className="flex items-center gap-1 px-2 lg:px-3 py-1 rounded bg-red-400/10 hover:bg-red-400/20 text-red-400 text-[9px] lg:text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50"
                       >
@@ -1077,7 +1078,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                     </div>
                     <div className="flex items-center gap-2 lg:gap-3 shrink-0">
                       <button
-                        onClick={() => handleCancelOrder(order.id)}
+                        onClick={() => handleCancelOrder(order)}
                         disabled={cancellingId === order.id}
                         className="flex items-center gap-1 px-2 lg:px-3 py-1 rounded bg-red-400/10 hover:bg-red-400/20 text-red-400 text-[9px] lg:text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50"
                       >

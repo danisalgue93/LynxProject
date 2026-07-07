@@ -21,6 +21,8 @@ import { LynxState } from './state.js';
 import type { Currency, OrderSide, Position } from './types.js';
 import { generateToken, generateRefreshToken, verifyToken, verifyRefreshToken, hashPassword, hashPasswordSync, verifyPassword, extractToken } from './auth.js';
 import { sendVerificationEmail, sendPasswordResetEmail, isEmailConfigured } from './email.js';
+import { onchainRouter } from './onchainRoutes.js';
+import { startChainIndexer, getIndexedMarket, listOpenOrdersForMarket, listPositionsForOwner, listOpenSpotOrders, fromOnChainOutcomeName } from './chain.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -1236,11 +1238,35 @@ app.get('/api/config', (_req, res) => {
   });
 });
 
+app.use(onchainRouter);
+
+// Superpone el estado real on-chain (pool/status/resultado) sobre un mercado
+// legacy cuando tiene onChainMarket asociado y el indexador ya lo vio. Nunca
+// lanza: si el indexador no tiene el dato todavia (recien creado, o
+// PROGRAM_ID no configurado en este entorno), se devuelve el mercado tal
+// cual venia del store off-chain, sin romper la respuesta.
+function overlayOnChainMarket<T extends { onChainMarket?: string; poolAmount: number; yesAmount: number; noAmount: number; drawAmount?: number; status: string; result?: string }>(market: T): T {
+  if (!market.onChainMarket) return market;
+  const onChain = getIndexedMarket(market.onChainMarket);
+  if (!onChain) return market;
+  const factor = onChain.currency === 'SOL' ? 1_000_000_000 : 1_000_000;
+  const statusMap: Record<string, string> = { Open: 'OPEN', Active: 'ACTIVE', CutOff: 'CUT_OFF', PendingResolution: 'CUT_OFF', Resolved: 'RESOLVED', Expired: 'EXPIRED' };
+  return {
+    ...market,
+    poolAmount: Number(onChain.poolTotal) / factor,
+    yesAmount: Number(onChain.yesTotal) / factor,
+    noAmount: Number(onChain.noTotal) / factor,
+    drawAmount: Number(onChain.drawTotal) / factor,
+    status: statusMap[onChain.status] ?? market.status,
+    result: fromOnChainOutcomeName(onChain.result) ?? market.result,
+  };
+}
+
 app.get('/api/markets', (req, res) => {
   const includeFinished = req.query.includeFinished === 'true';
   const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
   const offset = Math.max(Number(req.query.offset) || 0, 0);
-  const all = store.listMarkets(includeFinished);
+  const all = store.listMarkets(includeFinished).map(overlayOnChainMarket);
   res.json({
     data: all.slice(offset, offset + limit),
     total: all.length,
@@ -1250,7 +1276,7 @@ app.get('/api/markets', (req, res) => {
 });
 
 app.get('/api/markets/:id', (req, res) => {
-  res.json(store.getMarket(req.params.id));
+  res.json(overlayOnChainMarket(store.getMarket(req.params.id)));
 });
 
 app.post('/api/markets', asyncRoute(async (req, res) => {
@@ -1450,7 +1476,50 @@ app.delete('/api/duels/:id', asyncRoute(async (req, res) => {
 app.get('/api/orderbook', (req, res) => {
   const pair = typeof req.query.pair === 'string' ? req.query.pair : 'LYNX/SOL';
   const marketId = typeof req.query.marketId === 'string' ? req.query.marketId : undefined;
-  res.json(store.getOrderBook(pair, marketId));
+  const book = store.getOrderBook(pair, marketId);
+
+  if (pair === 'LYNX/SOL' && !marketId) {
+    const onChainSpotOrders = listOpenSpotOrders().map((o) => ({
+      id: o.pubkey,
+      owner: o.owner,
+      side: o.side === 'Buy' ? 'BUY' : 'SELL',
+      amount: Number(o.remaining) / 1_000_000,
+      price: Number(o.priceScaled) / 1e12, // ver server.ts/frontend lynxProgram.ts: priceScaled -> SOL por LYNX
+      createdAt: o.createdTs * 1000,
+      onChain: true,
+      onChainOrderPubkey: o.pubkey,
+      currency: 'LYNX',
+    }));
+    book.bids = [...(book.bids || []), ...onChainSpotOrders.filter((o) => o.side === 'BUY')];
+    book.asks = [...(book.asks || []), ...onChainSpotOrders.filter((o) => o.side === 'SELL')];
+  }
+
+  if (marketId) {
+    const market = store.getMarket(marketId);
+    if (market?.onChainMarket) {
+      const onChainOrders = listOpenOrdersForMarket(market.onChainMarket).map((o) => ({
+        id: o.pubkey,
+        owner: o.owner,
+        position: fromOnChainOutcomeName(o.outcome),
+        amount: Number(o.amount) / (market.currency === 'LYNX' ? 1_000_000 : 1_000_000_000),
+        price: o.limitPriceBps / 10_000,
+        status: 'OPEN',
+        createdAt: o.createdTs * 1000,
+        onChain: true,
+        onChainOrderPubkey: o.pubkey,
+        onChainMarket: market.onChainMarket,
+        currency: market.currency,
+      }));
+      // Las ordenes on-chain de mercados de prediccion no distinguen "bid/ask"
+      // como el CLOB de LYNX/SOL (no hay contraparte, se llenan contra el pool):
+      // las mostramos todas en bids para YES/A y asks para NO/B, que es lo que
+      // consume el resto de la UI del orderbook para pintar dos columnas.
+      book.bids = [...(book.bids || []), ...onChainOrders.filter((o: any) => o.position === 'YES' || o.position === 'DRAW')];
+      book.asks = [...(book.asks || []), ...onChainOrders.filter((o: any) => o.position === 'NO')];
+    }
+  }
+
+  res.json(book);
 });
 
 app.post('/api/orders', tradingRateLimit, asyncRoute(async (req, res) => {
@@ -1692,7 +1761,39 @@ app.get('/api/positions', (req: any, res) => {
   const wallet = walletFromQuery(req, res);
   if (!wallet) return;
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
-  res.json(store.listPositions(wallet));
+  const offChainPositions = store.listPositions(wallet);
+
+  const onChainPositions = listPositionsForOwner(wallet)
+    .filter((p) => !p.claimed)
+    .map((p) => {
+      const market = store.listMarkets(true).find((m: any) => m.onChainMarket === p.market);
+      const onChainMarket = getIndexedMarket(p.market);
+      const currency = market?.currency ?? onChainMarket?.currency ?? 'SOL';
+      const factor = currency === 'LYNX' ? 1_000_000 : 1_000_000_000;
+      const amount = Number(p.amount) / factor;
+      let estimatedPayout: number | undefined;
+      if (onChainMarket && onChainMarket.status === 'Resolved') {
+        const winningTotal = onChainMarket.result === 'Yes' ? BigInt(onChainMarket.yesTotal)
+          : onChainMarket.result === 'No' ? BigInt(onChainMarket.noTotal)
+          : onChainMarket.result === 'Draw' ? BigInt(onChainMarket.drawTotal) : 0n;
+        if (winningTotal > 0n) {
+          const payoutPool = (BigInt(onChainMarket.poolTotal) * 9_000n) / 10_000n; // 90% (EVENT_PROTOCOL_FEE_BPS = 10%)
+          estimatedPayout = Number((payoutPool * BigInt(p.amount)) / winningTotal) / factor;
+        }
+      }
+      return {
+        id: p.pubkey,
+        marketId: market?.id ?? p.market,
+        onChainMarket: p.market,
+        currency,
+        position: fromOnChainOutcomeName(p.outcome),
+        amount,
+        claimed: p.claimed,
+        estimatedPayout,
+      };
+    });
+
+  res.json([...offChainPositions, ...onChainPositions]);
 });
 
 app.post('/api/positions/:id/claim', asyncRoute(async (req, res) => {
@@ -1950,6 +2051,7 @@ async function start() {
   httpServer.listen(port, '0.0.0.0', () => {
     console.log(`Lynx backend listening on http://0.0.0.0:${port}`);
   });
+  startChainIndexer();
 
   // Periodic backup every 5 minutes — limits data loss window if the process dies unexpectedly
   const PERSIST_INTERVAL_MS = 5 * 60 * 1000;

@@ -1,27 +1,53 @@
 import { useState, useCallback } from 'react';
 import { Market, Duel, Proposal, Portfolio } from '../types';
-import { useWallet } from '@solana/wallet-adapter-react';
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
+import { PublicKey } from '@solana/web3.js';
 import { apiFetch } from '../lib/api';
 import { getManagedWalletAddress, useManagedAuthSession } from '../lib/auth';
 import { useSolanaTransaction } from './useSolanaTransaction';
+import {
+  buildBuyPositionSolTx,
+  buildBuyPositionLynxTx,
+  buildCreateLimitOrderSolTx,
+  buildCreateLimitOrderLynxTx,
+  buildCancelLimitOrderSolTx,
+  buildCancelLimitOrderLynxTx,
+  buildClaimMarketSolTx,
+  buildClaimMarketLynxTx,
+  buildPlaceSpotOrderBuyTx,
+  buildPlaceSpotOrderSellTx,
+  buildCancelSpotOrderBuyTx,
+  buildCancelSpotOrderSellTx,
+  type OnChainOutcome,
+} from '../lib/lynxProgram';
 
 /**
  * Web3 Program Integration Hook Structure
- * 
- * This hook is structured to be the primary interface with your Solana/Anchor smart contracts.
- * Replace the placeholder implementations below with your actual RPC calls.
- * 
- * Recommended Stack:
- * - @solana/web3.js
- * - @project-serum/anchor (or @coral-xyz/anchor)
- * - @solana/wallet-adapter-react
+ *
+ * Para MERCADOS DE PREDICCION, este hook ahora firma y envia transacciones
+ * reales contra el programa Anchor (ver ../lib/lynxProgram.ts) cuando el
+ * mercado tiene un `onChainMarket` asociado — el dinero nunca pasa por un
+ * balance interno del backend. El backend solo indexa el estado on-chain
+ * para que la UI cargue rapido (ver backend/src/chain.ts).
+ *
+ * El trading de LYNX/SOL (par spot), duelos, staking y DAO siguen usando el
+ * flujo off-chain existente por ahora; esa migracion queda para una fase
+ * posterior (ver auditoria_lynx_project.md).
  */
+
+function toOnChainOutcome(position: string): OnChainOutcome {
+  if (position === 'YES' || position === 'A') return 'Yes';
+  if (position === 'NO' || position === 'B') return 'No';
+  if (position === 'DRAW') return 'Draw';
+  throw new Error(`Posicion "${position}" no soportada on-chain.`);
+}
 
 export function useProgram() {
   const [loadingCount, setLoadingCount] = useState(0);
   const isLoading = loadingCount > 0;
   const [error, setError] = useState<string | null>(null);
-  const { publicKey, signMessage } = useWallet();
+  const { publicKey, signMessage, sendTransaction } = useWallet();
+  const { connection } = useConnection();
   const managedSession = useManagedAuthSession();
   const { sendSolTransfer } = useSolanaTransaction();
   const wallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || '';
@@ -32,6 +58,31 @@ export function useProgram() {
     }
     return wallet;
   }, [wallet]);
+
+  // Firma y envia una transaccion ya construida con la wallet conectada.
+  // Requiere una wallet EXTERNA de verdad (Phantom, Solflare, etc.): las
+  // cuentas gestionadas por email ('MAGIC:...') no pueden firmar
+  // transacciones on-chain arbitrarias, solo mensajes off-chain para el
+  // login. Para esas cuentas, las acciones on-chain deben ofrecer conectar
+  // una wallet externa primero.
+  const signAndSendOnChain = useCallback(
+    async (tx: import('@solana/web3.js').Transaction): Promise<string> => {
+      if (!publicKey || !sendTransaction) {
+        throw new Error('Connect a Solana wallet (Phantom, Solflare, etc.) to do this on-chain.');
+      }
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = publicKey;
+      const signature = await sendTransaction(tx, connection, { skipPreflight: false, preflightCommitment: 'confirmed' });
+      await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
+      // Avisa al backend (best-effort) para que el indexador refresque rapido
+      // en vez de esperar al proximo poll periodico. Un fallo aqui no revierte
+      // ni afecta la transaccion, que ya esta confirmada on-chain.
+      apiFetch('/api/onchain/sync', { method: 'POST', body: JSON.stringify({ signature }) }).catch(() => {});
+      return signature;
+    },
+    [publicKey, sendTransaction, connection]
+  );
 
   const signAction = useCallback(async (action: string, payload: Record<string, unknown>) => {
     if (!publicKey || !signMessage) {
@@ -100,9 +151,13 @@ export function useProgram() {
     }
   }, [setLoadingCount, setError]);
 
-  // Example: Place a limit order or swap on a market
+  // Compra a mercado o crea una orden limite. Si `market.onChainMarket` esta
+  // presente, esto firma y envia una transaccion real contra el programa
+  // Anchor con la wallet del usuario (ver ../lib/lynxProgram.ts) — el dinero
+  // nunca pasa por el backend. Si no (mercado legacy sin respaldo on-chain),
+  // cae al flujo off-chain custodial anterior.
   const executeTrade = useCallback(async (
-    marketId: string,
+    market: Market | string,
     amount: number,
     side: boolean | string,
     tradeType: 'limit' | 'swap' | 'market',
@@ -110,8 +165,55 @@ export function useProgram() {
   ) => {
     setLoadingCount(c => c + 1);
     try {
-      const currentWallet = await ensureApproved();
       const position = typeof side === 'boolean' ? (side ? 'YES' : 'NO') : side;
+      const marketObj = typeof market === 'string' ? null : market;
+
+      if (marketObj?.onChainMarket) {
+        if (!publicKey) {
+          throw new Error('Connect a Solana wallet (Phantom, Solflare, etc.) to trade on-chain markets.');
+        }
+        const outcome = toOnChainOutcome(position);
+        const marketPubkey = new PublicKey(marketObj.onChainMarket);
+
+        if (tradeType === 'limit') {
+          if (!limitPrice || limitPrice <= 0) {
+            throw new Error('Enter a valid limit price.');
+          }
+          // Expira en 30 dias si el mercado no cierra antes.
+          const expiresTs = Math.min(
+            Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+            Math.floor(marketObj.cutoffAt / 1000)
+          );
+          if (marketObj.currency === 'LYNX') {
+            const { tx } = await buildCreateLimitOrderLynxTx({
+              connection, owner: publicKey, market: marketPubkey, outcome,
+              amountLynx: amount, limitProbability: limitPrice, expiresTs,
+            });
+            const signature = await signAndSendOnChain(tx);
+            return { signature, onChain: true };
+          }
+          const { tx } = await buildCreateLimitOrderSolTx({
+            owner: publicKey, market: marketPubkey, outcome,
+            amountSol: amount, limitProbability: limitPrice, expiresTs,
+          });
+          const signature = await signAndSendOnChain(tx);
+          return { signature, onChain: true };
+        }
+
+        // Compra a mercado (precio actual del pool)
+        if (marketObj.currency === 'LYNX') {
+          const tx = await buildBuyPositionLynxTx({ connection, buyer: publicKey, market: marketPubkey, outcome, amountLynx: amount });
+          const signature = await signAndSendOnChain(tx);
+          return { signature, onChain: true };
+        }
+        const tx = await buildBuyPositionSolTx({ buyer: publicKey, market: marketPubkey, outcome, amountSol: amount });
+        const signature = await signAndSendOnChain(tx);
+        return { signature, onChain: true };
+      }
+
+      // Fallback legacy: mercado sin respaldo on-chain (transicion).
+      const currentWallet = await ensureApproved();
+      const marketId = typeof market === 'string' ? market : market.id;
       return await apiFetch(`/api/markets/${marketId}/trades`, {
         method: 'POST',
         body: JSON.stringify({ wallet: currentWallet, amount, position, tradeType, limitPrice }),
@@ -121,22 +223,43 @@ export function useProgram() {
     } finally {
       setLoadingCount(c => Math.max(0, c - 1));
     }
-  }, [ensureApproved]);
+  }, [ensureApproved, publicKey, connection, signAndSendOnChain]);
 
+  // Coloca una orden en el libro LYNX/SOL on-chain (ver ../lib/lynxProgram.ts).
+  // No hay una instruccion "market order" separada: en un libro on-chain, una
+  // orden a mercado es simplemente una orden limite con un precio agresivo
+  // (compra muy por encima / venta muy por debajo del mejor precio) que el
+  // keeper (o cualquiera) cruza casi al instante contra el libro — el mismo
+  // patron que usan los libros on-chain de Solana como OpenBook/Serum. Por
+  // eso `price` es obligatorio: para tradeType 'market', pasa el peor precio
+  // que estarias dispuesto a aceptar (tu limite de slippage).
   const executeLynxOrder = useCallback(async (side: 'BUY' | 'SELL', amount: number, price?: number, tradeType: 'limit' | 'market' = 'limit') => {
     setLoadingCount(c => c + 1);
     try {
-      const currentWallet = await ensureApproved();
-      return await apiFetch('/api/orders', {
-        method: 'POST',
-        body: JSON.stringify({ wallet: currentWallet, pair: 'LYNX/SOL', side, amount, price, currency: 'LYNX', tradeType }),
-      });
+      if (!publicKey) {
+        throw new Error('Connect a Solana wallet (Phantom, Solflare, etc.) to trade LYNX/SOL on-chain.');
+      }
+      if (!price || price <= 0) {
+        throw new Error(tradeType === 'market'
+          ? 'Enter your maximum acceptable slippage price for this market order.'
+          : 'Enter a valid price.');
+      }
+      // Expira en 30 dias.
+      const expiresTs = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+      if (side === 'BUY') {
+        const { tx } = await buildPlaceSpotOrderBuyTx({ owner: publicKey, amountLynx: amount, priceSolPerLynx: price, expiresTs });
+        const signature = await signAndSendOnChain(tx);
+        return { signature, onChain: true };
+      }
+      const { tx } = await buildPlaceSpotOrderSellTx({ connection, owner: publicKey, amountLynx: amount, priceSolPerLynx: price, expiresTs });
+      const signature = await signAndSendOnChain(tx);
+      return { signature, onChain: true };
     } catch (err: any) {
       throw err;
     } finally {
       setLoadingCount(c => Math.max(0, c - 1));
     }
-  }, [ensureApproved]);
+  }, [publicKey, connection, signAndSendOnChain]);
 
   const fetchOrderBook = useCallback(async (pair = 'LYNX/SOL', marketId?: string) => {
     const params = new URLSearchParams({ pair });
@@ -386,9 +509,29 @@ export function useProgram() {
     }
   }, [ensureApproved]);
 
-  const claimPosition = useCallback(async (positionId: string) => {
+  // `pos` es el objeto devuelto por fetchPositions(). Si trae onChainMarket,
+  // esto firma y envia claim_market_sol/claim_market_lynx directamente; si
+  // no, cae al endpoint legacy /api/positions/:id/claim.
+  const claimPosition = useCallback(async (pos: any) => {
     setLoadingCount(c => c + 1);
     try {
+      if (pos && typeof pos === 'object' && pos.onChainMarket) {
+        if (!publicKey) {
+          throw new Error('Connect a Solana wallet (Phantom, Solflare, etc.) to claim this on-chain payout.');
+        }
+        const outcome = toOnChainOutcome(pos.position);
+        const marketPubkey = new PublicKey(pos.onChainMarket);
+        const tx = pos.currency === 'LYNX'
+          ? await buildClaimMarketLynxTx({ connection, claimant: publicKey, market: marketPubkey, outcome })
+          : buildClaimMarketSolTx({ claimant: publicKey, market: marketPubkey, outcome });
+        const signature = await signAndSendOnChain(tx);
+        // Estimacion solo para el toast/UI inmediata; el indexador refresca
+        // el monto exacto poco despues via /api/onchain/sync.
+        const estimatedPayout = typeof pos.estimatedPayout === 'number' ? pos.estimatedPayout : undefined;
+        return { payout: estimatedPayout ?? 0, currency: pos.currency ?? 'SOL', signature, onChain: true };
+      }
+
+      const positionId = typeof pos === 'string' ? pos : pos?.id;
       const currentWallet = await ensureApproved();
       return await apiFetch<{ payout: number; currency: string; portfolio: Portfolio }>(
         `/api/positions/${positionId}/claim`,
@@ -399,12 +542,41 @@ export function useProgram() {
     } finally {
       setLoadingCount(c => Math.max(0, c - 1));
     }
-  }, [ensureApproved]);
+  }, [ensureApproved, publicKey, connection, signAndSendOnChain]);
 
-  // Cancel an open order — wallet goes in body (H-02 fix applied server-side)
-  const cancelOrder = useCallback(async (orderId: string) => {
+  // Cancel an open order. `order` es el objeto devuelto por fetchOrderBook();
+  // si trae onChain=true esto firma y envia cancel_prediction_limit_order_*
+  // directamente. Las ordenes del par LYNX/SOL (off-chain por ahora) siguen
+  // el flujo legacy DELETE /api/orders/:id.
+  const cancelOrder = useCallback(async (order: any) => {
     setLoadingCount(c => c + 1);
     try {
+      if (order && typeof order === 'object' && order.onChain && order.onChainOrderPubkey) {
+        if (!publicKey) {
+          throw new Error('Connect a Solana wallet (Phantom, Solflare, etc.) to cancel this on-chain order.');
+        }
+        const orderPubkey = new PublicKey(order.onChainOrderPubkey);
+        const orderOwner = new PublicKey(order.owner);
+
+        if (order.onChainMarket) {
+          // Orden limite de un mercado de prediccion
+          const marketPubkey = new PublicKey(order.onChainMarket);
+          const tx = order.currency === 'LYNX'
+            ? await buildCancelLimitOrderLynxTx({ connection, signer: publicKey, market: marketPubkey, order: orderPubkey, orderOwner })
+            : buildCancelLimitOrderSolTx({ signer: publicKey, market: marketPubkey, order: orderPubkey, orderOwner });
+          const signature = await signAndSendOnChain(tx);
+          return { cancelled: order.id, signature, onChain: true };
+        }
+
+        // Orden del libro spot LYNX/SOL
+        const tx = order.side === 'BUY'
+          ? buildCancelSpotOrderBuyTx({ signer: publicKey, order: orderPubkey, orderOwner })
+          : await buildCancelSpotOrderSellTx({ connection, signer: publicKey, order: orderPubkey, orderOwner });
+        const signature = await signAndSendOnChain(tx);
+        return { cancelled: order.id, signature, onChain: true };
+      }
+
+      const orderId = typeof order === 'string' ? order : order?.id;
       const currentWallet = await ensureApproved();
       return await apiFetch<{ cancelled: string; portfolio: Portfolio }>(
         `/api/orders/${orderId}`,
@@ -415,7 +587,7 @@ export function useProgram() {
     } finally {
       setLoadingCount(c => Math.max(0, c - 1));
     }
-  }, [ensureApproved]);
+  }, [ensureApproved, publicKey, connection, signAndSendOnChain]);
 
   const fetchTransactions = useCallback(async () => {
     try {

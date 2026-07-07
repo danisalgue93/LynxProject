@@ -21,22 +21,31 @@ cripto/
 | Instruction | Who can call | Description |
 |-------------|-------------|-------------|
 | `initialize_protocol` | Admin (once) | Deploys config PDA, creates LYNX mint and vaults |
-| `transfer_admin` | Admin | Rotates the protocol admin keypair |
+| `transfer_admin` | Admin (solo antes de `init_multisig`) | Rotates the protocol admin keypair. Disabled once the multisig governance is initialized. |
+| `init_multisig` | Admin (once) | Bootstraps the M-of-N governance multisig (e.g. 2-of-2). Disables single-key `transfer_admin`/admin-resolve from then on. |
+| `propose_action` | Multisig signer | Proposes a governance action (`TransferAdmin`, `SetPaused`, `AddSigner`, `RemoveSigner`, `SetThreshold`, `ResolveMarketAdmin`) |
+| `approve_action` | Multisig signer | Approves a pending governance proposal |
+| `cancel_proposal` | Proposer, or any signer after expiry | Cancels a pending proposal |
+| `execute_action` | Anyone, after threshold + timelock | Executes a config/multisig-only governance action |
+| `execute_resolve_market_admin` | Anyone, after threshold + timelock | Executes an approved `ResolveMarketAdmin` proposal (moves funds) |
 | `create_market` | Admin | Creates a prediction market on-chain |
-| `buy_position_sol` | Any user | Buys a YES/NO/DRAW position with SOL |
-| `buy_position_lynx_with_burn` | Any user | Buys a position with LYNX (15% burned) |
+| `buy_position_sol` | Any user | Buys a YES/NO/DRAW position with SOL (blocked while `config.paused`) |
+| `buy_position_lynx_with_burn` | Any user | Buys a position with LYNX (15% burned) (blocked while `config.paused`) |
 | `cut_off_market` | Anyone | Permissionlessly advances market to CutOff status after `cutoff_ts` |
-| `resolve_market_oracle` | Oracle authority | Resolves market after `resolve_ts` |
-| `resolve_market_admin` | Admin | Resolves market after oracle timeout (`oracle_deadline`) |
+| `propose_resolution` | Oracle authority | Proposes a result after `resolve_ts`; market moves to `PendingResolution`, no funds move yet |
+| `dispute_resolution` | Any multisig signer | Within the 24h dispute window, reverts a proposed result back to `CutOff` |
+| `finalize_resolution` | Anyone (permissionless) | After the 24h dispute window elapses undisputed, actually moves funds and resolves the market |
 | `claim_market_sol` | Winner | Claims SOL payout from resolved market |
 | `mint_lynx_distribution` | Any participant | Claims LYNX participation reward after market resolves |
 | `stake_lynx` | Any user | Stakes LYNX tokens for SOL rewards |
 | `unstake_lynx` | Staker | Withdraws staked LYNX |
 | `claim_staking_rewards` | Staker | Claims accumulated SOL rewards |
-| `create_duel` | Any user | Creates a 1v1 or 1v1vProtocol duel |
-| `accept_duel` | Any user | Accepts an open OneVOne duel |
+| `create_duel` | Any user | Creates a 1v1 or 1v1vProtocol duel (blocked while `config.paused`) |
+| `accept_duel` | Any user | Accepts an open OneVOne duel (blocked while `config.paused`) |
 | `resolve_duel_sol` | Anyone | Permissionlessly resolves a duel once market is resolved |
 | `resolve_protocol_duel` | Anyone | Resolves a 1v1vProtocol duel |
+
+> **Nota (gobernanza / disputa):** `resolve_market_oracle` y `resolve_market_admin` (clave unica) ya no existen. Fueron reemplazadas por un flujo tipo oraculo-optimista (propose → dispute window de 24h → finalize) y por una gobernanza multisig M-de-N para el fallback admin, para eliminar el punto unico de fallo de resolucion.
 
 ### Fee structure
 

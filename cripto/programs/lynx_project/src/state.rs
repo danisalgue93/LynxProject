@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use crate::constants::MAX_MULTISIG_SIGNERS;
 
 #[account]
 pub struct ProtocolConfig {
@@ -14,10 +15,97 @@ pub struct ProtocolConfig {
     pub emergency_delay: i64,
     pub bump: u8,
     pub rewards_vault_bump: u8,
+    // Interruptor de emergencia. Cuando esta en `true` se bloquean nuevas
+    // operaciones de riesgo (compra de posiciones, creacion/aceptacion de
+    // duelos, minteo de distribucion LYNX). Los claims/retiros de fondos ya
+    // resueltos y la cancelacion de duelos NO se bloquean, para que los
+    // usuarios siempre puedan recuperar lo que ya es suyo. Solo se puede
+    // cambiar via una GovernanceProposal (multisig), nunca por una sola clave.
+    pub paused: bool,
+    // Marca si este ProtocolConfig ya tiene un Multisig inicializado
+    // (init_multisig es una operacion de una sola vez).
+    pub multisig_initialized: bool,
 }
 
 impl ProtocolConfig {
-    pub const LEN: usize = 8 + 32 * 5 + 8 * 4 + 16 + 1 * 2 + 33;
+    pub const LEN: usize = 8 + 32 * 5 + 8 * 4 + 16 + 1 * 2 + 1 + 1 + 31;
+}
+
+#[account]
+pub struct Multisig {
+    pub config: Pubkey,
+    pub signers: [Pubkey; MAX_MULTISIG_SIGNERS],
+    pub signer_count: u8,
+    pub threshold: u8,
+    // Contador incremental para derivar PDAs de propuestas unicas
+    // (seeds = [b"gov_proposal", multisig.key(), proposal_seq.to_le_bytes()]).
+    pub proposal_seq: u64,
+    pub bump: u8,
+}
+
+impl Multisig {
+    pub const LEN: usize = 8 + 32 + 32 * MAX_MULTISIG_SIGNERS + 1 + 1 + 8 + 1 + 16;
+}
+
+// Accion concreta que una GovernanceProposal ejecuta una vez alcanzado el
+// umbral de aprobaciones y pasado el timelock. Mantenemos esto como un enum
+// cerrado (en vez de instrucciones arbitrarias) para que cada firmante sepa
+// exactamente que esta aprobando, sin poder ser enganado por calldata opaca.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+pub enum GovernanceAction {
+    TransferAdmin { new_admin: Pubkey },
+    SetPaused { paused: bool },
+    AddSigner { signer: Pubkey },
+    RemoveSigner { signer: Pubkey },
+    SetThreshold { threshold: u8 },
+    // Resolucion de fallback cuando el oraculo nunca propuso un resultado
+    // dentro de ORACLE_TIMEOUT_SECONDS. Requiere multisig completo en vez de
+    // una sola clave admin (ver C3 del informe de auditoria).
+    ResolveMarketAdmin { market: Pubkey, result: Outcome },
+}
+
+impl GovernanceAction {
+    // Cota superior conservadora del tamano serializado (1 byte de
+    // discriminante + el mayor payload posible, que es
+    // ResolveMarketAdmin{Pubkey(32) + Outcome(1)}).
+    pub const MAX_LEN: usize = 1 + 32 + 1 + 8;
+}
+
+#[account]
+pub struct GovernanceProposal {
+    pub multisig: Pubkey,
+    pub proposer: Pubkey,
+    pub proposal_id: u64,
+    pub action: GovernanceAction,
+    // Lista de pubkeys que ya aprobaron. Pubkey::default() = hueco vacio.
+    pub approvals: [Pubkey; MAX_MULTISIG_SIGNERS],
+    pub approval_count: u8,
+    // 0 mientras no se alcanza el umbral; en cuanto approval_count >=
+    // threshold se fija a `now` una sola vez, arrancando el timelock de
+    // GOVERNANCE_EXECUTION_DELAY_SECONDS antes de poder ejecutar.
+    pub threshold_reached_ts: i64,
+    pub executed: bool,
+    pub cancelled: bool,
+    pub created_ts: i64,
+    pub expires_ts: i64,
+    pub bump: u8,
+}
+
+impl GovernanceProposal {
+    pub const LEN: usize = 8
+        + 32
+        + 32
+        + 8
+        + GovernanceAction::MAX_LEN
+        + 32 * MAX_MULTISIG_SIGNERS
+        + 1
+        + 8
+        + 1
+        + 1
+        + 8
+        + 8
+        + 1
+        + 24;
 }
 
 #[account]
@@ -70,6 +158,15 @@ pub struct Market {
     // pool has been swept to the treasury so it doesn't stay stuck in vault /
     // market_lynx_vault forever. Guards against sweeping the same market twice.
     pub swept: bool,
+    // --- Disputa de resolucion (ver constants::DISPUTE_WINDOW_SECONDS) ---
+    // Resultado propuesto por propose_resolution() (oraculo) o por la
+    // ejecucion de una GovernanceProposal::ResolveMarketAdmin (multisig).
+    // Outcome::Unresolved mientras no hay ninguna propuesta pendiente.
+    pub proposed_result: Outcome,
+    // Timestamp en el que se registro proposed_result. finalize_resolution()
+    // solo puede ejecutarse cuando now >= proposed_ts + DISPUTE_WINDOW_SECONDS
+    // y nadie la ha disputado con dispute_resolution() antes de ese momento.
+    pub proposed_ts: i64,
 }
 
 impl Market {
@@ -87,9 +184,11 @@ impl Market {
         + 1
         + 1
         + 1
-        + 8    // mint_ratio_bps (carved out of the reserve below; total LEN unchanged)
-        + 1    // swept (carved out of the reserve below; total LEN unchanged)
-        + 23;  // remaining reserve
+        + 8    // mint_ratio_bps
+        + 1    // swept
+        + 1    // proposed_result
+        + 8    // proposed_ts
+        + 14;  // remaining reserve (23 - 1 - 8, para no romper offsets de cuentas ya existentes en devnet; en un despliegue nuevo esto es irrelevante)
 }
 
 #[account]
@@ -171,6 +270,13 @@ pub enum MarketStatus {
     Open,
     Active,
     CutOff,
+    // Un resultado fue propuesto (por el oraculo via propose_resolution, o
+    // por una GovernanceProposal::ResolveMarketAdmin ya ejecutada) pero
+    // todavia esta dentro de la ventana de disputa: ningun fondo se ha
+    // movido todavia. dispute_resolution() puede devolver el mercado a
+    // CutOff; finalize_resolution() lo lleva a Resolved cuando pasa la
+    // ventana sin disputa.
+    PendingResolution,
     Resolved,
     Expired,
 }
@@ -207,3 +313,120 @@ pub enum DuelStatus {
     Resolved,
     Cancelled,
 }
+
+// --- Ordenes limite de mercados de prediccion (100% on-chain) ---
+// Reemplazan al "orderbook" simulado del backend para mercados de prediccion.
+// No hay contraparte: una orden limite se ejecuta contra el precio implicito
+// del pool del mercado (yes_total/no_total/draw_total sobre pool_total),
+// exactamente como hacia matchPredictionOrders() en el backend, pero ahora
+// los fondos viven en un escrow on-chain propiedad del programa desde el
+// momento en que se crea la orden, nunca en un balance interno custodiado.
+// Cualquiera puede disparar execute_prediction_limit_order_* (es un "keeper"
+// permissionless, como el crank de cut_off_market): el programa valida la
+// condicion de precio on-chain, asi que un keeper malicioso no puede forzar
+// un fill a mal precio.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+pub enum PredictionOrderStatus {
+    Open,
+    Filled,
+    Cancelled,
+}
+
+#[account]
+pub struct PredictionOrder {
+    pub id: u64,
+    pub owner: Pubkey,
+    pub market: Pubkey,
+    pub outcome: Outcome,
+    // Monto bruto puesto en el escrow al crear la orden (para LYNX, esto es
+    // ANTES del burn de LYNX_EVENT_BURN_BPS, que se aplica en el momento del
+    // fill, igual que hacia el backend).
+    pub amount: u64,
+    // Precio limite como probabilidad implicita en basis points (0..10000).
+    // La orden solo se ejecuta cuando el precio implicito ACTUAL del outcome
+    // es estrictamente menor que este limite (comprando mas barato de lo
+    // pedido). Un mercado con pool_total == 0 nunca cumple la condicion
+    // (evita que una orden se auto-rellene en un mercado recien creado sin
+    // trading real, igual que excluia el backend).
+    pub limit_price_bps: u64,
+    pub status: PredictionOrderStatus,
+    pub created_ts: i64,
+    pub expires_ts: i64,
+    pub bump: u8,
+    pub escrow_bump: u8,
+}
+
+impl PredictionOrder {
+    pub const LEN: usize = 8 + 8 + 32 + 32 + 1 + 8 + 8 + 1 + 8 + 8 + 1 + 1 + 16;
+}
+
+// Escrow en lamports para ordenes limite de mercados en SOL. Simple cuenta
+// marcadora (como MarketVault/DuelVault): sus lamports por encima del minimo
+// de rent SON el monto depositado por el usuario al crear la orden.
+#[account]
+pub struct PredictionOrderEscrowSol {
+    pub order: Pubkey,
+    pub bump: u8,
+}
+
+impl PredictionOrderEscrowSol {
+    pub const LEN: usize = 8 + 32 + 1 + 16;
+}
+
+// --- Libro de ordenes LYNX/SOL on-chain (spot, contraparte real) ---
+// A diferencia de las ordenes de mercados de prediccion (que se llenan
+// contra el pool, sin contraparte), aqui SI hay dos usuarios reales en cada
+// fill: un comprador y un vendedor. match_spot_orders() es permissionless
+// (cualquiera puede cranquearlo, como el keeper del backend) pero el
+// programa valida on-chain que los precios crucen antes de mover un solo
+// lamport/micro-LYNX, asi que un keeper no puede forzar un mal fill.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+pub enum SpotOrderSide {
+    Buy,
+    Sell,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+pub enum SpotOrderStatus {
+    Open,
+    Filled,
+    Cancelled,
+}
+
+#[account]
+pub struct SpotOrder {
+    pub id: u64,
+    pub owner: Pubkey,
+    pub side: SpotOrderSide,
+    // Precio en lamports por micro-LYNX, escalado por PRICE_SCALE (ver
+    // constants.rs) para poder representar precios fraccionarios sin usar
+    // floats: sol_amount = fill_amount * price_scaled / PRICE_SCALE.
+    pub price_scaled: u128,
+    // Tamano original de la orden en micro-LYNX (para BUY, esto es cuanto
+    // LYNX quiere comprar; para SELL, cuanto LYNX quiere vender).
+    pub amount: u64,
+    // Cuanto queda sin llenar. Al llegar a 0, status pasa a Filled.
+    pub remaining: u64,
+    pub status: SpotOrderStatus,
+    pub created_ts: i64,
+    pub expires_ts: i64,
+    pub bump: u8,
+    pub escrow_bump: u8,
+}
+
+impl SpotOrder {
+    pub const LEN: usize = 8 + 8 + 32 + 1 + 16 + 8 + 8 + 1 + 8 + 8 + 1 + 1 + 16;
+}
+
+// Escrow en lamports para ordenes SpotOrder::Buy (guarda el SOL con el que se
+// pagara el LYNX comprado). Mismo patron marcador que PredictionOrderEscrowSol.
+#[account]
+pub struct SpotOrderEscrowSol {
+    pub order: Pubkey,
+    pub bump: u8,
+}
+
+impl SpotOrderEscrowSol {
+    pub const LEN: usize = 8 + 32 + 1 + 16;
+}
+

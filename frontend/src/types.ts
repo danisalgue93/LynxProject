@@ -75,6 +75,13 @@ export interface Order {
   amount: number; // number of tokens
   price: number; // SOL per token
   createdAt: number;
+  // Presentes solo para ordenes limite de mercados de prediccion on-chain
+  // (ver backend/src/chain.ts). Ausentes para el orderbook LYNX/SOL, que
+  // sigue siendo off-chain por ahora.
+  onChain?: boolean;
+  onChainOrderPubkey?: string;
+  onChainMarket?: string;
+  currency?: 'SOL' | 'LYNX';
 }
 
 export interface Proposal {
