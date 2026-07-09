@@ -479,6 +479,9 @@ export async function buildClaimMarketLynxTx(params: {
         { pubkey: claimantAta.address, isSigner: false, isWritable: true },
         { pubkey: treasuryAta, isSigner: false, isWritable: true },
         { pubkey: claimant, isSigner: true, isWritable: false },
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      ],
+      data: IX.claimMarketLynx,
     })
   );
   return buildTx(instructions, claimant);

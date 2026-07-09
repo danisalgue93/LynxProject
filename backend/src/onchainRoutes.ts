@@ -16,7 +16,7 @@ import {
   listOpenSpotOrders,
   forceRefresh,
   getIndexerStatus,
-} from './chain';
+} from './chain.js';
 
 export const onchainRouter = Router();
 

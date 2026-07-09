@@ -18,7 +18,7 @@ import { DEV_WALLET, TREASURY_WALLET, SOLANA_RPC_URL } from './economy.js';
 import { createPersistence } from './persistence.js';
 import { redis } from './redisClient.js';
 import { LynxState } from './state.js';
-import type { Currency, OrderSide, Position } from './types.js';
+import type { Currency, OrderSide, OrderStatus, Position } from './types.js';
 import { generateToken, generateRefreshToken, verifyToken, verifyRefreshToken, hashPassword, hashPasswordSync, verifyPassword, extractToken } from './auth.js';
 import { sendVerificationEmail, sendPasswordResetEmail, isEmailConfigured } from './email.js';
 import { onchainRouter } from './onchainRoutes.js';
@@ -328,7 +328,7 @@ function createSimpleRateLimit({ windowMs, max }: { windowMs: number; max: numbe
         .incr(redisKey)
         .pttl(redisKey)
         .exec()
-        .then((results) => {
+        .then((results: [Error | null, unknown][] | null) => {
           if (!results) throw new Error('redis multi returned null');
           const [[incrErr, count], [ttlErr, ttl]] = results as [
             [Error | null, number],
@@ -347,7 +347,7 @@ function createSimpleRateLimit({ windowMs, max }: { windowMs: number; max: numbe
           }
           next();
         })
-        .catch((err) => {
+        .catch((err: unknown) => {
           // Redis unreachable mid-flight — fail open to the in-memory limiter
           // rather than blocking all traffic on a transient infra issue.
           console.error('[rate-limit] redis error, falling back to memory:', err instanceof Error ? err.message : err);
@@ -1589,17 +1589,23 @@ app.get('/api/orderbook', (req, res) => {
   const book = store.getOrderBook(pair, marketId);
 
   if (pair === 'LYNX/SOL' && !marketId) {
-    const onChainSpotOrders = listOpenSpotOrders().map((o) => ({
-      id: o.pubkey,
-      owner: o.owner,
-      side: o.side === 'Buy' ? 'BUY' : 'SELL',
-      amount: Number(o.remaining) / 1_000_000,
-      price: Number(o.priceScaled) / 1e12, // ver server.ts/frontend lynxProgram.ts: priceScaled -> SOL por LYNX
-      createdAt: o.createdTs * 1000,
-      onChain: true,
-      onChainOrderPubkey: o.pubkey,
-      currency: 'LYNX',
-    }));
+    const onChainSpotOrders = listOpenSpotOrders().map((o) => {
+      const amount = Number(o.remaining) / 1_000_000;
+      return {
+        id: o.pubkey,
+        pair: 'LYNX/SOL',
+        owner: o.owner,
+        side: (o.side === 'Buy' ? 'BUY' : 'SELL') as OrderSide,
+        amount,
+        remaining: amount,
+        price: Number(o.priceScaled) / 1e12, // ver server.ts/frontend lynxProgram.ts: priceScaled -> SOL por LYNX
+        status: 'OPEN' as OrderStatus,
+        createdAt: o.createdTs * 1000,
+        onChain: true,
+        onChainOrderPubkey: o.pubkey,
+        currency: 'LYNX' as Currency,
+      };
+    });
     book.bids = [...(book.bids || []), ...onChainSpotOrders.filter((o) => o.side === 'BUY')];
     book.asks = [...(book.asks || []), ...onChainSpotOrders.filter((o) => o.side === 'SELL')];
   }
@@ -1607,25 +1613,35 @@ app.get('/api/orderbook', (req, res) => {
   if (marketId) {
     const market = store.getMarket(marketId);
     if (market?.onChainMarket) {
-      const onChainOrders = listOpenOrdersForMarket(market.onChainMarket).map((o) => ({
-        id: o.pubkey,
-        owner: o.owner,
-        position: fromOnChainOutcomeName(o.outcome),
-        amount: Number(o.amount) / (market.currency === 'LYNX' ? 1_000_000 : 1_000_000_000),
-        price: o.limitPriceBps / 10_000,
-        status: 'OPEN',
-        createdAt: o.createdTs * 1000,
-        onChain: true,
-        onChainOrderPubkey: o.pubkey,
-        onChainMarket: market.onChainMarket,
-        currency: market.currency,
-      }));
+      const onChainOrders = listOpenOrdersForMarket(market.onChainMarket).map((o) => {
+        const amount = Number(o.amount) / (market.currency === 'LYNX' ? 1_000_000 : 1_000_000_000);
+        return {
+          id: o.pubkey,
+          pair: marketId,
+          owner: o.owner,
+          // Las ordenes on-chain de mercados de prediccion no tienen un "side"
+          // BUY/SELL real (se llenan contra el pool, no contra una
+          // contraparte) — se guarda como BUY por convencion para encajar en
+          // el tipo Order comun; la UI las distingue por `position` en su lugar.
+          side: 'BUY' as OrderSide,
+          position: fromOnChainOutcomeName(o.outcome) ?? undefined,
+          amount,
+          remaining: amount,
+          price: o.limitPriceBps / 10_000,
+          status: 'OPEN' as OrderStatus,
+          createdAt: o.createdTs * 1000,
+          onChain: true,
+          onChainOrderPubkey: o.pubkey,
+          onChainMarket: market.onChainMarket,
+          currency: market.currency,
+        };
+      });
       // Las ordenes on-chain de mercados de prediccion no distinguen "bid/ask"
       // como el CLOB de LYNX/SOL (no hay contraparte, se llenan contra el pool):
       // las mostramos todas en bids para YES/A y asks para NO/B, que es lo que
       // consume el resto de la UI del orderbook para pintar dos columnas.
-      book.bids = [...(book.bids || []), ...onChainOrders.filter((o: any) => o.position === 'YES' || o.position === 'DRAW')];
-      book.asks = [...(book.asks || []), ...onChainOrders.filter((o: any) => o.position === 'NO')];
+      book.bids = [...(book.bids || []), ...onChainOrders.filter((o) => o.position === 'YES' || o.position === 'DRAW')];
+      book.asks = [...(book.asks || []), ...onChainOrders.filter((o) => o.position === 'NO')];
     }
   }
 
