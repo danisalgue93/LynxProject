@@ -1,5 +1,17 @@
 # Lynx Crypto — Solana / Anchor
 
+## Modelo de confianza (custodia) — léelo antes de todo lo demás
+
+- **Mercados de predicción y libro LYNX/SOL:** no-custodial. Los fondos viven en cuentas (PDAs) propiedad del programa Anchor desde el momento en que compras o pones una orden — nunca en una wallet de un operador. Tú firmas cada acción con tu propia wallet.
+- **Duelos, staking y DAO:** todavía **custodial**, gestionados por el backend (`backend/`) en un balance interno. Esto es una decisión de alcance temporal, no un descuido — ver `auditoria_lynx_project.md` para el plan de migración pendiente.
+- **Resolución de mercados on-chain:** modelo tipo oráculo-optimista — el oráculo propone, hay 24h de ventana de disputa, y un multisig de administradores (M-de-N, hoy 2-de-2) es el único fallback si el oráculo nunca responde. Ninguna clave única puede mover fondos de un mercado resuelto por su cuenta.
+- **Créditos manuales de saldo (INTERNAL/CARD) y resolución de mercados legacy off-chain:** requieren aprobación de DOS administradores distintos (`backend/src/creditApprovals.ts`); ningún token de API compartido puede autorizarlos por sí solo.
+- **Panel de administración:** cada administrador del multisig corre su propia instancia, con su propia clave — nunca se comparte una misma clave entre dos personas.
+
+Si vas a integrar contra este proyecto (o auditarlo), asume el modelo de arriba tal cual está, no lo que "debería" ser un proyecto on-chain.
+
+---
+
 ## Architecture
 
 ```

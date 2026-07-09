@@ -167,6 +167,13 @@ pub struct Market {
     // solo puede ejecutarse cuando now >= proposed_ts + DISPUTE_WINDOW_SECONDS
     // y nadie la ha disputado con dispute_resolution() antes de ese momento.
     pub proposed_ts: i64,
+    // --- Trazabilidad (M3 del informe de auditoria) ---
+    // Quien firmo la instruccion que efectivamente movio los fondos y marco
+    // el mercado como Resolved: el oracle_authority si vino de
+    // finalize_resolution(), o la cuenta GovernanceProposal si vino del
+    // fallback admin via execute_resolve_market_admin. Pubkey::default()
+    // mientras el mercado no este resuelto.
+    pub resolved_by: Pubkey,
 }
 
 impl Market {
@@ -188,7 +195,8 @@ impl Market {
         + 1    // swept
         + 1    // proposed_result
         + 8    // proposed_ts
-        + 14;  // remaining reserve (23 - 1 - 8, para no romper offsets de cuentas ya existentes en devnet; en un despliegue nuevo esto es irrelevante)
+        + 32   // resolved_by
+        + 14;  // reserva restante
 }
 
 #[account]

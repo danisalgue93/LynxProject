@@ -228,6 +228,7 @@ pub mod lynx_project {
             LynxError::InvalidStatus
         );
 
+        let proposal_key = ctx.accounts.proposal.key();
         finalize_market_and_fees(
             &mut ctx.accounts.config,
             &mut ctx.accounts.market,
@@ -235,6 +236,7 @@ pub mod lynx_project {
             &ctx.accounts.rewards_vault.to_account_info(),
             &ctx.accounts.treasury.to_account_info(),
             result,
+            proposal_key,
         )?;
 
         proposal.executed = true;
@@ -296,6 +298,12 @@ pub mod lynx_project {
         // Frozen at resolution time in finalize_market_and_fees; 0 means "not resolved yet".
         market.mint_ratio_bps = 0;
         market.swept = false;
+        // proposed_result/proposed_ts/resolved_by quedan en su valor por
+        // defecto de cuenta recien inicializada (zero-bytes = Outcome::Unresolved,
+        // 0, Pubkey::default()), pero se dejan explicitos aqui por claridad.
+        market.proposed_result = Outcome::Unresolved;
+        market.proposed_ts = 0;
+        market.resolved_by = Pubkey::default();
 
         let vault = &mut ctx.accounts.vault;
         vault.market = market.key();
@@ -940,6 +948,10 @@ pub mod lynx_project {
             LynxError::DisputeWindowNotElapsed
         );
         let result = ctx.accounts.market.proposed_result;
+        // resolved_by = quien PROPUSO el resultado (el oraculo del mercado), no
+        // quien dispara esta instruccion permissionless — asi el registro
+        // refleja quien realmente decidio el resultado, no quien pago el gas.
+        let resolved_by = ctx.accounts.market.oracle_authority;
         finalize_market_and_fees(
             &mut ctx.accounts.config,
             &mut ctx.accounts.market,
@@ -947,6 +959,7 @@ pub mod lynx_project {
             &ctx.accounts.rewards_vault.to_account_info(),
             &ctx.accounts.treasury.to_account_info(),
             result,
+            resolved_by,
         )
     }
 
@@ -1996,7 +2009,7 @@ pub struct MintLynxDistribution<'info> {
     pub position: Account<'info, UserPosition>,
     #[account(mut, address = config.lynx_mint)]
     pub lynx_mint: Account<'info, Mint>,
-    #[account(mut)]
+    #[account(mut, constraint = holder_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub holder_lynx_account: Account<'info, TokenAccount>,
     #[account(mut, constraint = treasury_lynx_account.owner == config.treasury @ LynxError::Unauthorized)]
     pub treasury_lynx_account: Account<'info, TokenAccount>,
@@ -2186,6 +2199,7 @@ fn finalize_market_and_fees<'info>(
     rewards_vault: &AccountInfo<'info>,
     treasury: &AccountInfo<'info>,
     result: Outcome,
+    resolved_by: Pubkey,
 ) -> Result<()> {
     require!(
         market.status == MarketStatus::CutOff
@@ -2197,6 +2211,7 @@ fn finalize_market_and_fees<'info>(
     market.status = MarketStatus::Resolved;
     market.result = result;
     market.resolved_ts = Clock::get()?.unix_timestamp;
+    market.resolved_by = resolved_by;
     market.winning_total = match result {
         Outcome::Yes => market.yes_total,
         Outcome::No => market.no_total,

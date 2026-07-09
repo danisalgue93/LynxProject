@@ -22,7 +22,8 @@ import type { Currency, OrderSide, Position } from './types.js';
 import { generateToken, generateRefreshToken, verifyToken, verifyRefreshToken, hashPassword, hashPasswordSync, verifyPassword, extractToken } from './auth.js';
 import { sendVerificationEmail, sendPasswordResetEmail, isEmailConfigured } from './email.js';
 import { onchainRouter } from './onchainRoutes.js';
-import { startChainIndexer, getIndexedMarket, listOpenOrdersForMarket, listPositionsForOwner, listOpenSpotOrders, fromOnChainOutcomeName } from './chain.js';
+import { startChainIndexer, getIndexedMarket, listOpenOrdersForMarket, listPositionsForOwner, listOpenSpotOrders, fromOnChainOutcomeName, verifyOnChainMarketCreation } from './chain.js';
+import { proposeCredit, approveCredit, getCreditRequest, markExecuted, isReadyToExecute, listPendingCredits, proposeMarketResolution, approveMarketResolution, getMarketResolutionRequest, markResolutionExecuted, isResolutionReadyToExecute, listPendingMarketResolutions } from './creditApprovals.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -576,6 +577,21 @@ function requireAdmin(req: any, res: express.Response) {
     return false;
   }
   return true;
+}
+
+// Version estricta de requireAdmin SIN bypass de ADMIN_API_TOKEN: nunca debe
+// usarse para nada que pueda crear o mover dinero (ver A1/A2 de la auditoria
+// — un token estatico compartido no debe poder por si solo acreditar saldo).
+// Devuelve el userId del admin autenticado (para exigir aprobacion dual con
+// una cuenta DISTINTA), o null si la request no esta autorizada.
+function requireAdminSessionOnly(req: any, res: express.Response): string | null {
+  if (!requireAuth(req, res)) return null;
+  const user = currentUser(req);
+  if (user?.role !== 'admin' && !isAdminWallet(user?.walletAddress)) {
+    res.status(403).json({ error: 'Admin role required (session-based, API tokens are not accepted for money-moving actions)' });
+    return null;
+  }
+  return req.user.userId as string;
 }
 
 function requireWalletBody(req: express.Request, res: express.Response, wallet?: string) {
@@ -1280,7 +1296,7 @@ app.get('/api/markets/:id', (req, res) => {
 });
 
 app.post('/api/markets', asyncRoute(async (req, res) => {
-  if (!requireAdmin(req, res)) return;
+  if (!requireAdminSessionOnly(req, res)) return;
 
   const body = z.object({
     id: z.string().optional(),
@@ -1293,10 +1309,31 @@ app.post('/api/markets', asyncRoute(async (req, res) => {
     cutoffAt: z.number().optional(),
     resolveAt: z.number().optional(),
     signature: z.string().min(8),
-    onChainMarket: z.string().optional()
+    onChainMarket: z.string().optional(),
+    // Antes, onChainMarket/signature se aceptaban como texto libre sin
+    // verificar nada contra la blockchain (hallazgo A3 de la auditoria).
+    // Ahora, cualquier mercado que no marque legacy=true DEBE traer un
+    // onChainMarket real y se verifica contra el RPC antes de crearse. Usa
+    // legacy=true solo para el flujo de transicion off-chain que se esta
+    // retirando progresivamente.
+    legacy: z.boolean().default(false),
   }).parse(req.body);
 
   if (!requireNonEmptySignature(req, res)) return;
+
+  let onChainMarket: string | undefined;
+  if (!body.legacy) {
+    if (!body.onChainMarket) {
+      res.status(400).json({ error: 'onChainMarket is required unless legacy=true is explicitly set. Create the market on-chain first via create_market, then pass its account pubkey here.' });
+      return;
+    }
+    const verification = await verifyOnChainMarketCreation({ marketPubkey: body.onChainMarket, signature: body.signature, expectedTitle: body.title });
+    if (!verification.ok) {
+      res.status(400).json({ error: `On-chain market verification failed: ${verification.error}` });
+      return;
+    }
+    onChainMarket = body.onChainMarket;
+  }
 
   const now = Date.now();
   const cutoffAt = body.cutoffAt || now + 1000 * 60 * 60 * 24;
@@ -1325,7 +1362,7 @@ app.post('/api/markets', asyncRoute(async (req, res) => {
     currency: body.currency,
     oracleId: body.oracleId,
     oracleMode: 'MANUAL_DEV',
-    onChainMarket: body.onChainMarket || body.signature,
+    onChainMarket,
     onChainSignature: body.signature,
     createdBy: currentUser(req)?.id || 'admin-api-token',
     createdAt: now,
@@ -1339,6 +1376,24 @@ app.post('/api/markets', asyncRoute(async (req, res) => {
   res.status(201).json(market);
 }));
 
+// Cache de idempotencia simple para /api/markets/:id/trades (M6 de la
+// auditoria): un doble-click o un reintento automatico del cliente ante un
+// timeout podia ejecutar executePredictionTrade() dos veces. Si el cliente
+// manda un clientRequestId, una segunda request con el mismo id dentro de la
+// ventana devuelve el resultado ya calculado en vez de repetir la operacion.
+// En memoria a proposito: el peor caso de perderlo en un reinicio es que un
+// reintento MUY tardio no se deduplique, no que se pierda ni se duplique
+// dinero silenciosamente (executePredictionTrade sigue siendo la unica
+// fuente de verdad para el propio movimiento).
+const tradeIdempotencyCache = new Map<string, { result: any; expiresAt: number }>();
+const TRADE_IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
+function purgeTradeIdempotencyCache() {
+  const now = Date.now();
+  for (const [key, entry] of tradeIdempotencyCache) {
+    if (entry.expiresAt < now) tradeIdempotencyCache.delete(key);
+  }
+}
+
 app.post('/api/markets/:id/trades', tradingRateLimit, asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
   const body = z.object({
@@ -1346,12 +1401,20 @@ app.post('/api/markets/:id/trades', tradingRateLimit, asyncRoute(async (req, res
     amount: z.number().positive(),
     position: positionSchema,
     tradeType: z.enum(['limit', 'swap', 'market']).default('swap'),
-    limitPrice: z.number().positive().optional()
+    limitPrice: z.number().positive().optional(),
+    clientRequestId: z.string().max(100).optional(),
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   if (!requireApprovedWallet(res, wallet)) return;
+
+  purgeTradeIdempotencyCache();
+  const idempotencyKey = body.clientRequestId ? `${wallet}:${req.params.id}:${body.clientRequestId}` : undefined;
+  if (idempotencyKey) {
+    const cached = tradeIdempotencyCache.get(idempotencyKey);
+    if (cached) { res.json(cached.result); return; }
+  }
 
   const result = store.executePredictionTrade({
     wallet,
@@ -1361,6 +1424,9 @@ app.post('/api/markets/:id/trades', tradingRateLimit, asyncRoute(async (req, res
     tradeType: body.tradeType,
     limitPrice: body.limitPrice
   });
+  if (idempotencyKey) {
+    tradeIdempotencyCache.set(idempotencyKey, { result, expiresAt: Date.now() + TRADE_IDEMPOTENCY_TTL_MS });
+  }
   await persist();
   emit('market:updated', 'market' in result ? result.market : store.getMarket(req.params.id));
   // A swap/market trade can move the pool price into range of resting
@@ -1370,28 +1436,72 @@ app.post('/api/markets/:id/trades', tradingRateLimit, asyncRoute(async (req, res
   res.json(result);
 }));
 
+// Antes esta ruta resolvia el mercado al instante con una sola sesion de
+// admin (o el ADMIN_API_TOKEN compartido) — el mismo problema de fondo que
+// C3 en el informe de auditoria, aqui para mercados LEGACY (sin respaldo
+// on-chain). Ahora es un flujo de 3 pasos igual que /api/admin/credits/*:
+// proponer -> que un admin DISTINTO apruebe -> ejecutar. Nunca acepta el
+// token compartido (requireAdminSessionOnly).
 app.post('/api/admin/markets/:id/resolve', asyncRoute(async (req, res) => {
-  if (!requireAdmin(req, res)) return;
+  const adminId = requireAdminSessionOnly(req, res);
+  if (!adminId) return;
 
   const body = z.object({
-    result: positionSchema,
+    action: z.enum(['propose', 'approve', 'execute']).default('propose'),
+    result: positionSchema.optional(),
     source: z.enum(['oracle', 'manual']).default('manual'),
-    confirmation: z.string().optional()
+    confirmation: z.string().optional(),
+    requestId: z.string().optional(),
   }).parse(req.body);
 
-  if (body.source === 'manual' && body.confirmation !== `RESOLVE ${body.result}`) {
-    res.status(400).json({ error: `Type RESOLVE ${body.result} to confirm` });
+  if (body.action === 'propose') {
+    if (!body.result) { res.status(400).json({ error: 'result is required to propose a resolution' }); return; }
+    if (body.source === 'manual' && body.confirmation !== `RESOLVE ${body.result}`) {
+      res.status(400).json({ error: `Type RESOLVE ${body.result} to confirm` });
+      return;
+    }
+    const request = proposeMarketResolution({ marketId: req.params.id, result: body.result, proposedBy: adminId });
+    res.status(201).json({ request });
     return;
   }
 
-  const market = store.resolveMarket({ marketId: req.params.id, result: body.result, source: body.source });
+  if (body.action === 'approve') {
+    if (!body.requestId) { res.status(400).json({ error: 'requestId is required' }); return; }
+    try {
+      const request = approveMarketResolution(body.requestId, adminId);
+      res.json({ request, readyToExecute: isResolutionReadyToExecute(request) });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+    return;
+  }
+
+  // execute
+  if (!body.requestId) { res.status(400).json({ error: 'requestId is required' }); return; }
+  const request = getMarketResolutionRequest(body.requestId);
+  if (!request) { res.status(404).json({ error: 'Resolution request not found or expired' }); return; }
+  if (request.marketId !== req.params.id) { res.status(400).json({ error: 'requestId does not match this market' }); return; }
+  if (request.executed) { res.status(400).json({ error: 'Already executed' }); return; }
+  if (!isResolutionReadyToExecute(request)) {
+    res.status(400).json({ error: `Needs approval from a second admin before it can be executed (${1 + request.approvals.length}/2 so far).` });
+    return;
+  }
+
+  const market = store.resolveMarket({ marketId: req.params.id, result: request.result as any, source: 'manual' });
+  markResolutionExecuted(request.id);
   await persist();
   emit('market:resolved', market);
-  res.json({ ok: true, market });
+  res.json({ ok: true, market, request });
 }));
 
+app.get('/api/admin/markets/:id/resolve/pending', (req, res) => {
+  const adminId = requireAdminSessionOnly(req, res);
+  if (!adminId) return;
+  res.json({ data: listPendingMarketResolutions().filter((r) => r.marketId === req.params.id) });
+});
+
 app.post('/api/admin/markets/:id/cutoff', asyncRoute(async (req, res) => {
-  if (!requireAdmin(req, res)) return;
+  if (!requireAdminSessionOnly(req, res)) return;
   const body = z.object({
     force: z.boolean().default(false),
     signature: z.string().optional()
@@ -1651,11 +1761,19 @@ app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
         return;
       }
   } else {
-      // INTERNAL / CARD deposits have no on-chain proof attached to them, so
-      // they must never be reachable by a regular authenticated user — only
-      // trusted server-side flows (e.g. an admin grant or a verified payment
-      // webhook) may credit a balance this way.
-    if (!requireAdmin(req, res)) return;
+      // INTERNAL / CARD deposits have no on-chain proof attached to them.
+      // A single admin (or worse, a leaked shared ADMIN_API_TOKEN) crediting
+      // an arbitrary amount here was flagged as a critical finding (A2 in the
+      // audit): it's the shortest path to "printing" spendable balance. This
+      // endpoint no longer accepts that path at all — manual credits must go
+      // through the dual-admin-approval flow below
+      // (POST /api/admin/credits/propose -> approve -> execute), which
+      // requires two DIFFERENT admin accounts and never accepts the shared
+      // API token.
+      res.status(410).json({
+        error: 'Manual INTERNAL/CARD crediting via this endpoint has been removed. Use POST /api/admin/credits/propose (requires approval from a second admin) instead.'
+      });
+      return;
   }
 
   const result = store.deposit({
@@ -1678,6 +1796,72 @@ app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
   emitPortfolioUpdated(wallet, result.portfolio);
   res.status(201).json(result);
 }));
+
+// --- Acreditacion manual de saldo (INTERNAL/CARD) con aprobacion dual ---
+// Ver backend/src/creditApprovals.ts. Ningun paso de este flujo acepta el
+// ADMIN_API_TOKEN compartido: requiere sesiones reales de DOS admins
+// distintos. El credito real solo se aplica en /execute, una vez juntadas
+// las 2 aprobaciones.
+app.post('/api/admin/credits/propose', asyncRoute(async (req, res) => {
+  const adminId = requireAdminSessionOnly(req, res);
+  if (!adminId) return;
+  const body = z.object({
+    wallet: z.string(),
+    currency: currencySchema,
+    amount: z.number().positive(),
+    reason: z.string().min(3),
+  }).parse(req.body);
+  const wallet = requireWalletBody(req, res, body.wallet);
+  if (!wallet) return;
+  try {
+    const request = proposeCredit({ wallet, currency: body.currency, amount: body.amount, reason: body.reason, proposedBy: adminId });
+    res.status(201).json(request);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+}));
+
+app.post('/api/admin/credits/:id/approve', asyncRoute(async (req, res) => {
+  const adminId = requireAdminSessionOnly(req, res);
+  if (!adminId) return;
+  try {
+    const request = approveCredit(req.params.id, adminId);
+    res.json({ request, readyToExecute: isReadyToExecute(request) });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+}));
+
+app.post('/api/admin/credits/:id/execute', asyncRoute(async (req, res) => {
+  const adminId = requireAdminSessionOnly(req, res);
+  if (!adminId) return;
+  const request = getCreditRequest(req.params.id);
+  if (!request) { res.status(404).json({ error: 'Credit request not found or expired' }); return; }
+  if (request.executed) { res.status(400).json({ error: 'Already executed' }); return; }
+  if (!isReadyToExecute(request)) {
+    res.status(400).json({ error: `Needs approval from a second admin before it can be executed (${1 + request.approvals.length}/2 so far).` });
+    return;
+  }
+
+  const result = store.deposit({
+    wallet: request.wallet,
+    currency: request.currency,
+    amount: request.amount,
+    provider: 'INTERNAL',
+    reference: `dual-approved:${request.id}:${request.reason}`,
+  });
+  markExecuted(request.id);
+  await persist();
+  emit('ledger:deposit', { wallet: request.wallet, ledgerEntry: result.ledgerEntry });
+  emitPortfolioUpdated(request.wallet, result.portfolio);
+  res.status(201).json({ request, result });
+}));
+
+app.get('/api/admin/credits/pending', (req, res) => {
+  const adminId = requireAdminSessionOnly(req, res);
+  if (!adminId) return;
+  res.json({ data: listPendingCredits() });
+});
 
 app.post('/api/ledger/withdraw', asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
@@ -1882,7 +2066,7 @@ app.get('/api/proposals', (_req, res) => {
 });
 
 app.post('/api/proposals', asyncRoute(async (req, res) => {
-  if (!requireAdmin(req, res)) return;
+  if (!requireAdminSessionOnly(req, res)) return;
   const body = z.object({
     title: z.string().min(4),
     description: z.string().optional(),

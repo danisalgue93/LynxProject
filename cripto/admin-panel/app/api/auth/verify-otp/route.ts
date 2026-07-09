@@ -3,6 +3,7 @@ import { deleteOtp, getOtp, setOtp } from '@/lib/otp-store';
 import { rateLimit } from '@/lib/rate-limit';
 import { clientKey, hashSecret, notifyRateLimitHit, timingSafeEqualText } from '@/lib/security';
 import { getSession } from '@/lib/session';
+import { verifyTotp, isTotpConfigured } from '@/lib/totp';
 
 export async function POST(req: NextRequest) {
   const key = clientKey(req);
@@ -12,9 +13,26 @@ export async function POST(req: NextRequest) {
   }
 
   const { otp } = await req.json();
+  if (typeof otp !== 'string') {
+    return NextResponse.json({ error: 'Invalid OTP' }, { status: 401 });
+  }
+
+  // Segundo factor de respaldo (M5 de la auditoria): si este admin tiene
+  // configurado ADMIN_TOTP_SECRET, un codigo de 6 digitos de su app de
+  // autenticacion es valido incluso si Telegram no esta disponible o el OTP
+  // por Telegram ya expiro. No consume ni depende del estado de otp-store.
+  if (isTotpConfigured() && verifyTotp(process.env.ADMIN_TOTP_SECRET!, otp)) {
+    deleteOtp(key);
+    const session = await getSession();
+    session.admin = true;
+    session.loginAt = Date.now();
+    await session.save();
+    return NextResponse.json({ ok: true, via: 'totp' });
+  }
+
   const pending = getOtp(key);
 
-  if (!pending || Date.now() > pending.expiresAt || typeof otp !== 'string') {
+  if (!pending || Date.now() > pending.expiresAt) {
     deleteOtp(key);
     return NextResponse.json({ error: 'OTP expired' }, { status: 401 });
   }
@@ -31,5 +49,5 @@ export async function POST(req: NextRequest) {
   session.loginAt = Date.now();
   await session.save();
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, via: 'telegram' });
 }

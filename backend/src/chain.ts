@@ -291,6 +291,47 @@ export async function forceRefresh() {
   await refreshOnce();
 }
 
+// Verificacion "en caliente" (no depende de la cache del indexador, que
+// puede tardar hasta REFRESH_INTERVAL_MS en ver una cuenta recien creada):
+// confirma contra el RPC que `marketPubkey` es de verdad una cuenta Market
+// valida, propiedad de nuestro programa, y que `signature` es una
+// transaccion confirmada que la toca. Antes, /api/markets aceptaba estos dos
+// campos como texto libre sin comprobar nada (hallazgo A3 de la auditoria).
+export async function verifyOnChainMarketCreation(params: { marketPubkey: string; signature: string; expectedTitle?: string }): Promise<{ ok: true; onChainTitle: string } | { ok: false; error: string }> {
+  if (!PROGRAM_ID) return { ok: false, error: 'PROGRAM_ID is not configured on this backend — cannot verify on-chain markets' };
+  let marketPk: PublicKey;
+  try {
+    marketPk = new PublicKey(params.marketPubkey);
+  } catch {
+    return { ok: false, error: 'onChainMarket is not a valid Solana public key' };
+  }
+
+  const conn = getConnection();
+  const info = await conn.getAccountInfo(marketPk, 'confirmed');
+  if (!info) return { ok: false, error: 'No account found on-chain at onChainMarket — has create_market actually been sent yet?' };
+  if (!info.owner.equals(PROGRAM_ID)) return { ok: false, error: 'onChainMarket account is not owned by the Lynx program' };
+  if (!info.data.subarray(0, 8).equals(ACCOUNT_DISC.market)) return { ok: false, error: 'onChainMarket account is not a Market account (wrong discriminator)' };
+
+  let onChainTitle: string;
+  try {
+    onChainTitle = decodeMarket(marketPk, info.data).title;
+  } catch {
+    return { ok: false, error: 'Failed to decode the on-chain Market account' };
+  }
+  if (params.expectedTitle && onChainTitle.trim() !== params.expectedTitle.trim()) {
+    return { ok: false, error: `Title mismatch: on-chain market says "${onChainTitle}", request says "${params.expectedTitle}"` };
+  }
+
+  const tx = await conn.getTransaction(params.signature, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 });
+  if (!tx) return { ok: false, error: 'Transaction signature not found or not yet confirmed on-chain' };
+  if (tx.meta?.err) return { ok: false, error: 'The provided transaction failed on-chain' };
+  const touchesProgram = tx.transaction.message.staticAccountKeys?.some((k) => k.equals(PROGRAM_ID))
+    ?? (tx.transaction.message as any).accountKeys?.some((k: PublicKey) => k.equals(PROGRAM_ID));
+  if (!touchesProgram) return { ok: false, error: 'The provided transaction signature does not touch the Lynx program' };
+
+  return { ok: true, onChainTitle };
+}
+
 export function getIndexerStatus() {
   return { enabled: !!PROGRAM_ID, lastRefreshAt, lastRefreshError, markets: marketsByPubkey.size, orders: ordersByPubkey.size, positions: positionsByPubkey.size, spotOrders: spotOrdersByPubkey.size };
 }
