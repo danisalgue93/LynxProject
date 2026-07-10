@@ -37,6 +37,9 @@ export default defineConfig(({mode}) => {
       hmr: true,
       port: 5173,
     },
+    build: {
+      sourcemap: false,
+    },
     test: {
       globals: true,
       environment: 'jsdom',

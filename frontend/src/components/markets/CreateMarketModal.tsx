@@ -40,6 +40,18 @@ export function CreateMarketModal({ onClose, onSubmit }: CreateMarketModalProps)
       setError(t('createMarket.errorTitleRequired', 'The event needs a title.'));
       return;
     }
+    if (cutoffAt <= Date.now()) {
+      setError(t('createMarket.errorCutoffPast', 'Cut-off date must be in the future.'));
+      return;
+    }
+    if (resolveAt <= cutoffAt) {
+      setError(t('createMarket.errorResolveAfterCutoff', 'Resolution date must be after cut-off date.'));
+      return;
+    }
+    if (description.length > 2000) {
+      setError(t('createMarket.errorDescriptionTooLong', 'Description must be 2000 characters or less.'));
+      return;
+    }
     setIsSubmitting(true);
     try {
       await onSubmit({

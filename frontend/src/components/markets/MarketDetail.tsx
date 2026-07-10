@@ -222,6 +222,11 @@ export function MarketDetail({
       onAuthRequired?.(t("marketDetail.actionBuyMarket", "buy or sell in markets"));
       return;
     }
+    const parsedBet = parseFloat(betAmount);
+    if (!parsedBet || parsedBet <= 0) {
+      addToast({ type: 'error', message: t('marketDetail.errorInvalidAmount', 'Enter a valid positive amount.') });
+      return;
+    }
     setIsPending(true);
     try {
       await executeTransaction(
@@ -942,6 +947,8 @@ export function MarketDetail({
                     <div className="relative group">
                       <input
                         type="number"
+                        min="0"
+                        step="any"
                         className="w-full bg-[#18181B] border border-[#27272A] rounded p-2.5 md:p-4 text-lg md:text-2xl font-mono text-white outline-none focus:border-[#00FFD1] tracking-tighter"
                         value={betAmount}
                         onChange={(e) => setBetAmount(e.target.value)}
@@ -996,7 +1003,7 @@ export function MarketDetail({
 
                   <button
                     onClick={handleQuickBet}
-                    disabled={isPending || market.status === "RESOLVED"}
+                    disabled={isPending || market.status === "RESOLVED" || (parseFloat(betAmount) || 0) <= 0}
                     className={cn(
                       "w-full text-black font-black py-3 md:py-4 rounded uppercase tracking-tighter text-[10px] md:text-sm transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:scale-100 flex items-center justify-center gap-2 md:gap-3",
                       isLynx

@@ -13,13 +13,12 @@ import { getManagedWalletAddress, useManagedAuthSession } from '@/src/lib/auth';
 import { useTranslation } from 'react-i18next';
 
 interface DuelCardProps {
-  key?: string;
   duel: Duel;
 }
 
 export function DuelCard({ duel }: DuelCardProps) {
   const { t } = useTranslation();
-  const { fetchMarkets, acceptDuel, cancelDuel } = useProgram();
+  const { acceptDuel, cancelDuel } = useProgram();
   const { executeTransaction } = useBlockchainTransaction();
   const { publicKey } = useWallet();
   const managedSession = useManagedAuthSession();
@@ -29,22 +28,13 @@ export function DuelCard({ duel }: DuelCardProps) {
 
   useEffect(() => {
     const loadMarket = async () => {
-      // fetchMarkets() filters out resolved/cut-off markets, so we fetch ALL markets
-      // (includeFinished=true) to always find the parent market of a duel.
-      const markets = await fetchMarkets();
-      const market = markets.find((m: Market) => m.id === duel.parentMarketId);
-      if (market) {
-        setParentMarket(market);
-      } else {
-        // Fallback: fetch the specific market directly so resolved markets are found too
-        try {
-          const market = await apiFetch<Market>(`/api/markets/${duel.parentMarketId}`);
-          if (market) setParentMarket(market);
-        } catch { /* ignore */ }
-      }
+      try {
+        const market = await apiFetch<Market>(`/api/markets/${duel.parentMarketId}`);
+        if (market) setParentMarket(market);
+      } catch { /* ignore - parent market may have been deleted */ }
     };
     loadMarket();
-  }, [duel.parentMarketId, fetchMarkets]);
+  }, [duel.parentMarketId]);
 
   const handleAccept = async (position?: Position) => {
     if (duel.status !== DuelStatus.OPEN || isCreator) return;

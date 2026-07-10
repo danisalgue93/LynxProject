@@ -12,12 +12,27 @@ volumes:
   certbot_conf:     # shared between nginx (read certs) and certbot (write certs)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SECURITY NOTE — Secrets management:
+#   Sensitive env vars (TREASURY_SECRET_KEY, MANAGED_WALLET_SEED, RESEND_API_KEY,
+#   ADMIN_API_TOKEN) are currently passed as Docker environment variables.
+#   In production, these SHOULD be delivered via Docker Secrets (docker swarm)
+#   or an external secrets manager (HashiCorp Vault, AWS Secrets Manager,
+#   GCP Secret Manager). The `:?` suffix on required vars ensures the
+#   container fails to start if they are missing.
+# ─────────────────────────────────────────────────────────────────────────────
 services:
 
   # ── PostgreSQL ───────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # AP-03: Security restrictions for database service (no user/cap_drop to avoid breaking pg_isready)
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512m
     environment:
       POSTGRES_DB:       ${POSTGRES_DB:-lynx_market}
       POSTGRES_USER:     ${POSTGRES_USER:-lynx}
@@ -35,6 +50,13 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # AP-03: Security restrictions for Redis (no user/cap_drop to avoid breaking redis-cli ping)
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256m
     networks: [lynx]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -48,7 +70,9 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     command: >
-      sh -c "npx prisma migrate deploy && echo 'Migrations applied'"
+      sh -c "sh /scripts/pre-migration-backup.sh && npx prisma migrate deploy && echo 'Migrations applied'"
+    volumes:
+      - ./scripts:/scripts:ro
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-lynx}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lynx_market}?schema=public
     depends_on:
@@ -75,19 +99,35 @@ services:
       REFRESH_EXPIRY:       ${REFRESH_EXPIRY:-7d}
       CORS_ORIGIN:          ${CORS_ORIGIN:?CORS_ORIGIN is required}
       ADMIN_WALLETS:        ${ADMIN_WALLETS:?ADMIN_WALLETS is required}
-      ADMIN_API_TOKEN:      ${ADMIN_API_TOKEN:?ADMIN_API_TOKEN is required}
       TREASURY_WALLET:      ${TREASURY_WALLET:?TREASURY_WALLET is required}
       TREASURY_SECRET_KEY:  ${TREASURY_SECRET_KEY:?TREASURY_SECRET_KEY is required}
+      # WARNING: TREASURY_SECRET_KEY above is set via a plain env var, which is
+      # visible via `docker inspect`. For production, use Docker secrets
+      # (https://docs.docker.com/engine/swarm/secrets/) or an external secrets
+      # manager (e.g. HashiCorp Vault, AWS Secrets Manager) instead.
       MANAGED_WALLET_SEED:  ${MANAGED_WALLET_SEED:?MANAGED_WALLET_SEED is required}
       SOLANA_CLUSTER:       ${SOLANA_CLUSTER:-mainnet-beta}
       SOLANA_RPC_URL:       ${SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}
       PROGRAM_ID:           ${PROGRAM_ID:-}
       LYNX_MINT:            ${LYNX_MINT:-}
       REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-true}
-      RESEND_API_KEY:       ${RESEND_API_KEY:-}
+      RESEND_API_KEY:       ${RESEND_API_KEY:?RESEND_API_KEY is required}
       EMAIL_FROM:           ${EMAIL_FROM:-noreply@lynxmarket.io}
       APP_URL:              ${APP_URL:?APP_URL is required (e.g. https://yourdomain.com)}
       SENTRY_DSN:           ${SENTRY_DSN:-}
+    # AP-03: Container security hardening
+    user: "lynx"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512m
     depends_on:
       postgres:
         condition: service_healthy
@@ -119,6 +159,19 @@ services:
         VITE_LYNX_MINT:               ${LYNX_MINT:-}
         VITE_SENTRY_DSN:              ${VITE_SENTRY_DSN:-}
     restart: unless-stopped
+    # AP-03: Container security hardening
+    user: "lynx"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512m
     environment:
       NODE_ENV:           production
       PORT:               3000
@@ -134,6 +187,20 @@ services:
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
+    # AP-03: Container security hardening (nginx runs as root by default for port 80/443)
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE", "CHOWN"]
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256m
     ports:
       - "80:80"
       - "443:443"

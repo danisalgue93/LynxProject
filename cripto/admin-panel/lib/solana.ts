@@ -13,6 +13,12 @@ import { assertEnv, isDevMode } from './security';
 // Se recalculan a mano (sin @coral-xyz/anchor) porque este panel construye las
 // instrucciones en crudo. Si cambias el nombre de una instruccion en lib.rs,
 // recalcula el discriminador correspondiente.
+//
+// AP-23: To verify/recompute these discriminators, use:
+//   echo -n "global:config" | sha256sum | head -c 16
+// or the Anchor CLI: `anchor idl parse` to extract from the IDL.
+// The 8 bytes shown are the first 8 bytes of the SHA-256 hash of
+// "global:<snake_case_instruction_name>" (Anchor convention).
 const DISCRIMINATORS = {
   config: Buffer.from([207, 91, 250, 28, 152, 179, 215, 209]),
   market: Buffer.from([219, 190, 213, 55, 0, 227, 198, 154]),
@@ -180,6 +186,12 @@ export function getAdminKeypair() {
   return Keypair.fromSecretKey(bs58.decode(assertEnv('ADMIN_KEYPAIR_BS58')));
 }
 
+// AP-14: Zero out keypair secret key bytes to reduce window for memory scraping attacks.
+// Call this in a finally block after any transaction that uses a keypair.
+export function wipeKeypair(kp: Keypair) {
+  kp.secretKey.fill(0);
+}
+
 // Clave del oraculo, solo necesaria si este mismo panel tambien opera el rol
 // de oraculo para algun mercado (propose_resolution). Si tu oraculo vive en
 // un servicio separado, no hace falta configurar esto aqui.
@@ -342,12 +354,13 @@ export function decodeProposal(pubkey: PublicKey, data: Buffer): GovernancePropo
 }
 
 function mockMarkets(): AdminMarket[] {
+  // AP-24: All mock data is prefixed with [MOCK] to make it obviously fake in audit trails/logs
   const now = Math.floor(Date.now() / 1000);
   return [
     {
       pubkey: 'MockMadridDrawBarcelona111111111111111111',
       id: '1001',
-      title: 'Madrid - Empate - Barcelona',
+      title: '[MOCK] Madrid - Empate - Barcelona',
       oracleAuthority: 'MockOracleAuthority111111111111111111111',
       status: 'CutOff',
       isTernary: true,
@@ -365,7 +378,7 @@ function mockMarkets(): AdminMarket[] {
     {
       pubkey: 'MockBTCAbove100K111111111111111111111111',
       id: '1002',
-      title: 'BTC closes above 100k',
+      title: '[MOCK] BTC closes above 100k',
       oracleAuthority: 'MockOracleAuthority222222222222222222222',
       status: 'CutOff',
       isTernary: false,
@@ -465,8 +478,12 @@ export async function proposeResolveMarketAdmin(marketPubkey: string, result: Ou
 
   const tx = new Transaction().add(ix);
   tx.feePayer = proposer.publicKey;
-  const signature = await sendAndConfirmTransaction(connection, tx, [proposer], { commitment: 'confirmed' });
-  return { signature, proposalPubkey: proposal.toBase58() };
+  try {
+    const signature = await sendAndConfirmTransaction(connection, tx, [proposer], { commitment: 'confirmed' });
+    return { signature, proposalPubkey: proposal.toBase58() };
+  } finally {
+    try { wipeKeypair(proposer); } catch { /* best-effort memory wipe */ }
+  }
 }
 
 // --- Paso 2: el SEGUNDO admin (el otro firmante) aprueba la propuesta ya
@@ -498,7 +515,11 @@ export async function approveProposal(proposalPubkey: string) {
 
   const tx = new Transaction().add(ix);
   tx.feePayer = signerKeypair.publicKey;
-  return sendAndConfirmTransaction(connection, tx, [signerKeypair], { commitment: 'confirmed' });
+  try {
+    return await sendAndConfirmTransaction(connection, tx, [signerKeypair], { commitment: 'confirmed' });
+  } finally {
+    try { wipeKeypair(signerKeypair); } catch { /* best-effort memory wipe */ }
+  }
 }
 
 // --- Paso 3: una vez aprobada por el umbral y pasado el timelock, cualquiera
@@ -537,7 +558,11 @@ export async function executeResolveMarketAdmin(proposalPubkey: string, marketPu
 
   const tx = new Transaction().add(ix);
   tx.feePayer = payer.publicKey;
-  return sendAndConfirmTransaction(connection, tx, [payer], { commitment: 'confirmed' });
+  try {
+    return await sendAndConfirmTransaction(connection, tx, [payer], { commitment: 'confirmed' });
+  } finally {
+    try { wipeKeypair(payer); } catch { /* best-effort memory wipe */ }
+  }
 }
 
 // Cualquier firmante del multisig puede disputar un resultado propuesto por el
@@ -570,13 +595,18 @@ export async function disputeResolution(marketPubkey: string) {
 
   const tx = new Transaction().add(ix);
   tx.feePayer = signerKeypair.publicKey;
-  return sendAndConfirmTransaction(connection, tx, [signerKeypair], { commitment: 'confirmed' });
+  try {
+    return await sendAndConfirmTransaction(connection, tx, [signerKeypair], { commitment: 'confirmed' });
+  } finally {
+    try { wipeKeypair(signerKeypair); } catch { /* best-effort memory wipe */ }
+  }
 }
 
-// Permissionless: cualquiera puede "cranquear" la finalizacion real una vez
-// pasada la ventana de disputa sin que nadie la frenara. No hace falta que
-// sea el admin; se deja aqui como conveniencia para poder dispararlo desde el
-// panel, pero podria vivir en un cron/servicio aparte igual de bien.
+// Permissionless on-chain: The on-chain finalize_resolution instruction does not
+// require any specific signer authority — anyone can crank it once the dispute
+// window has expired. However, the admin panel STILL requires an authenticated
+// admin session to trigger this call (for audit trail and rate-limiting purposes).
+// This ensures every finalization triggered from the panel is logged and attributed.
 export async function finalizeResolution(marketPubkey: string) {
   if (isDevMode() && process.env.MOCK_MARKETS === 'true') {
     return `mock-finalize-${marketPubkey}-${Date.now()}`;
@@ -606,7 +636,11 @@ export async function finalizeResolution(marketPubkey: string) {
 
   const tx = new Transaction().add(ix);
   tx.feePayer = payer.publicKey;
-  return sendAndConfirmTransaction(connection, tx, [payer], { commitment: 'confirmed' });
+  try {
+    return await sendAndConfirmTransaction(connection, tx, [payer], { commitment: 'confirmed' });
+  } finally {
+    try { wipeKeypair(payer); } catch { /* best-effort memory wipe */ }
+  }
 }
 
 // Bootstrap de una sola vez: crea el multisig 2-de-2 (o el M-de-N que se pase)
@@ -639,5 +673,9 @@ export async function initMultisig(signerPubkeys: string[], threshold: number) {
 
   const tx = new Transaction().add(ix);
   tx.feePayer = admin.publicKey;
-  return sendAndConfirmTransaction(connection, tx, [admin], { commitment: 'confirmed' });
+  try {
+    return await sendAndConfirmTransaction(connection, tx, [admin], { commitment: 'confirmed' });
+  } finally {
+    try { wipeKeypair(admin); } catch { /* best-effort memory wipe */ }
+  }
 }

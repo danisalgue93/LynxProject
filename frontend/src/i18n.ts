@@ -10,25 +10,6 @@ const resources = {
   es: { translation: esTranslations },
 };
 
-// South American country codes + Spain
-const spanishCountries = [
-  'ES', // Spain
-  'AR', // Argentina
-  'BO', // Bolivia
-  'BR', // Brazil
-  'CL', // Chile
-  'CO', // Colombia
-  'EC', // Ecuador
-  'GY', // Guyana
-  'PY', // Paraguay
-  'PE', // Peru
-  'SR', // Suriname
-  'UY', // Uruguay
-  'VE', // Venezuela
-  'FK', // Falkland Islands
-  'GF', // French Guiana
-];
-
 i18n
   .use(initReactI18next)
   .init({
@@ -60,49 +41,9 @@ export const initializeLanguage = async () => {
     return;
   }
 
-  // 3. Fallback: Check IP for Geolocation caching if the browser is another language
-  try {
-    const cachedGeoLang = localStorage.getItem('geoLangCache');
-    if (cachedGeoLang) {
-       i18n.changeLanguage(cachedGeoLang);
-       document.documentElement.lang = cachedGeoLang;
-       return;
-    }
-
-    // Non-critical, best-effort geolocation lookup — cap it short (2.5s) so a
-    // slow/down ipapi.co can't block i18n init; the existing catch below
-    // already falls back to English on any error, AbortError included.
-    const geoController = new AbortController();
-    const geoTimeoutId = setTimeout(() => geoController.abort(), 2500);
-    let response: Response;
-    try {
-      response = await fetch('https://ipapi.co/json/', { signal: geoController.signal });
-    } finally {
-      clearTimeout(geoTimeoutId);
-    }
-    if (!response.ok) throw new Error('API Error');
-    
-    const data = await response.json();
-    
-    let detectedLang = 'en'; // default final
-    if (data && data.country_code) {
-      if (spanishCountries.includes(data.country_code.toUpperCase())) {
-        detectedLang = 'es';
-      }
-    }
-    
-    // Cache the geo result so we don't call the API on every load
-    localStorage.setItem('geoLangCache', detectedLang);
-    
-    i18n.changeLanguage(detectedLang);
-    document.documentElement.lang = detectedLang;
-
-  } catch (error) {
-    console.warn('Error detecting location for language. Falling back to English.', error);
-    // 4. Default final
-    i18n.changeLanguage('en');
-    document.documentElement.lang = 'en';
-  }
+  // 3. Default: use browser language or fallback to English
+  i18n.changeLanguage('en');
+  document.documentElement.lang = 'en';
 };
 
 // Listen to language changes to update the HTML lang attribute

@@ -32,6 +32,8 @@ pub mod lynx_project {
         config.rewards_vault_bump = ctx.bumps.rewards_vault;
         config.paused = false;
         config.multisig_initialized = false;
+        config.protocol_duel_exposure = 0;
+        config.max_protocol_duel_exposure = MAX_PROTOCOL_DUEL_EXPOSURE_LAMPORTS;
         ctx.accounts.rewards_vault.bump = ctx.bumps.rewards_vault;
         Ok(())
     }
@@ -1252,6 +1254,21 @@ pub mod lynx_project {
             LynxError::InvalidDuelType
         );
 
+        // SC-03: enforce protocol duel exposure cap
+        if duel_type == DuelType::OneVOneVProtocol {
+            let new_exposure = ctx
+                .accounts
+                .config
+                .protocol_duel_exposure
+                .checked_add(amount)
+                .ok_or(LynxError::MathOverflow)?;
+            require!(
+                new_exposure <= ctx.accounts.config.max_protocol_duel_exposure,
+                LynxError::ProtocolDuelExposureExceeded
+            );
+            ctx.accounts.config.protocol_duel_exposure = new_exposure;
+        }
+
         invoke(
             &system_instruction::transfer(&ctx.accounts.creator.key(), &ctx.accounts.duel_vault.key(), amount),
             &[
@@ -1357,7 +1374,12 @@ pub mod lynx_project {
                 .amount
                 .checked_div(LAMPORTS_TO_MICRO_LYNX_DENOMINATOR)
                 .ok_or(LynxError::MathOverflow)?;
-            let ratio_bps = current_mint_ratio_bps(&ctx.accounts.config)?;
+            // SC-02 fix: use the mint_ratio_bps frozen on the Market at
+            // resolve-time (finalize_market_and_fees) instead of calling
+            // current_mint_ratio_bps() which reads the instantaneous
+            // circulating supply and is manipulable (see SC-01).
+            let ratio_bps = market.mint_ratio_bps;
+            require!(ratio_bps > 0, LynxError::InvalidAmount);
             let payout_micro_lynx = bps(base_payout_micro_lynx, ratio_bps)?;
             let signer: &[&[&[u8]]] = &[&[b"config", &[ctx.accounts.config.bump]]];
             token::mint_to(
@@ -1382,6 +1404,13 @@ pub mod lynx_project {
             transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), duel.amount)?;
         }
         duel.status = DuelStatus::Resolved;
+        // SC-03: release protocol exposure now that the duel is settled
+        ctx.accounts.config.protocol_duel_exposure = ctx
+            .accounts
+            .config
+            .protocol_duel_exposure
+            .checked_sub(duel.amount)
+            .ok_or(LynxError::MathOverflow)?;
         Ok(())
     }
 
@@ -2076,7 +2105,7 @@ pub struct ClaimStakingRewards<'info> {
 #[derive(Accounts)]
 #[instruction(duel_id: u64)]
 pub struct CreateDuel<'info> {
-    #[account(seeds = [b"config"], bump = config.bump)]
+    #[account(mut, seeds = [b"config"], bump = config.bump)]
     pub config: Account<'info, ProtocolConfig>,
     #[account(seeds = [b"market", parent_market.id.to_le_bytes().as_ref()], bump = parent_market.bump)]
     pub parent_market: Account<'info, Market>,
@@ -2273,6 +2302,13 @@ fn implied_price_bps(market: &Market, outcome: Outcome) -> Result<u64> {
 // Convierte una cantidad de micro-LYNX a lamports al precio dado (escalado
 // por PRICE_SCALE). Usa u128 internamente para evitar overflow con
 // cantidades grandes antes de volver a u64.
+//
+// ⚠️  PRECISION NOTE (SC-04):
+// The return value is in **lamports** (integer). All internal accounting
+// (escrow deposits, fee calculation, transfer amounts) MUST use this raw
+// lamport value. Conversion to human-readable SOL (÷ LAMPORTS_PER_SOL)
+// should happen ONLY at the final display/UI layer — never in intermediate
+// calculations — to avoid truncation/rounding drift.
 fn spot_sol_amount(micro_lynx: u64, price_scaled: u128) -> Result<u64> {
     let product = (micro_lynx as u128).checked_mul(price_scaled).ok_or(LynxError::MathOverflow)?;
     let lamports = product.checked_div(PRICE_SCALE).ok_or(LynxError::MathOverflow)?;
@@ -2360,6 +2396,23 @@ fn mint_to_lynx<'info>(
     )
 }
 
+// ⚠️  SECURITY NOTE (SC-01 — CRITICAL): Mint-ratio manipulation risk
+// ─────────────────────────────────────────────────────────────────
+// This function computes the mint ratio from the *instantaneous*
+// circulating supply (`total_lynx_supply - total_lynx_burned`).  An
+// attacker can temporarily burn a large LYNX position right before a
+// high-value SOL market resolves, pushing the ratio into a more
+// generous tier and receiving disproportionately more LYNX on claim.
+//
+// **Planned fix — TWAP of circulating supply:**
+// 1. Introduce a CirculatingSupplySnapshot account that is updated by
+//    a permissionless crank every N slots (e.g. ≈1 hour).
+// 2. Store the last 24 hourly snapshots on-chain (ring buffer).
+// 3. Replace the instantaneous read below with the *average* of those
+//    snapshots, so a last-minute burn has negligible impact.
+// 4. Until that mechanism is deployed, callers that need a stable
+//    ratio (e.g. resolve_protocol_duel) MUST use the `mint_ratio_bps`
+//    frozen on the Market account at resolve-time, *not* this function.
 fn current_mint_ratio_bps(config: &ProtocolConfig) -> Result<u64> {
     let circulating = config
         .total_lynx_supply

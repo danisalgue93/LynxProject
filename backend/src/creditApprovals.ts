@@ -39,6 +39,52 @@ export const MAX_MANUAL_CREDIT_AMOUNT = {
   LYNX: Number(process.env.MAX_MANUAL_CREDIT_LYNX || 50_000),
 };
 
+// BE-19: Per-wallet daily credit limits to prevent incremental abuse.
+// Tracks cumulative credited amounts per (wallet, currency, date).
+const MAX_DAILY_CREDIT = {
+  SOL: Number(process.env.MAX_DAILY_CREDIT_SOL || 10),
+  LYNX: Number(process.env.MAX_DAILY_CREDIT_LYNX || 100_000),
+};
+const dailyCreditTracker = new Map<string, number>(); // "wallet:currency:YYYY-MM-DD" → cumulative amount
+
+function getTodayDateKey(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function getDailyCreditKey(wallet: string, currency: string): string {
+  return `${wallet}:${currency}:${getTodayDateKey()}`;
+}
+
+function purgeDailyCreditTracker() {
+  const todayPrefix = getTodayDateKey();
+  for (const key of dailyCreditTracker.keys()) {
+    // Remove entries from previous days (they won't contain today's date prefix at the end)
+    const datePart = key.split(':').slice(-2).join(':');
+    if (datePart !== getTodayDateKey()) {
+      dailyCreditTracker.delete(key);
+    }
+  }
+}
+
+export function checkAndRecordDailyCredit(wallet: string, currency: 'SOL' | 'LYNX', amount: number): void {
+  purgeDailyCreditTracker();
+  const key = getDailyCreditKey(wallet, currency);
+  const currentTotal = dailyCreditTracker.get(key) || 0;
+  const newTotal = currentTotal + amount;
+  const dailyLimit = MAX_DAILY_CREDIT[currency];
+  if (newTotal > dailyLimit) {
+    const remaining = dailyLimit - currentTotal;
+    throw new Error(
+      `Daily credit limit for ${currency} exceeded. ` +
+      `Wallet ${wallet.slice(0, 4)}...${wallet.slice(-4)} has received ${currentTotal.toFixed(2)}/${dailyLimit} ${currency} today. ` +
+      `${remaining > 0 ? `Only ${remaining.toFixed(2)} ${currency} remaining.` : 'No more credits can be issued today.'}`
+    );
+  }
+  dailyCreditTracker.set(key, newTotal);
+  console.log(`[creditApprovals] BE-19: Daily credit tracker: ${key} = ${newTotal}/${dailyLimit}`);
+}
+
 const requests = new Map<string, CreditRequest>();
 
 function purgeExpired() {
@@ -58,6 +104,8 @@ export function proposeCredit(input: { wallet: string; currency: 'SOL' | 'LYNX';
   if (!input.reason || !input.reason.trim()) {
     throw new Error('A reason is required for every manual credit (audit trail).');
   }
+  // BE-19: Enforce per-wallet daily credit limit
+  checkAndRecordDailyCredit(input.wallet, input.currency, input.amount);
 
   const id = `credit_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   const now = Date.now();

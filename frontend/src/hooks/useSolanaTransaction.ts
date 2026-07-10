@@ -24,7 +24,18 @@ import { apiFetch, API_BASE_URL } from '../lib/api';
 import { useToast } from '../context/ToastContext';
 import { getTxExplorerUrl } from '../lib/explorer';
 
-const TREASURY_WALLET = import.meta.env.VITE_TREASURY_WALLET || '';
+const _treasuryWallet = import.meta.env.VITE_TREASURY_WALLET;
+let TREASURY_WALLET: string;
+if (!_treasuryWallet) {
+  throw new Error('VITE_TREASURY_WALLET must be configured. Add it to your .env file.');
+}
+// Validate it's a valid Solana public key
+try {
+  new PublicKey(_treasuryWallet);
+  TREASURY_WALLET = _treasuryWallet;
+} catch {
+  throw new Error(`VITE_TREASURY_WALLET is not a valid Solana public key: ${_treasuryWallet}`);
+}
 
 const SOLANA_NETWORK = (import.meta.env.VITE_SOLANA_NETWORK as string) || 'devnet';
 
@@ -47,11 +58,6 @@ export function useSolanaTransaction() {
     async (amount: number, memo?: string): Promise<string> => {
       if (!publicKey) {
         throw new Error('Connect a Solana wallet to send transactions.');
-      }
-      if (!TREASURY_WALLET) {
-        throw new Error(
-          'VITE_TREASURY_WALLET is not set. Add it to your .env file.'
-        );
       }
 
       const lamports = Math.round(amount * LAMPORTS_PER_SOL);

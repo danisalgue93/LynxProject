@@ -1,4 +1,10 @@
 # ── Stage 1: build Vite SPA ─────────────────────────────────────────────────
+# SECURITY NOTE (AP-13): Build ARGs (VITE_*) are only available in this builder
+# stage. They are written to a .env file for Vite to consume during `npm run build`,
+# then baked into the compiled JS bundle. The ARG values do NOT appear in the
+# final runner image or in `docker history` of the runner stage. However, they
+# ARE visible in `docker history` of the builder stage (intermediate image).
+# For secrets, use runtime env vars instead of build args.
 FROM node:20-alpine AS builder
 
 WORKDIR /app

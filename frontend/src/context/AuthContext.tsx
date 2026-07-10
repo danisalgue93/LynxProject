@@ -69,7 +69,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const rememberUser = (nextUser: AuthUser) => {
     setUser(nextUser);
-    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(nextUser));
+    // Only store minimal data needed for UI state - reload sensitive data from backend
+    localStorage.setItem(STORAGE_KEY_USER, JSON.stringify({
+      id: nextUser.id,
+      displayName: nextUser.displayName,
+      authMethod: nextUser.authMethod,
+      // Intentionally NOT storing: email, role, walletAddress, managedWalletAddress
+    }));
     if (nextUser.authMethod === 'email' && nextUser.managedWalletAddress) {
       saveManagedAuthSession({
         provider: 'email-password',

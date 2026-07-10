@@ -25,6 +25,43 @@ import { onchainRouter } from './onchainRoutes.js';
 import { startChainIndexer, getIndexedMarket, listOpenOrdersForMarket, listPositionsForOwner, listOpenSpotOrders, fromOnChainOutcomeName, verifyOnChainMarketCreation } from './chain.js';
 import { proposeCredit, approveCredit, getCreditRequest, markExecuted, isReadyToExecute, listPendingCredits, proposeMarketResolution, approveMarketResolution, getMarketResolutionRequest, markResolutionExecuted, isResolutionReadyToExecute, listPendingMarketResolutions } from './creditApprovals.js';
 
+// ── Distributed locking (BE-17) ───────────────────────────────────────────────
+// Redis-based distributed lock using SET NX EX. Falls back to an in-memory map
+// when Redis is not available (single-instance only).
+const inMemoryLocks = new Map<string, number>(); // key → expiresAt
+
+async function acquireLock(key: string, ttlMs: number): Promise<boolean> {
+  if (redis) {
+    try {
+      const result = await redis.set(`lock:${key}`, '1', 'PX', ttlMs, 'NX');
+      return result !== null;
+    } catch (err) {
+      console.error('[distributed-lock] redis error on acquire:', err instanceof Error ? err.message : err);
+      // Fall through to in-memory fallback
+    }
+  }
+  // WARNING: In-memory lock only works for a single instance. In multi-instance
+  // deployments without Redis, concurrent mutations from different instances
+  // are NOT serialized.
+  const now = Date.now();
+  const held = inMemoryLocks.get(key);
+  if (held && held > now) return false;
+  inMemoryLocks.set(key, now + ttlMs);
+  return true;
+}
+
+async function releaseLock(key: string): Promise<void> {
+  if (redis) {
+    try {
+      await redis.del(`lock:${key}`);
+    } catch (err) {
+      console.error('[distributed-lock] redis error on release:', err instanceof Error ? err.message : err);
+      // Fall through to in-memory cleanup
+    }
+  }
+  inMemoryLocks.delete(key);
+}
+
 const app = express();
 app.set('trust proxy', 1);
 const httpServer = http.createServer(app);
@@ -91,6 +128,42 @@ const io = new Server(httpServer, {
   cors: {
     origin: corsOrigins,
     credentials: true
+  }
+});
+
+// BE-10: Require JWT authentication on all Socket.IO connections.
+// The frontend must send: { auth: { token: jwtToken } } in the connection options.
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token as string | undefined;
+  if (!token) {
+    return next(new Error('Authentication required: send { auth: { token } } when connecting'));
+  }
+  const payload = verifyToken(token);
+  if (!payload) {
+    return next(new Error('Invalid or expired token'));
+  }
+  // Re-check against live users to invalidate banned/deleted sessions immediately
+  if (!users.has(payload.userId)) {
+    return next(new Error('Session invalidated'));
+  }
+  (socket.data as any).userId = payload.userId;
+  next();
+});
+
+io.on('connection', (socket) => {
+  socket.emit('lynx:hello', {
+    ok: true,
+    markets: store.listMarkets(true).length
+  });
+  // BE-10: Only allow joining rooms for the authenticated user's wallets.
+  // The 'identify' event is removed — rooms are now auto-assigned based on JWT.
+  const userId = (socket.data as any)?.userId as string | undefined;
+  if (userId) {
+    const user = users.get(userId);
+    if (user) {
+      if (user.walletAddress) socket.join(`wallet:${user.walletAddress}`);
+      if (user.managedWalletAddress) socket.join(`wallet:${user.managedWalletAddress}`);
+    }
   }
 });
 
@@ -233,17 +306,52 @@ io.on('connection', (socket) => {
   });
 });
 
+// ── Persist mutex (BE-05/BE-13) ────────────────────────────────────────────────
+// Prevents concurrent persists from overwriting each other. Serializes writes
+// so a periodic persist never clobbers a more recent explicit persist.
+let persistMutexBusy = false;
+let persistMutexQueue: Array<() => void> = [];
+
+async function persistAfterMutation() {
+  if (persistMutexBusy) {
+    // Another persist is already in flight — queue this one to run after it completes.
+    return new Promise<void>((resolve) => {
+      persistMutexQueue.push(async () => {
+        try {
+          await persistence.save(store);
+        } catch (err) {
+          console.error('[persist-after-mutation] queued persist failed:', err);
+        }
+        resolve();
+      });
+    });
+  }
+  persistMutexBusy = true;
+  try {
+    await persistence.save(store);
+  } finally {
+    persistMutexBusy = false;
+    // Drain the queue: run at most one queued persist (the most recent state)
+    // to avoid a thundering herd. Any further queued items are redundant since
+    // `store` is mutable and always reflects the latest state.
+    if (persistMutexQueue.length > 0) {
+      const next = persistMutexQueue.pop()!;
+      persistMutexQueue = []; // discard older entries — store is already up-to-date
+      next();
+    }
+  }
+}
+
+async function persist() {
+  await persistAfterMutation();
+}
+
 function emit(event: string, payload: unknown) {
   io.emit(event, payload);
 }
 
 function emitPortfolioUpdated(wallet: string, portfolio: unknown) {
-  io.emit('portfolio:updated', { wallet });
-  io.to(`wallet:${wallet}`).emit('portfolio:updated:private', { wallet, portfolio });
-}
-
-async function persist() {
-  await persistence.save(store);
+  io.to(`wallet:${wallet}`).emit('portfolio:updated', { wallet, portfolio });
 }
 
 function walletFromQuery(req: express.Request, res: express.Response): string | null {
@@ -255,33 +363,9 @@ function walletFromQuery(req: express.Request, res: express.Response): string | 
   return val.trim();
 }
 
-function requireAdminApiToken(req: express.Request, res: express.Response) {
-  const configuredToken = process.env.ADMIN_API_TOKEN;
-  if (!configuredToken) {
-    // Fail closed by default. Only `test` is exempted — any other environment
-    // (dev, staging, or a misconfigured/missing NODE_ENV in a real deployment)
-    // must require the token, otherwise this opens admin routes to anyone
-    // whenever NODE_ENV isn't exactly 'production'.
-    if (process.env.NODE_ENV === 'test') {
-      return true;
-    }
-    res.status(403).json({ error: 'ADMIN_API_TOKEN is required' });
-    return false;
-  }
-
-  const auth = req.headers.authorization;
-  const bearerToken = auth?.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : undefined;
-  const headerToken = typeof req.headers['x-admin-api-token'] === 'string' ? req.headers['x-admin-api-token'] : undefined;
-  if (bearerToken !== configuredToken && headerToken !== configuredToken) {
-    res.status(401).json({ error: 'Unauthorized admin request' });
-    return false;
-  }
-  return true;
-}
-
 function createSimpleRateLimit({ windowMs, max }: { windowMs: number; max: number }) {
-  // In-memory fallback — used when REDIS_URL is not configured (dev/test/single-instance)
-  // and as a fail-open path if Redis is temporarily unreachable.
+  // In-memory fallback — used ONLY when REDIS_URL is not configured (dev/test/single-instance).
+  // When Redis is configured but fails mid-flight, the request is rejected (fail-closed).
   const attempts = new Map<string, { count: number; resetAt: number }>();
 
   // Purge expired entries on a fixed schedule rather than only when the map
@@ -348,10 +432,11 @@ function createSimpleRateLimit({ windowMs, max }: { windowMs: number; max: numbe
           next();
         })
         .catch((err: unknown) => {
-          // Redis unreachable mid-flight — fail open to the in-memory limiter
-          // rather than blocking all traffic on a transient infra issue.
-          console.error('[rate-limit] redis error, falling back to memory:', err instanceof Error ? err.message : err);
-          applyMemoryLimit(key, now, res, next);
+          // BE-07: Redis unreachable mid-flight — fail CLOSED (503).
+          // Falling back to in-memory would allow bypassing distributed limits
+          // by spreading requests across replicas after inducing a Redis failure.
+          console.error('[rate-limit] redis error, rejecting request (fail-closed):', err instanceof Error ? err.message : err);
+          res.status(503).json({ error: 'Service temporarily unavailable. Please retry later.' });
         });
       return;
     }
@@ -396,6 +481,19 @@ interface AuthUser {
 const users = new Map<string, AuthUser>();
 const usersByEmail = new Map<string, string>(); // email.toLowerCase() → userId
 const usersByWallet = new Map<string, string>(); // walletAddress → userId
+
+// BE-14: Refresh token blacklist — prevents reuse of tokens after logout.
+// Stores token → expiry timestamp. Periodically purged to prevent unbounded growth.
+const refreshBlacklist = new Map<string, number>(); // token → expiresAt (ms)
+if (typeof setInterval !== 'undefined') {
+  setInterval(() => {
+    const now = Date.now();
+    for (const [token, expiresAt] of refreshBlacklist) {
+      if (expiresAt <= now) refreshBlacklist.delete(token);
+    }
+  }, 5 * 60_000).unref?.();
+}
+
 const adminWallets = (process.env.ADMIN_WALLETS || '')
   .split(',')
   .map((wallet) => wallet.trim())
@@ -557,19 +655,6 @@ function currentUser(req: any) {
 }
 
 function requireAdmin(req: any, res: express.Response) {
-  const configuredToken = process.env.ADMIN_API_TOKEN;
-  const auth = req.headers.authorization;
-  const bearerToken = auth?.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : undefined;
-  const headerToken = typeof req.headers['x-admin-api-token'] === 'string' ? req.headers['x-admin-api-token'] : undefined;
-  // Use constant-time comparison to prevent timing attacks on the admin token
-  const safeEqual = (a: string, b: string) => {
-    try {
-      return a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
-    } catch { return false; }
-  };
-  if (configuredToken && ((bearerToken !== undefined && safeEqual(bearerToken, configuredToken)) || (headerToken !== undefined && safeEqual(headerToken, configuredToken)))) {
-    return true;
-  }
   if (!requireAuth(req, res)) return false;
   const user = currentUser(req);
   if (user?.role !== 'admin' && !isAdminWallet(user?.walletAddress)) {
@@ -768,6 +853,12 @@ function getTreasuryKeypair(): Keypair {
     if (!secret) {
       throw new Error('TREASURY_SECRET_KEY must be set to send on-chain SOL withdrawals.');
     }
+    // BE-06: Warn if treasury key is loaded from a plain env var rather than a file/secret manager.
+    // This is only a warning — true HSM/Docker Secrets integration is out of scope for this code-only fix.
+    console.warn(
+      '[security] TREASURY_SECRET_KEY is loaded from a plain environment variable. ' +
+      'For production, use Docker secrets or an external secrets manager to avoid exposure via `docker inspect`.'
+    );
     treasuryKeypair = Keypair.fromSecretKey(bs58.decode(secret));
   }
   return treasuryKeypair;
@@ -1064,7 +1155,8 @@ app.post('/auth/wallet-login', maybeAuthRateLimit, asyncRoute(async (req, res) =
   // Validate signatureMessage content to prevent replay attacks.
   // A captured signature would otherwise be valid indefinitely because only the
   // signature's mathematical validity was checked, not the message's intent or freshness.
-  const WALLET_LOGIN_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+  // BE-15: Reduced to 60 seconds to narrow the replay window.
+  const WALLET_LOGIN_WINDOW_MS = 60 * 1000; // 60 seconds
   let parsedMsg: { app?: string; action?: string; wallet?: string; issuedAt?: string } | null = null;
   try {
     parsedMsg = JSON.parse(body.signatureMessage) as {
@@ -1138,6 +1230,11 @@ app.post('/auth/refresh', maybeAuthRateLimit, asyncRoute(async (req, res) => {
   if (!refreshToken) {
     return res.status(401).json({ error: 'Missing refresh token' });
   }
+  // BE-14: Check if the refresh token has been revoked (logout)
+  if (refreshBlacklist.has(refreshToken)) {
+    clearRefreshCookie(res);
+    return res.status(401).json({ error: 'Refresh token has been revoked' });
+  }
   const payload = verifyRefreshToken(refreshToken);
   if (!payload) {
     clearRefreshCookie(res);
@@ -1155,7 +1252,17 @@ app.post('/auth/refresh', maybeAuthRateLimit, asyncRoute(async (req, res) => {
   });
 }));
 
-app.post('/auth/logout', (_req, res) => {
+app.post('/auth/logout', asyncRoute(async (req, res) => {
+  // BE-14: Blacklist the refresh token so it cannot be reused
+  const refreshToken = getCookie(req, REFRESH_COOKIE_NAME);
+  if (refreshToken) {
+    const payload = verifyRefreshToken(refreshToken);
+    if (payload) {
+      // Use the configured refresh expiry as the blacklist TTL
+      const expiresAt = Date.now() + refreshCookieOptions.maxAge;
+      refreshBlacklist.set(refreshToken, expiresAt);
+    }
+  }
   clearRefreshCookie(res);
   res.json({ ok: true });
 });
@@ -1416,6 +1523,13 @@ app.post('/api/markets/:id/trades', tradingRateLimit, asyncRoute(async (req, res
     if (cached) { res.json(cached.result); return; }
   }
 
+  // BE-17: Acquire distributed lock for trading mutation
+  const tradeLockKey = `trade:${wallet}:${req.params.id}`;
+  if (!(await acquireLock(tradeLockKey, 10_000))) {
+    res.status(409).json({ error: 'Concurrent trade in progress. Please retry.' });
+    return;
+  }
+  try {
   const result = store.executePredictionTrade({
     wallet,
     marketId: req.params.id,
@@ -1434,6 +1548,9 @@ app.post('/api/markets/:id/trades', tradingRateLimit, asyncRoute(async (req, res
   // this market may have changed even though this wasn't a limit order.
   emit('orderbook:updated', store.getOrderBook(req.params.id, req.params.id));
   res.json(result);
+  } finally {
+    await releaseLock(tradeLockKey);
+  }
 }));
 
 // Antes esta ruta resolvia el mercado al instante con una sola sesion de
@@ -1487,11 +1604,28 @@ app.post('/api/admin/markets/:id/resolve', asyncRoute(async (req, res) => {
     return;
   }
 
+  // BE-09: Validate that the stored result is a legitimate Position value
+  const validPositions = ['YES', 'NO', 'DRAW', 'A', 'B'] as const;
+  if (!validPositions.includes(request.result as any)) {
+    res.status(400).json({ error: `Invalid resolution result: "${request.result}". Must be one of: ${validPositions.join(', ')}` });
+    return;
+  }
+
+  // BE-17: Distributed lock for market resolution
+  const resolveLockKey = `resolve:${req.params.id}`;
+  if (!(await acquireLock(resolveLockKey, 15_000))) {
+    res.status(409).json({ error: 'Concurrent resolution in progress. Please retry.' });
+    return;
+  }
+  try {
   const market = store.resolveMarket({ marketId: req.params.id, result: request.result as any, source: 'manual' });
   markResolutionExecuted(request.id);
   await persist();
   emit('market:resolved', market);
   res.json({ ok: true, market, request });
+  } finally {
+    await releaseLock(resolveLockKey);
+  }
 }));
 
 app.get('/api/admin/markets/:id/resolve/pending', (req, res) => {
@@ -1540,6 +1674,13 @@ app.post('/api/duels', tradingRateLimit, asyncRoute(async (req, res) => {
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   if (!requireApprovedWallet(res, wallet)) return;
 
+  // BE-17: Distributed lock for duel creation
+  const duelLockKey = `duel:create:${body.marketId}`;
+  if (!(await acquireLock(duelLockKey, 10_000))) {
+    res.status(409).json({ error: 'Concurrent duel operation in progress. Please retry.' });
+    return;
+  }
+  try {
   const duel = store.createDuel({
     wallet,
     marketId: body.marketId,
@@ -1550,6 +1691,9 @@ app.post('/api/duels', tradingRateLimit, asyncRoute(async (req, res) => {
   await persist();
   emit('duel:created', duel);
   res.status(201).json(duel);
+  } finally {
+    await releaseLock(duelLockKey);
+  }
 }));
 
 app.post('/api/duels/:id/accept', asyncRoute(async (req, res) => {
@@ -1562,10 +1706,20 @@ app.post('/api/duels/:id/accept', asyncRoute(async (req, res) => {
   if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   if (!requireApprovedWallet(res, wallet)) return;
+  // BE-17: Distributed lock for duel acceptance
+  const acceptLockKey = `duel:accept:${req.params.id}`;
+  if (!(await acquireLock(acceptLockKey, 10_000))) {
+    res.status(409).json({ error: 'Concurrent duel operation in progress. Please retry.' });
+    return;
+  }
+  try {
   const duel = store.acceptDuel({ wallet, duelId: req.params.id, side: body.side });
   await persist();
   emit('duel:accepted', duel);
   res.json(duel);
+  } finally {
+    await releaseLock(acceptLockKey);
+  }
 }));
 
 app.delete('/api/duels/:id', asyncRoute(async (req, res) => {
@@ -2253,8 +2407,8 @@ async function start() {
   });
   startChainIndexer();
 
-  // Periodic backup every 5 minutes — limits data loss window if the process dies unexpectedly
-  const PERSIST_INTERVAL_MS = 5 * 60 * 1000;
+  // Periodic backup every 30 seconds — limits data loss window if the process dies unexpectedly
+  const PERSIST_INTERVAL_MS = 30 * 1000;
   const periodicPersist = setInterval(async () => {
     try {
       await persist();

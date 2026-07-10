@@ -115,14 +115,14 @@ model Market {
   description       String
   category          String
   imageUrl          String?
-  status            String        @default("OPEN")
+  status            MarketStatus  @default(OPEN)
   poolAmount        Decimal       @default(0)   @db.Decimal(28, 9)
   yesAmount         Decimal       @default(0)   @db.Decimal(28, 9)
   noAmount          Decimal       @default(0)   @db.Decimal(28, 9)
   drawAmount        Decimal?      @db.Decimal(28, 9)
   burnedAmount      Decimal       @default(0)   @db.Decimal(28, 9)
   isTernary         Boolean       @default(false)
-  currency          String        @default("SOL")
+  currency          Currency      @default(SOL)
   oracleId          String?
   oracleMode        String        @default("MANUAL_DEV")
   onChainMarket     String?
@@ -150,10 +150,10 @@ model UserPosition {
   id         String   @id
   marketId   String
   wallet     String
-  position   String
+  position   Position
   amount     Decimal  @db.Decimal(28, 9)
   entryPrice Decimal  @default(1) @db.Decimal(28, 9)
-  currency   String
+  currency   Currency
   claimed    Boolean  @default(false)
   createdAt  DateTime @default(now())
   solPrincipal           Decimal? @db.Decimal(28, 9)
@@ -169,8 +169,8 @@ model UserPosition {
 
 model WalletState {
   wallet           String   @id
-  solBalance       Decimal  @default(100)   @db.Decimal(28, 9)
-  lynxBalance      Decimal  @default(10000) @db.Decimal(28, 9)
+  solBalance       Decimal  @default(0)    @db.Decimal(28, 9)
+  lynxBalance      Decimal  @default(0)    @db.Decimal(28, 9)
   stakedLynx       Decimal  @default(0)     @db.Decimal(28, 9)
   rewardsSol       Decimal  @default(0)     @db.Decimal(28, 9)
   rewardsLynx      Decimal  @default(0)     @db.Decimal(28, 9)
@@ -191,13 +191,13 @@ model Order {
   marketId       String?
   pair           String
   owner          String
-  side           String
+  side           OrderSide
   position       String?
   amount         Decimal  @db.Decimal(28, 9)
   remaining      Decimal  @db.Decimal(28, 9)
   price          Decimal  @db.Decimal(28, 9)
-  currency       String
-  status         String   @default("OPEN")
+  currency       Currency
+  status         OrderStatus   @default(OPEN)
   lockedCurrency String?
   lockedAmount   Decimal? @db.Decimal(28, 9)
   spentAmount    Decimal? @db.Decimal(28, 9)
@@ -216,12 +216,12 @@ model Trade {
   pair      String
   maker     String?
   taker     String
-  side      String
+  side      OrderSide
   position  String?
   amount    Decimal  @db.Decimal(28, 9)
   price     Decimal  @db.Decimal(28, 9)
   feeAmount Decimal  @default(0) @db.Decimal(28, 9)
-  currency  String
+  currency  Currency
   createdAt DateTime @default(now())
 
   market Market? @relation(fields: [marketId], references: [id], onDelete: SetNull)
@@ -240,8 +240,8 @@ model Duel {
   amount         Decimal   @db.Decimal(28, 9)
   grossAmount    Decimal?  @db.Decimal(28, 9)
   burnedAmount   Decimal?  @db.Decimal(28, 9)
-  currency       String
-  status         String    @default("OPEN")
+  currency       Currency
+  status         DuelStatus    @default(OPEN)
   positionA      String
   positionB      String?
   isTernary      Boolean?
@@ -266,11 +266,11 @@ model Proposal {
   id            String   @id
   title         String
   description   String
-  status        String   @default("active")
+  status        ProposalStatus   @default(ACTIVE)
   votesYes      Decimal  @default(0) @db.Decimal(28, 9)
   votesNo       Decimal  @default(0) @db.Decimal(28, 9)
   endTime       DateTime
-  category      String   @default("community")
+  category      ProposalCategory @default(COMMUNITY)
   author        String
   voters        Json?
   stakeSnapshot Json?

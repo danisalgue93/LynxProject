@@ -8,7 +8,6 @@ import { useTranslation } from 'react-i18next';
 import { cn } from '@/src/lib/utils';
 
 interface MarketCardProps {
-  key?: string;
   market: Market;
   onClick: (id: string) => void;
 }

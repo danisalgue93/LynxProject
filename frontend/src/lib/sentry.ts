@@ -29,11 +29,15 @@ if (dsn) {
 
     // Replay captures 10% of sessions, 100% when an error occurs.
     replaysSessionSampleRate: 0.1,
-    replaysOnErrorSampleRate: 1.0,
+    replaysOnErrorSampleRate: 0.3,
 
     integrations: [
       Sentry.browserTracingIntegration(),
-      Sentry.replayIntegration(),
+      Sentry.replayIntegration({
+        maskAllText: true,
+        blockAllMedia: true,
+        maskInputOptions: { password: true, email: true },
+      }),
     ],
 
     // Strip sensitive query params from URLs before they're sent to Sentry

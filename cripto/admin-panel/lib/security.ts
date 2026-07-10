@@ -1,17 +1,24 @@
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { NextRequest } from 'next/server';
 
 /**
  * Returns a key to identify the request source for rate-limiting and OTP isolation.
  *
- * By default this ignores X-Real-IP / X-Forwarded-For because a directly
- * exposed Next.js process receives those headers from the client and they are
- * trivial to spoof. In that mode every direct request shares the same bucket,
- * which is conservative for a single-user emergency admin panel.
+ * INTENTIONAL DESIGN: By default this ignores X-Real-IP / X-Forwarded-For because
+ * a directly exposed Next.js process receives those headers from the client and
+ * they are trivial to spoof. In that mode every direct request shares the same
+ * bucket (the string 'direct').
  *
- * Set ADMIN_TRUST_PROXY_HEADERS=true only when the panel is reachable solely
+ * This is conservative and intentional for a SINGLE-ADMIN emergency panel behind
+ * an SSH tunnel / VPN — if a single admin fails their password/OTP a few times,
+ * the shared bucket blocks further attempts from that admin too. This prevents
+ * brute-force even if proxy headers are spoofed.
+ *
+ * Set ADMIN_TRUST_PROXY_HEADERS=true ONLY when the panel is reachable solely
  * through a trusted proxy/tunnel that overwrites X-Real-IP and X-Forwarded-For
- * before the request reaches Next.js.
+ * before the request reaches Next.js, AND you have multiple admins who need
+ * separate rate-limit buckets.
  */
 export function clientKey(req: NextRequest): string {
   if (process.env.ADMIN_TRUST_PROXY_HEADERS !== 'true') return 'direct';
@@ -23,8 +30,13 @@ export function clientKey(req: NextRequest): string {
   return 'direct';
 }
 
-export function hashSecret(value: string) {
-  return crypto.createHash('sha256').update(value).digest('hex');
+export async function hashSecret(value: string): Promise<string> {
+  const salt = await bcrypt.genSalt(12);
+  return bcrypt.hash(value, salt);
+}
+
+export async function verifySecret(value: string, hash: string): Promise<boolean> {
+  return bcrypt.compare(value, hash);
 }
 
 export function timingSafeEqualText(a: string, b: string) {
@@ -46,7 +58,7 @@ export function isDevMode() {
 
 export async function sendTelegram(text: string) {
   if (isDevMode()) {
-    console.log(`[DEV TELEGRAM] ${text}`);
+    console.log(`[DEV MODE - AUDIT LOG SUPPRESSED] ${text}`);
     return;
   }
 
@@ -97,5 +109,21 @@ export function notifyRateLimitHit(context: string, key: string, windowMs: numbe
       `confirmed the panel is only reachable through a trusted proxy.`
   ).catch((err) =>
     console.error('[security] rate-limit alert failed to send:', err instanceof Error ? err.message : err)
+  );
+}
+
+// ── Startup warnings (logged once on module load) ──────────────────────────────
+if (process.env.NODE_ENV === 'production' && process.env.ADMIN_TRUST_PROXY_HEADERS !== 'true') {
+  console.warn(
+    '[security] ADMIN_TRUST_PROXY_HEADERS is not set to "true" in production. ' +
+    'All clients share a single rate-limit bucket ("direct"). If you have multiple admins, ' +
+    'consider enabling it once the panel is only reachable through a trusted proxy.'
+  );
+}
+if (isDevMode()) {
+  console.warn(
+    '[security] ADMIN_DEV_MODE is "true". Telegram audit logging is SUPPRESSED — ' +
+    'actions are only logged to console with [DEV MODE - AUDIT LOG SUPPRESSED] prefix. ' +
+    'Never use this setting in production.'
   );
 }

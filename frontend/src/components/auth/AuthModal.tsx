@@ -247,6 +247,8 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
 
           {error && (
             <div className="mb-4 px-4 py-3 bg-red-950/40 border border-red-500/30 rounded text-xs text-red-200">
+              {/* React JSX automatically escapes HTML in interpolated values, so {error}
+                  is safe from XSS even if the backend returns unexpected content. */}
               {error}
             </div>
           )}

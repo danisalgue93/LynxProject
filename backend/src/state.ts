@@ -32,8 +32,11 @@ import type {
 const STARTING_SOL = 0;
 const STARTING_LYNX = 0;
 const LYNX_BURN_TWAP_WINDOW_MS = 30 * 60 * 1000;
-const LYNX_BURN_TWAP_MIN_TRADES = 3;
-const LYNX_BURN_TWAP_MIN_VOLUME = 50;
+// Security thresholds against TWAP manipulation (BE-11).
+// Raising these makes it significantly more expensive for an attacker to
+// fabricate enough volume to influence the TWAP price used for LYNX burn calculations.
+const LYNX_BURN_TWAP_MIN_TRADES = 10;
+const LYNX_BURN_TWAP_MIN_VOLUME = 500;
 
 function id(prefix: string) {
   return `${prefix}_${randomUUID()}`;

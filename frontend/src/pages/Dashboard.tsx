@@ -22,7 +22,7 @@ import { ArrowUpRight, Zap } from 'lucide-react';
 import { Market } from '../types';
 import { useProgram } from '../hooks/useProgram';
 import { eventBus } from '../lib/eventBus';
-import { API_BASE_URL } from '../lib/api';
+import { API_BASE_URL, getAccessToken } from '../lib/api';
 import { io } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
 import { useWallet } from '@solana/wallet-adapter-react';
@@ -49,12 +49,16 @@ export function Dashboard() {
 
   useEffect(() => {
     try {
-      const socket = io(API_BASE_URL, { transports: ['websocket'] });
+      const token = getAccessToken();
+      const socket = io(API_BASE_URL, { 
+        transports: ['websocket'],
+        auth: { token }
+      });
       socketRef.current = socket;
       socket.on('connect', () => {
         if (activeWallet) socket.emit('identify', activeWallet);
       });
-      const events = ['market:created','market:updated','duel:created','duel:accepted','orderbook:updated','portfolio:updated','portfolio:updated:private','dao:proposal-created','dao:proposal-updated','dev:reset','crypto:tx'];
+      const events = ['market:created','market:updated','duel:created','duel:accepted','orderbook:updated','portfolio:updated','portfolio:updated:private','dao:proposal-created','dao:proposal-updated','crypto:tx'];
       for (const ev of events) {
         socket.on(ev, (payload: any) => {
           eventBus.dispatchEvent(new CustomEvent(ev, { detail: payload }));

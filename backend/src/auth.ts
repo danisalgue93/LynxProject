@@ -1,20 +1,16 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
-const DEFAULT_JWT_SECRET = 'dev-secret-key-change-in-production';
-const DEFAULT_REFRESH_SECRET = 'dev-refresh-secret-key-change-in-production';
-const JWT_SECRET: string = process.env.JWT_SECRET || DEFAULT_JWT_SECRET;
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is required. Generate one with: openssl rand -hex 64');
+}
+if (!process.env.REFRESH_SECRET) {
+  throw new Error('REFRESH_SECRET environment variable is required. Generate one with: openssl rand -hex 64');
+}
+const JWT_SECRET: string = process.env.JWT_SECRET;
 const JWT_EXPIRY: string = process.env.JWT_EXPIRY || '15m';
-const REFRESH_SECRET: string = process.env.REFRESH_SECRET || DEFAULT_REFRESH_SECRET;
+const REFRESH_SECRET: string = process.env.REFRESH_SECRET;
 const REFRESH_EXPIRY: string = process.env.REFRESH_EXPIRY || '7d';
-
-// Fail fast in production if the secret is the insecure default or missing
-if (process.env.NODE_ENV === 'production' && JWT_SECRET === DEFAULT_JWT_SECRET) {
-  throw new Error('JWT_SECRET must be set to a secure value in production. Do not use the default.');
-}
-if (process.env.NODE_ENV === 'production' && REFRESH_SECRET === DEFAULT_REFRESH_SECRET) {
-  throw new Error('REFRESH_SECRET must be set to a secure value in production. Do not use the default.');
-}
 
 export interface AuthPayload {
   userId: string;

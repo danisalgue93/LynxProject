@@ -100,4 +100,8 @@ pub enum LynxError {
     FillTooLarge,
     #[msg("Order has no remaining amount left")]
     OrderFullyFilled,
+
+    // --- Protocol duel exposure (SC-03) ---
+    #[msg("Protocol duel exposure limit reached, cannot create more 1v1vProtocol duels")]
+    ProtocolDuelExposureExceeded,
 }

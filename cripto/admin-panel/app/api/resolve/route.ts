@@ -8,6 +8,7 @@ import {
   disputeResolution,
   finalizeResolution,
   fetchOpenProposals,
+  fetchPendingMarkets,
   type OutcomeName,
 } from '@/lib/solana';
 import { clientKey, notifyRateLimitHit, sendTelegram } from '@/lib/security';
@@ -53,6 +54,20 @@ export async function POST(req: NextRequest) {
       if (confirmation !== `PROPOSE ${result}`) {
         return NextResponse.json({ error: `Type PROPOSE ${result} to confirm` }, { status: 400 });
       }
+
+      // AP-26: Server-side validation — oracle_deadline must have passed
+      const markets = await fetchPendingMarkets();
+      const market = markets.find((m) => m.pubkey === marketPubkey);
+      if (market) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        if (market.oracleDeadline > nowSec) {
+          return NextResponse.json(
+            { error: `Oracle deadline has not passed yet (deadline: ${market.oracleDeadline}, now: ${nowSec}). Wait ${market.oracleDeadline - nowSec}s.` },
+            { status: 400 }
+          );
+        }
+      }
+
       const { signature, proposalPubkey } = await proposeResolveMarketAdmin(marketPubkey, result as OutcomeName);
       sendTelegram(
         `*Lynx: nueva propuesta de resolucion (fallback admin)*\n\nMercado: \`${marketPubkey}\`\nResultado propuesto: *${result}*\nProposal: \`${proposalPubkey}\`\nTx: \`${signature}\`\n\nHace falta la aprobacion del OTRO admin antes de poder ejecutarla.`

@@ -70,3 +70,9 @@ pub const RATIO_FLOOR_BPS: u64 = 250;
 // Escala usada para representar precios fraccionarios (lamports por
 // micro-LYNX) sin usar numeros de punto flotante on-chain.
 pub const PRICE_SCALE: u128 = 1_000_000_000;
+
+// --- Protocol duel exposure cap (SC-03) ---
+// Maximum total SOL (lamports) the protocol can be simultaneously exposed
+// to across all active 1v1vProtocol duels. Roughly 1 000 SOL as a starting
+// value; configurable per-deployment via governance.
+pub const MAX_PROTOCOL_DUEL_EXPOSURE_LAMPORTS: u64 = 1_000_000_000_000; // 1 000 SOL

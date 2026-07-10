@@ -25,10 +25,19 @@ pub struct ProtocolConfig {
     // Marca si este ProtocolConfig ya tiene un Multisig inicializado
     // (init_multisig es una operacion de una sola vez).
     pub multisig_initialized: bool,
+    // --- Protocol duel exposure management (SC-03) ---
+    // Current total SOL (lamports) the protocol is exposed to across all
+    // active 1v1vProtocol duels. Incremented on creation, decremented on
+    // resolution/cancellation so it never drifts.
+    pub protocol_duel_exposure: u64,
+    // Maximum allowed protocol_duel_exposure (lamports). Enforced in
+    // create_duel when duel_type == OneVOneVProtocol. Configurable via
+    // governance so it can be raised as the treasury grows.
+    pub max_protocol_duel_exposure: u64,
 }
 
 impl ProtocolConfig {
-    pub const LEN: usize = 8 + 32 * 5 + 8 * 4 + 16 + 1 * 2 + 1 + 1 + 31;
+    pub const LEN: usize = 8 + 32 * 5 + 8 * 4 + 16 + 1 * 2 + 1 + 1 + 8 * 2 + 15;
 }
 
 #[account]
