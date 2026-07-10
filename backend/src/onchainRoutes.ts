@@ -50,10 +50,19 @@ onchainRouter.get('/api/onchain/spot-orders', (_req, res) => {
 
 // Llamado por el frontend justo despues de confirmar una transaccion propia,
 // para refrescar el indexador ya (en vez de esperar al proximo poll
-// periodico). Es solo una optimizacion de latencia — no hace falta
-// autenticacion porque no revela ni cambia nada que no este ya publico
-// on-chain, y el peor caso de abuso es forzar refrescos extra contra el RPC.
+// periodico). No requiere autenticacion (no revela nada privado) pero
+// si tiene throttle para evitar que un atacante fuerce llamadas RPC costosas.
+// La autenticacion del frontend (JWT) ya protege contra uso anónimo masivo
+// a traves de nginx; este es un segundo nivel de defensa.
+let lastSyncAt = 0;
+const SYNC_MIN_INTERVAL_MS = 3_000; // max 1 forced refresh per 3 seconds
 onchainRouter.post('/api/onchain/sync', async (_req, res) => {
+  const now = Date.now();
+  if (now - lastSyncAt < SYNC_MIN_INTERVAL_MS) {
+    res.status(429).json({ error: 'Sync too frequent, try again later' });
+    return;
+  }
+  lastSyncAt = now;
   await forceRefresh();
   res.json({ ok: true });
 });

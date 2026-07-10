@@ -16,9 +16,9 @@ export async function middleware(req: NextRequest) {
     return new NextResponse('Forbidden host', { status: 403 });
   }
 
-  // AP-21: Rate limit all requests (generous 100 req/15min for GET traffic)
+  // AP-21: Rate limit all requests (30 req/15min — admin panel is low-traffic)
   // AP-20: In-memory rate limiting is acceptable for single-instance admin panel
-  if (!rateLimit('global', 100, 15 * 60 * 1000)) {
+  if (!rateLimit('global', 30, 15 * 60 * 1000)) {
     return new NextResponse('Too many requests', { status: 429 });
   }
 

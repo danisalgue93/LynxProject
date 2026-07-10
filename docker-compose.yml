@@ -28,6 +28,25 @@ services:
     restart: unless-stopped
     # AP-03: Security restrictions for database service (no user/cap_drop to avoid breaking pg_isready)
     security_opt: ["no-new-privileges:true"]
+    # Enable TLS for PostgreSQL connections (matches sslmode=require in backend DATABASE_URL).
+    # For production, mount real certificates at /var/lib/postgresql/certs/ instead of
+    # using the self-signed certs generated here (which are sufficient for
+    # encryption-in-transit within a Docker network but lack CA trust).
+    command: >
+      sh -c "
+        if [ ! -f /var/lib/postgresql/certs/server.crt ]; then
+          mkdir -p /var/lib/postgresql/certs &&
+          openssl req -new -x509 -days 3650 -nodes
+            -text -keyout /var/lib/postgresql/certs/server.key
+            -out /var/lib/postgresql/certs/server.crt
+            -subj '/CN=postgres-internal' 2>/dev/null;
+        fi &&
+        chmod 600 /var/lib/postgresql/certs/server.key &&
+        echo 'ssl = on' >> /var/lib/postgresql/postgresql.conf &&
+        echo "ssl_cert_file = '/var/lib/postgresql/certs/server.crt'" >> /var/lib/postgresql/postgresql.conf &&
+        echo "ssl_key_file = '/var/lib/postgresql/certs/server.key'" >> /var/lib/postgresql/postgresql.conf &&
+        docker-entrypoint.sh postgres
+      "
     deploy:
       resources:
         limits:

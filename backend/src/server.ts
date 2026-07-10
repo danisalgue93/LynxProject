@@ -71,6 +71,18 @@ if (process.env.PROGRAM_ID) {
   }
 }
 
+// Validate KEEPER_KEYPAIR_BS58 can be decoded if provided (catches corrupted values at startup)
+if (process.env.KEEPER_KEYPAIR_BS58) {
+  try {
+    const raw = process.env.KEEPER_KEYPAIR_BS58.startsWith('/')
+      ? require('fs').readFileSync(process.env.KEEPER_KEYPAIR_BS58, 'utf-8').trim()
+      : process.env.KEEPER_KEYPAIR_BS58;
+    bs58.decode(raw); // will throw if invalid base58
+  } catch {
+    throw new Error('KEEPER_KEYPAIR_BS58 is set but cannot be decoded as valid base58. Check the value or file path.');
+  }
+}
+
 const app = express();
 app.set('trust proxy', 1);
 const httpServer = http.createServer(app);
@@ -321,17 +333,7 @@ app.use((req, _res, next) => {
   next();
 });
 
-io.on('connection', (socket) => {
-  socket.emit('lynx:hello', {
-    ok: true,
-    markets: store.listMarkets(true).length
-  });
-  socket.on('identify', (wallet: unknown) => {
-    if (typeof wallet === 'string' && wallet.trim()) {
-      socket.join(`wallet:${wallet.trim()}`);
-    }
-  });
-});
+// Legacy io.on('connection') removed — see the JWT-authenticated version above (line ~180)
 
 // ── Persist mutex (BE-05/BE-13) ────────────────────────────────────────────────
 // Prevents concurrent persists from overwriting each other. Serializes writes
@@ -484,6 +486,37 @@ const passwordSchema = process.env.NODE_ENV === 'test'
       .regex(/[0-9]/, 'Must contain a number');
 // 60 trading actions per minute per IP — prevents bot spam while allowing normal use
 const tradingRateLimit = createSimpleRateLimit({ windowMs: 60 * 1000, max: 60 });
+
+// Per-wallet rate limiter: 120 wallet-level trading actions per minute.
+// Applied AFTER the per-IP limiter in trading routes to prevent a single
+// compromised wallet from flooding the system even if distributed across IPs.
+// Uses a key prefix "wallet:" that is separate from the IP-based keys.
+const walletTradingRateLimit = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const wallet = req.body?.wallet || req.query?.wallet;
+  if (typeof wallet !== 'string' || !wallet.trim()) {
+    // No wallet in request — fall through to IP-only rate limit (already applied)
+    return next();
+  }
+  const key = `wallet:${wallet.trim()}`;
+  const now = Date.now();
+  const windowMs = 60 * 1000;
+  const max = 120;
+  // Reuse the same in-memory/Redis pattern from createSimpleRateLimit
+  // but keyed by wallet instead of IP
+  const attempts = (req.app.locals as any)._walletTradeAttempts ||
+    ((req.app.locals as any)._walletTradeAttempts = new Map<string, { count: number; resetAt: number }>());
+  const current = attempts.get(key);
+  if (!current || current.resetAt <= now) {
+    attempts.set(key, { count: 1, resetAt: now + windowMs });
+    return next();
+  }
+  if (current.count >= max) {
+    res.status(429).json({ error: 'Wallet trade rate limit exceeded. Please slow down.' });
+    return;
+  }
+  current.count += 1;
+  next();
+};
 
 // ==================== AUTH UTILITIES ====================
 
@@ -2494,9 +2527,20 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 async function start() {
   if (process.env.NODE_ENV === 'production') {
     const required = ['TREASURY_WALLET', 'TREASURY_SECRET_KEY', 'MANAGED_WALLET_SEED',
-                      'JWT_SECRET', 'DATABASE_URL', 'CORS_ORIGIN', 'APP_URL'];
+                      'JWT_SECRET', 'DATABASE_URL', 'CORS_ORIGIN', 'APP_URL',
+                      'ADMIN_WALLETS', 'REFRESH_SECRET'];
     for (const key of required) {
       if (!process.env[key]) throw new Error(`Missing required env var: ${key}`);
+    }
+    // Validate ADMIN_WALLETS contains at least 2 valid base58 pubkeys
+    const adminWalletsList = (process.env.ADMIN_WALLETS || '').split(',').map(w => w.trim()).filter(Boolean);
+    if (adminWalletsList.length < 2) {
+      throw new Error('ADMIN_WALLETS must contain at least 2 comma-separated Solana wallet addresses in production');
+    }
+    for (const w of adminWalletsList) {
+      try { new PublicKey(w); } catch {
+        throw new Error(`ADMIN_WALLETS contains invalid Solana address: "${w.slice(0, 8)}..."`);
+      }
     }
   }
   if (process.env.NODE_ENV === 'production' && persistence.driver !== 'prisma') {

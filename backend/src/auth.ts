@@ -12,6 +12,18 @@ const JWT_EXPIRY: string = process.env.JWT_EXPIRY || '15m';
 const REFRESH_SECRET: string = process.env.REFRESH_SECRET;
 const REFRESH_EXPIRY: string = process.env.REFRESH_EXPIRY || '7d';
 
+// Validate minimum secret length — short secrets are trivially brutable.
+// 64 hex chars = 32 bytes of entropy, which is the standard for JWT signing keys.
+if (JWT_SECRET.length < 64) {
+  throw new Error(`JWT_SECRET must be at least 64 hex characters (32 bytes of entropy). Current length: ${JWT_SECRET.length}`);
+}
+if (REFRESH_SECRET.length < 64) {
+  throw new Error(`REFRESH_SECRET must be at least 64 hex characters (32 bytes of entropy). Current length: ${REFRESH_SECRET.length}`);
+}
+if (JWT_SECRET === REFRESH_SECRET) {
+  throw new Error('JWT_SECRET and REFRESH_SECRET must be different values. If one is compromised, the other should remain secure.');
+}
+
 export interface AuthPayload {
   userId: string;
   email: string;
