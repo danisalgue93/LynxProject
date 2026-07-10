@@ -2,6 +2,13 @@ const rawApiUrl = import.meta.env.VITE_API_URL || '';
 
 export const API_BASE_URL = rawApiUrl.replace(/\/$/, '');
 
+if (typeof window !== 'undefined' && import.meta.env.PROD && !API_BASE_URL) {
+  console.error(
+    '[lynx] VITE_API_URL is not set in production. API calls will fail. ' +
+    'Set it in your .env or build arguments.'
+  );
+}
+
 let accessToken: string | null = null;
 
 export function setAccessToken(token: string | null) {

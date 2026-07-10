@@ -76,3 +76,11 @@ pub const PRICE_SCALE: u128 = 1_000_000_000;
 // to across all active 1v1vProtocol duels. Roughly 1 000 SOL as a starting
 // value; configurable per-deployment via governance.
 pub const MAX_PROTOCOL_DUEL_EXPOSURE_LAMPORTS: u64 = 1_000_000_000_000; // 1 000 SOL
+
+/// Maximum single order size in lamports (100 SOL). Prevents accidental
+/// catastrophic trades and reduces the impact of a compromised keypair.
+pub const MAX_ORDER_LAMPORTS: u64 = 100_000_000_000;
+
+/// Minimum single order size in lamports (0.001 SOL). Prevents dust orders
+/// that waste on-chain storage rent without meaningful economic activity.
+pub const MIN_ORDER_LAMPORTS: u64 = 1_000_000;

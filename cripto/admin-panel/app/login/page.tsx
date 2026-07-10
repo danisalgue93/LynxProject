@@ -58,7 +58,7 @@ export default function LoginPage() {
         <div className="card" style={{ padding: 28 }}>
           <h1 style={{ margin: 0, fontSize: 24 }}>Lynx Emergency Admin</h1>
           <p className="muted" style={{ marginTop: 8 }}>
-            Manual resolution is locked behind password, Telegram OTP and on-chain timeout checks.
+            Manual resolution is locked behind password, 2FA (TOTP or Telegram), and on-chain timeout checks.
           </p>
 
           {step === 'password' ? (
@@ -77,14 +77,14 @@ export default function LoginPage() {
               </label>
               {error && <p className="danger">{error}</p>}
               <button disabled={loading} style={primaryButtonStyle}>
-                {loading ? 'Checking...' : 'Send Telegram OTP'}
+                {loading ? 'Checking...' : 'Continue'}
               </button>
             </form>
           ) : (
             <form onSubmit={verifyOtp} style={{ display: 'grid', gap: 14, marginTop: 24 }}>
               <div className="card" style={{ padding: 14, background: '#172554' }}>
                 <p style={{ margin: 0, color: '#bfdbfe', fontSize: 13 }}>
-                  A 6-digit code was sent to your Telegram. It expires in 5 minutes.
+                  Enter your 2FA code from your authenticator app (TOTP), or use the Telegram OTP that was sent.
                 </p>
                 {devOtp && (
                   <p style={{ margin: '10px 0 0', color: '#fff', fontSize: 18, fontWeight: 800 }}>
@@ -94,7 +94,7 @@ export default function LoginPage() {
               </div>
               <label>
                 <span className="muted" style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>
-                  Telegram OTP
+                  2FA code (TOTP or Telegram OTP)
                 </span>
                 <input
                   inputMode="numeric"
@@ -103,6 +103,7 @@ export default function LoginPage() {
                   value={otp}
                   onChange={(event) => setOtp(event.target.value.replace(/\D/g, ''))}
                   required
+                  autoFocus
                   style={{ ...inputStyle, textAlign: 'center', letterSpacing: 8, fontSize: 24 }}
                 />
               </label>

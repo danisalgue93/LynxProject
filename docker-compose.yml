@@ -74,7 +74,7 @@ services:
     volumes:
       - ./scripts:/scripts:ro
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-lynx}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lynx_market}?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER:-lynx}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lynx_market}?schema=public&sslmode=require
     depends_on:
       postgres:
         condition: service_healthy
@@ -90,7 +90,7 @@ services:
     environment:
       NODE_ENV:             production
       PORT:                 4000
-      DATABASE_URL:         postgresql://${POSTGRES_USER:-lynx}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lynx_market}?schema=public
+      DATABASE_URL:         postgresql://${POSTGRES_USER:-lynx}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lynx_market}?schema=public&sslmode=require
       STORE_DRIVER:         prisma
       REDIS_URL:            redis://redis:6379
       JWT_SECRET:           ${JWT_SECRET:?JWT_SECRET is required}
@@ -100,12 +100,8 @@ services:
       CORS_ORIGIN:          ${CORS_ORIGIN:?CORS_ORIGIN is required}
       ADMIN_WALLETS:        ${ADMIN_WALLETS:?ADMIN_WALLETS is required}
       TREASURY_WALLET:      ${TREASURY_WALLET:?TREASURY_WALLET is required}
-      TREASURY_SECRET_KEY:  ${TREASURY_SECRET_KEY:?TREASURY_SECRET_KEY is required}
-      # WARNING: TREASURY_SECRET_KEY above is set via a plain env var, which is
-      # visible via `docker inspect`. For production, use Docker secrets
-      # (https://docs.docker.com/engine/swarm/secrets/) or an external secrets
-      # manager (e.g. HashiCorp Vault, AWS Secrets Manager) instead.
-      MANAGED_WALLET_SEED:  ${MANAGED_WALLET_SEED:?MANAGED_WALLET_SEED is required}
+      TREASURY_SECRET_KEY:  ${TREASURY_SECRET_KEY:-/run/secrets/treasury_secret_key}
+      MANAGED_WALLET_SEED:  ${MANAGED_WALLET_SEED:-/run/secrets/managed_wallet_seed}
       SOLANA_CLUSTER:       ${SOLANA_CLUSTER:-mainnet-beta}
       SOLANA_RPC_URL:       ${SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}
       PROGRAM_ID:           ${PROGRAM_ID:-}
@@ -136,6 +132,9 @@ services:
       migrate:
         condition: service_completed_successfully
     networks: [lynx]
+    secrets:
+      - treasury_secret_key
+      - managed_wallet_seed
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:4000/api/health || exit 1"]
       interval: 30s
@@ -232,3 +231,12 @@ services:
     entrypoint: >
       sh -c "trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done"
     profiles: [certbot]   # only starts when explicitly included: --profile certbot
+
+# ── Docker Secrets (external) ──────────────────────────────────────────────────
+# Create with: docker secret create treasury_secret_key /path/to/key
+#   and:       docker secret create managed_wallet_seed /path/to/seed
+secrets:
+  treasury_secret_key:
+    external: true
+  managed_wallet_seed:
+    external: true

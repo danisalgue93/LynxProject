@@ -22,7 +22,7 @@ import type { Currency, OrderSide, OrderStatus, Position } from './types.js';
 import { generateToken, generateRefreshToken, verifyToken, verifyRefreshToken, hashPassword, hashPasswordSync, verifyPassword, extractToken } from './auth.js';
 import { sendVerificationEmail, sendPasswordResetEmail, isEmailConfigured } from './email.js';
 import { onchainRouter } from './onchainRoutes.js';
-import { startChainIndexer, getIndexedMarket, listOpenOrdersForMarket, listPositionsForOwner, listOpenSpotOrders, fromOnChainOutcomeName, verifyOnChainMarketCreation } from './chain.js';
+import { startChainIndexer, getIndexedMarket, listOpenOrdersForMarket, listPositionsForOwner, listOpenSpotOrders, fromOnChainOutcomeName, verifyOnChainMarketCreation, getIndexerStatus } from './chain.js';
 import { proposeCredit, approveCredit, getCreditRequest, markExecuted, isReadyToExecute, listPendingCredits, proposeMarketResolution, approveMarketResolution, getMarketResolutionRequest, markResolutionExecuted, isResolutionReadyToExecute, listPendingMarketResolutions } from './creditApprovals.js';
 
 // ── Distributed locking (BE-17) ───────────────────────────────────────────────
@@ -62,12 +62,39 @@ async function releaseLock(key: string): Promise<void> {
   inMemoryLocks.delete(key);
 }
 
+// Validate PROGRAM_ID format early (chain.ts parses it lazily)
+if (process.env.PROGRAM_ID) {
+  try {
+    new PublicKey(process.env.PROGRAM_ID);
+  } catch {
+    throw new Error(`PROGRAM_ID "${process.env.PROGRAM_ID}" is not a valid Solana public key`);
+  }
+}
+
 const app = express();
 app.set('trust proxy', 1);
 const httpServer = http.createServer(app);
 const port = Number(process.env.PORT || 4000);
 const store = new LynxState();
 const persistence = createPersistence();
+
+/**
+ * Reads a secret value that may be either a literal string or a file path.
+ * If the value starts with "/", it is treated as a Docker/K8s secrets mount path
+ * and the file contents are read. Otherwise the value is returned as-is.
+ */
+async function readSecret(value: string | undefined, name: string): Promise<string | undefined> {
+  if (!value) return undefined;
+  if (value.startsWith('/')) {
+    try {
+      const { readFileSync } = await import('fs');
+      return readFileSync(value, 'utf-8').trim();
+    } catch {
+      throw new Error(`Secret file ${name} points to ${value} but the file cannot be read`);
+    }
+  }
+  return value;
+}
 
 type SolWithdrawalResult = { ok: true; signature: string } | { ok: false; error: string };
 type SolWithdrawalSender = (params: { toWallet: string; amountSol: number }) => Promise<SolWithdrawalResult>;
@@ -520,8 +547,17 @@ function managedWalletForUser(userId: string, email: string) {
   return `MAGIC:${digest}`;
 }
 
-function isAdminWallet(wallet?: string) {
-  return Boolean(wallet && adminWalletSet.has(wallet));
+function isAdminWallet(wallet?: string): boolean {
+  if (!wallet) return false;
+  // Check env-var defined admin wallets first (always available, even before DB loads)
+  if (adminWalletSet.has(wallet)) return true;
+  // Check persisted user roles (allows promoting admins via DB without redeploy)
+  const userId = usersByWallet.get(wallet);
+  if (userId) {
+    const user = users.get(userId);
+    if (user?.role === 'admin') return true;
+  }
+  return false;
 }
 
 function publicUser(user: AuthUser) {
@@ -846,22 +882,25 @@ async function verifyOnChainSolDeposit(params: {
   return { ok: true };
 }
 
-let treasuryKeypair: Keypair | null = null;
-function getTreasuryKeypair(): Keypair {
-  if (!treasuryKeypair) {
-    const secret = process.env.TREASURY_SECRET_KEY;
-    if (!secret) {
-      throw new Error('TREASURY_SECRET_KEY must be set to send on-chain SOL withdrawals.');
-    }
-    // BE-06: Warn if treasury key is loaded from a plain env var rather than a file/secret manager.
-    // This is only a warning — true HSM/Docker Secrets integration is out of scope for this code-only fix.
-    console.warn(
-      '[security] TREASURY_SECRET_KEY is loaded from a plain environment variable. ' +
-      'For production, use Docker secrets or an external secrets manager to avoid exposure via `docker inspect`.'
-    );
-    treasuryKeypair = Keypair.fromSecretKey(bs58.decode(secret));
+let treasuryKeypairPromise: Promise<Keypair> | null = null;
+async function getTreasuryKeypair(): Promise<Keypair> {
+  if (!treasuryKeypairPromise) {
+    treasuryKeypairPromise = (async () => {
+      const secret = await readSecret(process.env.TREASURY_SECRET_KEY, 'TREASURY_SECRET_KEY');
+      if (!secret) {
+        throw new Error('TREASURY_SECRET_KEY must be set to send on-chain SOL withdrawals.');
+      }
+      // BE-06: Warn if treasury key is loaded from a plain env var rather than a file/secret manager.
+      if (!process.env.TREASURY_SECRET_KEY?.startsWith('/')) {
+        console.warn(
+          '[security] TREASURY_SECRET_KEY is loaded from a plain environment variable. ' +
+          'For production, use Docker secrets or an external secrets manager to avoid exposure via `docker inspect`.'
+        );
+      }
+      return Keypair.fromSecretKey(bs58.decode(secret));
+    })();
   }
-  return treasuryKeypair;
+  return treasuryKeypairPromise;
 }
 
 /**
@@ -872,8 +911,8 @@ function getTreasuryKeypair(): Keypair {
  * keypair from that same managed id using a server-only seed, so the same
  * managed id always resolves to the same on-chain address.
  */
-function deriveManagedWalletKeypair(managedId: string): Keypair {
-  const seed = process.env.MANAGED_WALLET_SEED;
+async function deriveManagedWalletKeypair(managedId: string): Promise<Keypair> {
+  const seed = await readSecret(process.env.MANAGED_WALLET_SEED, 'MANAGED_WALLET_SEED');
   if (!seed) {
     throw new Error('MANAGED_WALLET_SEED must be set to send on-chain SOL withdrawals for managed accounts.');
   }
@@ -897,7 +936,7 @@ async function sendOnChainSolWithdrawal(params: {
   let recipientPubkey: PublicKey;
   try {
     recipientPubkey = toWallet.startsWith('MAGIC:')
-      ? deriveManagedWalletKeypair(toWallet).publicKey
+      ? (await deriveManagedWalletKeypair(toWallet)).publicKey
       : new PublicKey(toWallet);
   } catch (err: any) {
     return { ok: false, error: toWallet.startsWith('MAGIC:') ? (err?.message || 'Managed wallet is not configured for on-chain withdrawals') : 'SOL withdrawals require a connected on-chain wallet address' };
@@ -905,7 +944,7 @@ async function sendOnChainSolWithdrawal(params: {
 
   let payer: Keypair;
   try {
-    payer = getTreasuryKeypair();
+    payer = await getTreasuryKeypair();
   } catch (err: any) {
     return { ok: false, error: err?.message || 'Treasury wallet is not configured' };
   }
@@ -927,6 +966,46 @@ async function sendOnChainSolWithdrawal(params: {
     return { ok: false, error: `Unable to send on-chain withdrawal: ${err?.message || 'RPC error'}` };
   }
 }
+
+const sendOnChainLynxWithdrawal: SolWithdrawalSender = async ({ toWallet, amountSol }) => {
+  let secretKey: string | undefined;
+  try {
+    secretKey = await readSecret(process.env.TREASURY_SECRET_KEY, 'TREASURY_SECRET_KEY');
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'TREASURY_SECRET_KEY file cannot be read' };
+  }
+  if (!secretKey) return { ok: false, error: 'TREASURY_SECRET_KEY not configured' };
+  const lynxMintStr = process.env.LYNX_MINT;
+  if (!lynxMintStr) return { ok: false, error: 'LYNX_MINT not configured' };
+
+  try {
+    const { Keypair, PublicKey, Transaction, TransactionInstruction } = await import('@solana/web3.js');
+    const { TOKEN_PROGRAM_ID, getAssociatedTokenAddress, createTransferInstruction } = await import('@solana/spl-token');
+    const bs58Mod = await import('bs58');
+
+    const treasuryKp = Keypair.fromSecretKey(bs58Mod.default.decode(secretKey));
+    const lynxMint = new PublicKey(lynxMintStr);
+    const toPubkey = new PublicKey(toWallet);
+    const connection = getSolanaConnection();
+
+    const treasuryAta = await getAssociatedTokenAddress(lynxMint, treasuryKp.publicKey);
+    const userAta = await getAssociatedTokenAddress(lynxMint, toPubkey);
+
+    // amountSol here is actually LYNX amount (6 decimals)
+    const amountMicroLynx = BigInt(Math.round(amountSol * 1_000_000));
+
+    const ix = createTransferInstruction(treasuryAta, userAta, treasuryKp.publicKey, amountMicroLynx);
+    const tx = new Transaction().add(ix);
+    tx.feePayer = treasuryKp.publicKey;
+    const { blockhash } = await connection.getLatestBlockhash('confirmed');
+    tx.recentBlockhash = blockhash;
+
+    const signature = await sendAndConfirmTransaction(connection, tx, [treasuryKp], { commitment: 'confirmed' });
+    return { ok: true, signature };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+};
 
 function requireApprovedWallet(res: express.Response, wallet: string) {
   if (!store.isWalletApproved(wallet)) {
@@ -1348,6 +1427,7 @@ app.get('/api/health', (_req, res) => {
       heapTotalMB: Math.round(mem.heapTotal / 1_048_576),
       rssMB: Math.round(mem.rss / 1_048_576),
     },
+    chain: getIndexerStatus(),
   });
 });
 
@@ -2045,10 +2125,34 @@ app.post('/api/ledger/withdraw', asyncRoute(async (req, res) => {
   if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   if (!requireApprovedWallet(res, wallet)) return;
-  // On-chain LYNX (SPL) withdrawals are not yet implemented — only SOL is supported.
-  // Blocking explicitly prevents an internal debit without an on-chain movement.
   if (body.currency === 'LYNX') {
-    return res.status(501).json({ error: 'LYNX withdrawals are not yet available. Only SOL withdrawals are currently supported.' });
+    if (!process.env.LYNX_MINT) {
+      return res.status(501).json({ error: 'LYNX withdrawals require LYNX_MINT to be configured.' });
+    }
+    let withdrawalResult: ReturnType<typeof store.withdraw>;
+    try {
+      withdrawalResult = store.withdraw({ wallet, currency: body.currency, amount: body.amount });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+      return;
+    }
+    await persist();
+    const onChainResult = await sendOnChainLynxWithdrawal({ toWallet: wallet, amountSol: body.amount });
+    if (!onChainResult.ok) {
+      store.deposit({ wallet, currency: body.currency, amount: body.amount, provider: 'INTERNAL',
+        reference: `reversal:${withdrawalResult.ledgerEntry.id}` });
+      await persist();
+      res.status(400).json({ error: onChainResult.error });
+      return;
+    }
+    const withdrawalSignature = onChainResult.signature;
+    withdrawalResult.ledgerEntry.reference = withdrawalSignature;
+    store.addTransaction({ signature: withdrawalSignature, wallet, intent: { type: 'WITHDRAWAL', currency: body.currency, amount: body.amount } });
+    await persist();
+    emit('ledger:withdrawal', { wallet, ledgerEntry: withdrawalResult.ledgerEntry, signature: withdrawalSignature });
+    emitPortfolioUpdated(wallet, withdrawalResult.portfolio);
+    res.json({ portfolio: withdrawalResult.portfolio, ledgerEntry: withdrawalResult.ledgerEntry, signature: withdrawalSignature });
+    return;
   }
 
   if (body.currency === 'SOL') {

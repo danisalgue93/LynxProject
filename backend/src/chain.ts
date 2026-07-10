@@ -19,6 +19,31 @@
 import { Connection, PublicKey, Transaction, TransactionInstruction, Keypair, sendAndConfirmTransaction } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } from '@solana/spl-token';
 import bs58 from 'bs58';
+import { readFileSync } from 'fs';
+
+/**
+ * If an env var value starts with "/", treat it as a file path (Docker/K8s
+ * secrets mount) and return the file contents. Otherwise return the value as-is.
+ */
+const chainLog = {
+  info: (msg: string, data?: Record<string, unknown>) => console.log(JSON.stringify({ level: 'info', module: 'chain', msg, ...data })),
+  warn: (msg: string, data?: Record<string, unknown>) => console.warn(JSON.stringify({ level: 'warn', module: 'chain', msg, ...data })),
+  error: (msg: string, data?: Record<string, unknown>) => console.error(JSON.stringify({ level: 'error', module: 'chain', msg, ...data })),
+};
+
+function loadEnvSecret(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (value.startsWith('/')) {
+    try {
+      return readFileSync(value, 'utf-8').trim();
+    } catch {
+      console.error(`[chain] Secret file referenced by env var cannot be read: ${value}`);
+      return undefined;
+    }
+  }
+  return value;
+}
+
 
 const RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
 const PROGRAM_ID = process.env.PROGRAM_ID ? new PublicKey(process.env.PROGRAM_ID) : null;
@@ -32,7 +57,7 @@ function getConnection(): Connection {
 }
 
 function getKeeperKeypair(): Keypair | null {
-  const raw = process.env.KEEPER_KEYPAIR_BS58;
+  const raw = loadEnvSecret(process.env.KEEPER_KEYPAIR_BS58);
   if (!raw) return null;
   return Keypair.fromSecretKey(bs58.decode(raw));
 }
@@ -259,24 +284,39 @@ async function refreshOnce() {
     lastRefreshAt = Date.now();
   } catch (err: any) {
     lastRefreshError = err?.message || String(err);
-    console.error('[chain] refresh failed:', lastRefreshError);
+    chainLog.error('refresh failed', { error: lastRefreshError });
   }
 }
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 let keeperTimer: ReturnType<typeof setInterval> | null = null;
+let keeperConsecutiveErrors = 0;
+const KEEPER_MAX_CONSECUTIVE_ERRORS = 5;
+const KEEPER_COOLDOWN_MS = 60_000; // 1 minute cooldown after circuit breaks
+let keeperPausedUntil = 0;
 
 export function startChainIndexer() {
   if (!PROGRAM_ID) {
-    console.warn('[chain] PROGRAM_ID not set — on-chain indexer disabled. Prediction markets will only show legacy off-chain data.');
+    chainLog.warn('PROGRAM_ID not set — on-chain indexer disabled');
     return;
   }
   refreshOnce();
   if (!refreshTimer) refreshTimer = setInterval(refreshOnce, REFRESH_INTERVAL_MS);
   if (!keeperTimer && getKeeperKeypair()) {
-    keeperTimer = setInterval(() => { runKeeperOnce().catch((err) => console.error('[chain] keeper loop error:', err)); }, KEEPER_INTERVAL_MS);
+    keeperTimer = setInterval(() => {
+      runKeeperOnce()
+        .then(() => { keeperConsecutiveErrors = 0; })
+        .catch((err) => {
+          keeperConsecutiveErrors++;
+          chainLog.error('keeper loop error', { error: err?.message, consecutive: keeperConsecutiveErrors });
+          if (keeperConsecutiveErrors >= KEEPER_MAX_CONSECUTIVE_ERRORS) {
+            keeperPausedUntil = Date.now() + KEEPER_COOLDOWN_MS;
+            chainLog.warn('keeper circuit breaker tripped', { pausedMs: KEEPER_COOLDOWN_MS });
+          }
+        });
+    }, KEEPER_INTERVAL_MS);
   } else if (!getKeeperKeypair()) {
-    console.warn('[chain] KEEPER_KEYPAIR_BS58 not set — prediction limit orders will not auto-execute. Users can still execute their own orders directly, or run the keeper separately.');
+    chainLog.warn('KEEPER_KEYPAIR_BS58 not set — keeper disabled');
   }
 }
 
@@ -333,7 +373,19 @@ export async function verifyOnChainMarketCreation(params: { marketPubkey: string
 }
 
 export function getIndexerStatus() {
-  return { enabled: !!PROGRAM_ID, lastRefreshAt, lastRefreshError, markets: marketsByPubkey.size, orders: ordersByPubkey.size, positions: positionsByPubkey.size, spotOrders: spotOrdersByPubkey.size };
+  return {
+    enabled: !!PROGRAM_ID,
+    keeperEnabled: !!getKeeperKeypair(),
+    keeperConsecutiveErrors,
+    keeperPaused: Date.now() < keeperPausedUntil,
+    keeperPausedUntil,
+    lastRefreshAt,
+    lastRefreshError,
+    markets: marketsByPubkey.size,
+    orders: ordersByPubkey.size,
+    positions: positionsByPubkey.size,
+    spotOrders: spotOrdersByPubkey.size
+  };
 }
 
 export function listIndexedMarkets(): IndexedMarket[] {
@@ -391,6 +443,7 @@ async function getConfigInfo(conn: Connection): Promise<{ lynxMint: PublicKey; t
 }
 
 export async function runKeeperOnce() {
+  if (Date.now() < keeperPausedUntil) return;
   if (!PROGRAM_ID) return;
   const keeper = getKeeperKeypair();
   if (!keeper) return;
@@ -443,15 +496,16 @@ export async function runKeeperOnce() {
       const tx = new Transaction().add(ix);
       tx.feePayer = keeper.publicKey;
       const signature = await sendAndConfirmTransaction(conn, tx, [keeper], { commitment: 'confirmed' });
-      console.log(`[chain] keeper filled order ${order.pubkey}: ${signature}`);
+      chainLog.info('keeper filled order', { order: order.pubkey, signature });
     } catch (err: any) {
       // Fallos individuales de una orden (p.ej. alguien mas la ejecuto primero,
       // o la condicion cambio justo antes de confirmar) no deben tumbar el loop.
-      console.warn(`[chain] keeper failed to fill order ${order.pubkey}:`, err?.message || err);
+      chainLog.warn('keeper failed to fill order', { order: order.pubkey, error: err?.message });
     }
   }
 
   await matchSpotOrdersOnce(keeper, conn);
+  keeperConsecutiveErrors = 0; // Reset on successful completion
 }
 
 // Cruza ordenes del libro LYNX/SOL de forma greedy (prioridad precio-tiempo),
@@ -517,9 +571,9 @@ async function matchSpotOrdersOnce(keeper: Keypair, conn: Connection) {
       const tx = new Transaction().add(ix);
       tx.feePayer = keeper.publicKey;
       const signature = await sendAndConfirmTransaction(conn, tx, [keeper], { commitment: 'confirmed' });
-      console.log(`[chain] keeper matched spot orders ${buy.pubkey} <-> ${sell.pubkey} (${fill.toString()}): ${signature}`);
+      chainLog.info('keeper matched spot orders', { buy: buy.pubkey, sell: sell.pubkey, fill: fill.toString() });
     } catch (err: any) {
-      console.warn(`[chain] keeper failed to match spot orders ${buy.pubkey} <-> ${sell.pubkey}:`, err?.message || err);
+      chainLog.warn('keeper failed to match spot orders', { buy: buy.pubkey, sell: sell.pubkey, error: err?.message });
     }
 
     remaining.set(buy.pubkey, buyRemaining - fill);

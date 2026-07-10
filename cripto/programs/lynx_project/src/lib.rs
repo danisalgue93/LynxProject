@@ -315,6 +315,8 @@ pub mod lynx_project {
 
     pub fn buy_position_sol(ctx: Context<BuyPositionSol>, outcome: Outcome, lamports: u64) -> Result<()> {
         require!(lamports > 0, LynxError::InvalidAmount);
+        require!(lamports >= MIN_ORDER_LAMPORTS, LynxError::InvalidAmount);
+        require!(lamports <= MAX_ORDER_LAMPORTS, LynxError::InvalidAmount);
         require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
         require!(outcome_is_tradeable(outcome, ctx.accounts.market.is_ternary), LynxError::InvalidOutcome);
 
@@ -347,6 +349,8 @@ pub mod lynx_project {
 
     pub fn buy_position_lynx_with_burn(ctx: Context<BuyPositionLynxWithBurn>, outcome: Outcome, amount: u64) -> Result<()> {
         require!(amount > 0, LynxError::InvalidAmount);
+        require!(amount >= MIN_ORDER_LAMPORTS, LynxError::InvalidAmount);
+        require!(amount <= MAX_ORDER_LAMPORTS, LynxError::InvalidAmount);
         require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
         require!(outcome_is_tradeable(outcome, ctx.accounts.market.is_ternary), LynxError::InvalidOutcome);
         require!(ctx.accounts.market.currency == Currency::LYNX, LynxError::InvalidCurrency);
@@ -420,6 +424,8 @@ pub mod lynx_project {
         expires_ts: i64,
     ) -> Result<()> {
         require!(lamports > 0, LynxError::InvalidAmount);
+        require!(lamports >= MIN_ORDER_LAMPORTS, LynxError::InvalidAmount);
+        require!(lamports <= MAX_ORDER_LAMPORTS, LynxError::InvalidAmount);
         require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
         require!(limit_price_bps <= BPS_DENOMINATOR, LynxError::InvalidAmount);
         require!(outcome_is_tradeable(outcome, ctx.accounts.market.is_ternary), LynxError::InvalidOutcome);
@@ -526,6 +532,8 @@ pub mod lynx_project {
         expires_ts: i64,
     ) -> Result<()> {
         require!(amount > 0, LynxError::InvalidAmount);
+        require!(amount >= MIN_ORDER_LAMPORTS, LynxError::InvalidAmount);
+        require!(amount <= MAX_ORDER_LAMPORTS, LynxError::InvalidAmount);
         require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
         require!(limit_price_bps <= BPS_DENOMINATOR, LynxError::InvalidAmount);
         require!(outcome_is_tradeable(outcome, ctx.accounts.market.is_ternary), LynxError::InvalidOutcome);

@@ -418,6 +418,13 @@ function diffRows<T>(
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 export function createPersistence(): Persistence {
+  if (process.env.NODE_ENV === 'production' && process.env.STORE_DRIVER !== 'prisma') {
+    throw new Error(
+      'STORE_DRIVER must be "prisma" in production. In-memory mode loses all data on restart ' +
+      'and is only intended for local development and testing.'
+    );
+  }
+
   if (process.env.NODE_ENV === 'test' && process.env.STORE_DRIVER !== 'prisma-test') {
     return {
       driver: 'memory',
