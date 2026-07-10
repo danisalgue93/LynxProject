@@ -31,6 +31,13 @@ function auth(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
 
+function getSetCookieHeader(headers: Record<string, unknown>) {
+  const values = headers['set-cookie'];
+  if (Array.isArray(values)) return values;
+  if (typeof values === 'string') return [values];
+  return [];
+}
+
 async function createMarket(token: string, input: Partial<Record<string, any>> = {}) {
   const now = Date.now();
   const response = await request(app)
@@ -99,7 +106,7 @@ describe('Lynx backend API', () => {
     expect(response.body.refreshToken).toBeUndefined();
     expect(response.body.user.email).toBe('admin@lynx.local');
     expect(response.body.user.role).toBe('admin');
-    const cookie = response.headers['set-cookie']?.join('; ');
+    const cookie = getSetCookieHeader(response.headers as Record<string, unknown>).join('; ');
     expect(cookie).toContain('lynx_refresh=');
     expect(cookie).toContain('HttpOnly');
     expect(cookie).toContain('SameSite=Strict');
@@ -110,8 +117,8 @@ describe('Lynx backend API', () => {
       .post('/auth/login')
       .send({ email: 'admin@lynx.local', password: 'admin123' })
       .expect(200);
-    const cookie = login.headers['set-cookie'] as string[];
-    expect(cookie).toBeDefined();
+    const cookie = getSetCookieHeader(login.headers as Record<string, unknown>);
+    expect(cookie.length).toBeGreaterThan(0);
 
     const refreshed = await request(app)
       .post('/auth/refresh')

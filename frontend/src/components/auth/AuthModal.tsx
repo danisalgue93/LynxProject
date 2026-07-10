@@ -8,7 +8,7 @@ import { useAuth } from "@/src/context/AuthContext";
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  defaultMode: "login" | "signup" | "change" | "reset" | "verify";
+  defaultMode: "login" | "signup" | "change" | "reset" | "verify" | "forgot";
   prefilledToken?: string;
   onLoginSuccess?: () => void;
 }

@@ -163,6 +163,7 @@ model UserPosition {
 
   @@index([wallet])
   @@index([marketId])
+  @@index([marketId, wallet])
   @@index([wallet, claimed])
 }
 
@@ -324,6 +325,7 @@ model LedgerEntry {
   @@index([type])
   @@index([createdAt])
   @@index([wallet, status])
+  @@unique([reference])
 }
 
 // ─── Crypto / Transactions ────────────────────────────────────────────────────

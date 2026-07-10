@@ -547,13 +547,14 @@ export function createPersistence(): Persistence {
       store.ledger = new Map(ledgerEntries.map(r => [r.id, dbToLedger(r)]));
 
       if (treasury) {
+        const treasuryRecord = treasury as Record<string, unknown>;
         store.treasury = {
-          sol:                Number(treasury.sol),
-          lynx:               Number(treasury.lynx),
-          lynxForInitialSale: Number(treasury.lynxForInitialSale),
-          lynxBurned:         Number(treasury.lynxBurned),
-          lynxTotalMinted:    Number(treasury.lynxTotalMinted),
-          protocolDuelSol:    Number(treasury.protocolDuelSol),
+          sol:                Number(treasuryRecord.sol ?? 0),
+          lynx:               Number(treasuryRecord.lynx ?? 0),
+          lynxForInitialSale: Number(treasuryRecord.lynxForInitialSale ?? 0),
+          lynxBurned:         Number(treasuryRecord.lynxBurned ?? 0),
+          lynxTotalMinted:    Number(treasuryRecord.lynxTotalMinted ?? 0),
+          protocolDuelSol:    Number(treasuryRecord.protocolDuelSol ?? 0),
         };
       }
 

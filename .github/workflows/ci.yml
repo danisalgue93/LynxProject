@@ -173,7 +173,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            VITE_SOLANA_NETWORK=mainnet-beta
-            VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
+            VITE_API_URL=${{ vars.VITE_API_URL || 'https://api.lynxmarket.io' }}
+            VITE_SOLANA_NETWORK=${{ vars.VITE_SOLANA_NETWORK || 'mainnet-beta' }}
+            VITE_SOLANA_RPC_URL=${{ vars.VITE_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com' }}
             VITE_MAGIC_PUBLISHABLE_KEY=${{ secrets.VITE_MAGIC_PUBLISHABLE_KEY }}
             VITE_MOONPAY_API_KEY=${{ secrets.VITE_MOONPAY_API_KEY }}
+            VITE_TREASURY_WALLET=${{ vars.VITE_TREASURY_WALLET }}
+            VITE_PROGRAM_ID=${{ vars.VITE_PROGRAM_ID }}
+            VITE_LYNX_MINT=${{ vars.VITE_LYNX_MINT }}
+            VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}

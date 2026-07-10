@@ -5,15 +5,33 @@
 // must fall back to an in-memory counter — see createSimpleRateLimit in server.ts.
 import Redis from 'ioredis';
 
-export const redis = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL, {
+export interface RedisMultiLike {
+  incr(key: string): RedisMultiLike;
+  pttl(key: string): RedisMultiLike;
+  exec(): Promise<[Error | null, unknown][] | null>;
+}
+
+export interface RedisLike {
+  on(event: string, handler: (...args: unknown[]) => void): void;
+  multi(): RedisMultiLike;
+  pexpire(key: string, ms: number): Promise<unknown>;
+  set(key: string, value: string, ...args: unknown[]): Promise<unknown>;
+}
+
+const RedisClient = Redis as unknown as new (
+  url: string,
+  options?: Record<string, unknown>
+) => RedisLike;
+
+export const redis: RedisLike | null = process.env.REDIS_URL
+  ? new RedisClient(process.env.REDIS_URL, {
       maxRetriesPerRequest: 2,
-      retryStrategy: (times) => Math.min(times * 200, 2000)
+      retryStrategy: (times: number) => Math.min(times * 200, 2000)
     })
   : null;
 
 if (redis) {
-  redis.on('error', (err) => {
+  redis.on('error', (err: unknown) => {
     // Never crash the process on a transient Redis error — rate limiting
     // callers are expected to catch failures and fail open to the
     // in-memory limiter for the affected request.

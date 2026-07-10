@@ -2,9 +2,16 @@
 
 > Decentralized P2P prediction markets and 1v1 duels on Solana.
 
----
+## Documentation
 
-## Architecture
+- **[API.md](API.md)** — Complete REST API reference with examples, authentication, and error handling
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** — Production deployment guide with step-by-step instructions
+- **[SECURITY.md](SECURITY.md)** — Security hardening, threat model, and incident response procedures
+- **[PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)** — Architecture overview and pre-mainnet checklist
+- **[AUDIT_REPORT.md](AUDIT_REPORT.md)** — Detailed audit findings and fixes applied
+- **[INTEGRATIONS.md](INTEGRATIONS.md)** — Magic Link and MoonPay integration details
+
+---
 
 ```
 lynx/
@@ -57,27 +64,36 @@ npm run dev               # http://localhost:3001 (127.0.0.1 only)
 
 ## Production Deployment
 
-### 1 — Fill in environment variables
+For complete deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md).
+
+**Quick start:**
 
 ```bash
+# 1. Configure environment
 cp .env.example .env
-# Edit .env — all CHANGE_ME values are required
-```
+nano .env              # fill in all required values
 
-### 2 — Obtain TLS certificates (first deploy only)
+# 2. Validate configuration
+./scripts/validate-env.sh
 
-```bash
+# 3. Obtain TLS certificates (first deploy only)
 chmod +x nginx/init-certs.sh
 DOMAIN=yourdomain.com EMAIL=admin@yourdomain.com ./nginx/init-certs.sh
+
+# 4. Deploy
+chmod +x scripts/*.sh
+./scripts/deploy.sh up
 ```
 
-### 3 — Start all services
+Services: nginx (443/80) → frontend (3000) + backend (4000) + postgres (internal) + redis (internal)
 
+**Useful commands:**
 ```bash
-docker compose up -d
+./scripts/deploy.sh logs       # Watch logs
+./scripts/deploy.sh restart    # Restart all services
+./scripts/deploy.sh status     # Show service health
+docker compose down            # Stop all services
 ```
-
-Services: nginx (443/80) → frontend (3000) + backend (4000) + postgres (internal).
 Migrations run automatically via the `migrate` service before backend starts.
 
 ### 4 — Renew TLS (add to cron)
