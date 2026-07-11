@@ -19,7 +19,7 @@ if (dsn) {
     release: process.env.npm_package_version,
 
     // Capture 100% of transactions. Reduce after collecting baseline data.
-    tracesSampleRate: 1.0,
+    tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || '0.1'),
 
     // Scrub sensitive fields before sending to Sentry
     beforeSend(event) {

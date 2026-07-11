@@ -84,8 +84,8 @@ export function DuelsGrid({ onCreateDuel, readOnly = false }: DuelsGridProps) {
       </div>
 
       {isLoading ? (
-        <div className="flex items-center justify-center min-h-[300px]">
-          <Loader2 className="w-8 h-8 text-[#00FFD1] animate-spin" />
+        <div className="flex items-center justify-center min-h-[300px]" role="status" aria-live="polite">
+          <Loader2 className="w-8 h-8 text-[#00FFD1] animate-spin" aria-hidden="true" />
           <span className="ml-4 font-mono text-[#71717A] text-sm uppercase tracking-widest">{t('common.syncingBlockchain', 'Syncing with blockchain...')}</span>
         </div>
       ) : error ? (

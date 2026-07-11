@@ -58,8 +58,7 @@ export default function App() {
       window.history.replaceState({}, '', '/');
       window.dispatchEvent(new CustomEvent('open-auth-modal', { detail: { mode: 'reset', token: resetToken } }));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [location.search, verifyEmail]);
 
   if (isLoading) {
     return <PageLoader />;

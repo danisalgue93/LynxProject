@@ -51,6 +51,15 @@ const REFRESH_INTERVAL_MS = Number(process.env.CHAIN_INDEXER_INTERVAL_MS || 8_00
 const KEEPER_INTERVAL_MS = Number(process.env.CHAIN_KEEPER_INTERVAL_MS || 6_000);
 
 let connection: Connection | null = null;
+function withRpcTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 15000): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label}: RPC call timed out after ${timeoutMs}ms`)), timeoutMs)
+    )
+  ]);
+}
+
 function getConnection(): Connection {
   if (!connection) connection = new Connection(RPC_URL, 'confirmed');
   return connection;
@@ -258,9 +267,9 @@ async function refreshOnce() {
   try {
     const [marketAccounts, orderAccounts, positionAccounts, spotOrderAccounts] = await Promise.all([
       conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.market) } }] }),
-      conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.predictionOrder) } }] }),
-      conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.userPosition) } }] }),
-      conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.spotOrder) } }] }),
+      withRpcTimeout(conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.predictionOrder) } }] }), 'refresh:getProgramAccounts:predictionOrder'),
+      withRpcTimeout(conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.userPosition) } }] }), 'refresh:getProgramAccounts:userPosition'),
+      withRpcTimeout(conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.spotOrder) } }] }), 'refresh:getProgramAccounts:spotOrder'),
     ]);
 
     marketsByPubkey.clear();
@@ -347,7 +356,7 @@ export async function verifyOnChainMarketCreation(params: { marketPubkey: string
   }
 
   const conn = getConnection();
-  const info = await conn.getAccountInfo(marketPk, 'confirmed');
+  const info = await withRpcTimeout(conn.getAccountInfo(marketPk, 'confirmed'), 'verifyOnChainMarket:getAccountInfo:market', 15000);
   if (!info) return { ok: false, error: 'No account found on-chain at onChainMarket — has create_market actually been sent yet?' };
   if (!info.owner.equals(PROGRAM_ID)) return { ok: false, error: 'onChainMarket account is not owned by the Lynx program' };
   if (!info.data.subarray(0, 8).equals(ACCOUNT_DISC.market)) return { ok: false, error: 'onChainMarket account is not a Market account (wrong discriminator)' };
@@ -362,7 +371,7 @@ export async function verifyOnChainMarketCreation(params: { marketPubkey: string
     return { ok: false, error: `Title mismatch: on-chain market says "${onChainTitle}", request says "${params.expectedTitle}"` };
   }
 
-  const tx = await conn.getTransaction(params.signature, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 });
+  const tx = await withRpcTimeout(conn.getTransaction(params.signature, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 }), 'verifyOnChainMarket:getTransaction', 15000);
   if (!tx) return { ok: false, error: 'Transaction signature not found or not yet confirmed on-chain' };
   if (tx.meta?.err) return { ok: false, error: 'The provided transaction failed on-chain' };
   const touchesProgram = tx.transaction.message.staticAccountKeys?.some((k) => k.equals(PROGRAM_ID))
@@ -427,18 +436,19 @@ function pda(seeds: (Buffer | Uint8Array)[], programId: PublicKey) {
   return PublicKey.findProgramAddressSync(seeds, programId)[0];
 }
 
-let cachedConfigInfo: { lynxMint: PublicKey; treasury: PublicKey } | null = null;
+let cachedConfigInfo: { lynxMint: PublicKey; treasury: PublicKey; cachedAt: number } | null = null;
+const CONFIG_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 async function getConfigInfo(conn: Connection): Promise<{ lynxMint: PublicKey; treasury: PublicKey }> {
-  if (cachedConfigInfo) return cachedConfigInfo;
+  if (cachedConfigInfo && (Date.now() - cachedConfigInfo.cachedAt < CONFIG_CACHE_TTL_MS)) return cachedConfigInfo;
   if (!PROGRAM_ID) throw new Error('PROGRAM_ID not configured');
   const configPk = pda([Buffer.from('config')], PROGRAM_ID);
-  const info = await conn.getAccountInfo(configPk);
+  const info = await withRpcTimeout(conn.getAccountInfo(configPk), 'getConfigInfo:getAccountInfo:config', 15000);
   if (!info) throw new Error('ProtocolConfig account not found on-chain');
   let offset = 8;
   offset += 32; // admin
   const treasury = new PublicKey(info.data.subarray(offset, offset + 32)); offset += 32;
   const lynxMint = new PublicKey(info.data.subarray(offset, offset + 32)); offset += 32;
-  cachedConfigInfo = { lynxMint, treasury };
+  cachedConfigInfo = { lynxMint, treasury, cachedAt: Date.now() };
   return cachedConfigInfo;
 }
 
@@ -485,12 +495,30 @@ export async function runKeeperOnce() {
           data: IX.executePredictionLimitOrderSol,
         });
       } else {
-        // Ejecucion de ordenes LYNX requiere ademas config/lynx_mint/market_lynx_vault/
-        // token_program; se omite aqui por brevedad del keeper de referencia — el
-        // propio usuario (o un keeper mas completo) puede ejecutar estas ordenes
-        // llamando directamente a execute_prediction_limit_order_lynx con las cuentas
-        // completas (ver frontend/src/lib/lynxProgram.ts para la lista exacta).
-        continue;
+        // BE-H-03: Execute LYNX prediction limit orders via execute_prediction_limit_order_lynx
+        const { lynxMint, treasury } = await getConfigInfo(conn);
+        const configPk = pda([Buffer.from('config')], PROGRAM_ID);
+        const escrow = pda([Buffer.from('pred_order_escrow_lynx'), orderPk.toBuffer()], PROGRAM_ID);
+        const marketLynxVault = pda([Buffer.from('market_lynx_vault'), marketPk.toBuffer()], PROGRAM_ID);
+        const ownerLynxAta = await getAssociatedTokenAddress(lynxMint, ownerPk);
+        ix = new TransactionInstruction({
+          programId: PROGRAM_ID,
+          keys: [
+            { pubkey: marketPk, isSigner: false, isWritable: true },
+            { pubkey: vault, isSigner: false, isWritable: true },
+            { pubkey: orderPk, isSigner: false, isWritable: true },
+            { pubkey: escrow, isSigner: false, isWritable: true },
+            { pubkey: position, isSigner: false, isWritable: true },
+            { pubkey: keeper.publicKey, isSigner: true, isWritable: true },
+            { pubkey: new PublicKey('11111111111111111111111111111111'), isSigner: false, isWritable: false },
+            { pubkey: configPk, isSigner: false, isWritable: false },
+            { pubkey: lynxMint, isSigner: false, isWritable: false },
+            { pubkey: marketLynxVault, isSigner: false, isWritable: true },
+            { pubkey: ownerLynxAta, isSigner: false, isWritable: true },
+            { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          ],
+          data: IX.executePredictionLimitOrderLynx,
+        });
       }
 
       const tx = new Transaction().add(ix);

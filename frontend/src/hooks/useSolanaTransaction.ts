@@ -25,16 +25,16 @@ import { useToast } from '../context/ToastContext';
 import { getTxExplorerUrl } from '../lib/explorer';
 
 const _treasuryWallet = import.meta.env.VITE_TREASURY_WALLET;
-let TREASURY_WALLET: string;
-if (!_treasuryWallet) {
-  throw new Error('VITE_TREASURY_WALLET must be configured. Add it to your .env file.');
-}
-// Validate it's a valid Solana public key
+let TREASURY_WALLET: string | undefined;
 try {
-  new PublicKey(_treasuryWallet);
-  TREASURY_WALLET = _treasuryWallet;
+  if (_treasuryWallet) {
+    new PublicKey(_treasuryWallet);
+    TREASURY_WALLET = _treasuryWallet;
+  } else {
+    console.warn('[useSolanaTransaction] VITE_TREASURY_WALLET is not configured. Treasury-related features will be disabled.');
+  }
 } catch {
-  throw new Error(`VITE_TREASURY_WALLET is not a valid Solana public key: ${_treasuryWallet}`);
+  console.warn(`[useSolanaTransaction] VITE_TREASURY_WALLET is not a valid Solana public key: ${_treasuryWallet}. Treasury-related features will be disabled.`);
 }
 
 const SOLANA_NETWORK = (import.meta.env.VITE_SOLANA_NETWORK as string) || 'devnet';
@@ -56,6 +56,9 @@ export function useSolanaTransaction() {
    */
   const sendSolTransfer = useCallback(
     async (amount: number, memo?: string): Promise<string> => {
+      if (!TREASURY_WALLET) {
+        throw new Error('Treasury wallet is not configured.');
+      }
       if (!publicKey) {
         throw new Error('Connect a Solana wallet to send transactions.');
       }

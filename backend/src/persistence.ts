@@ -17,7 +17,9 @@ export interface Persistence {
   load(store: LynxState): Promise<void>;
   save(store: LynxState): Promise<void>;
   loadAuthUsers<T>(): Promise<[string, T][] | undefined>;
-  saveAuthUsers<T>(users: [string, T][]): Promise<void>;
+  // BE-H-08: Accepts a single user (id, object) instead of the full array to avoid
+  // rewriting every user row on every auth-related state change.
+  saveAuthUser<T>(userId: string, user: T): Promise<void>;
   // DB-level belt-and-suspenders guard against double voting. Attempts to
   // durably record a single (proposalId, wallet) vote via the ProposalVote
   // table's UNIQUE(proposalId, wallet) constraint. Returns false if a vote
@@ -165,6 +167,10 @@ function duelToDb(d: Duel) {
 }
 
 function proposalToDb(p: Proposal) {
+  // BE-M-10: Validate endTime is a valid ISO string
+  if (typeof p.endTime !== 'string' || isNaN(Date.parse(p.endTime))) {
+    throw new Error(`Proposal.endTime must be a valid ISO string, got: ${typeof p.endTime}`);
+  }
   return {
     id:            p.id,
     title:         p.title,
@@ -172,7 +178,7 @@ function proposalToDb(p: Proposal) {
     status:        p.status,
     votesYes:      p.votesYes,
     votesNo:       p.votesNo,
-    endTime:       new Date(p.endTime),
+    endTime:       p.endTime,
     category:      p.category,
     author:        p.author,
     voters:        (p.voters ?? Prisma.JsonNull) as Prisma.InputJsonValue | typeof Prisma.JsonNull,
@@ -431,7 +437,7 @@ export function createPersistence(): Persistence {
       load: async () => undefined,
       save: async () => undefined,
       loadAuthUsers: async () => undefined,
-      saveAuthUsers: async () => undefined,
+      saveAuthUser: async () => undefined,
       recordVote: async () => true
     };
   }
@@ -472,7 +478,7 @@ export function createPersistence(): Persistence {
       load: async () => undefined,
       save: async () => undefined,
       loadAuthUsers: async () => undefined,
-      saveAuthUsers: async () => undefined,
+      saveAuthUser: async () => undefined,
       recordVote: async () => true
     };
   }
@@ -552,6 +558,32 @@ export function createPersistence(): Persistence {
       );
 
       store.ledger = new Map(ledgerEntries.map(r => [r.id, dbToLedger(r)]));
+
+      // Rebuild in-memory indexes from loaded data (BE-M-06)
+      store.positionsByWallet = new Map<string, string[]>();
+      for (const p of store.positions.values()) {
+        const ids = store.positionsByWallet.get(p.wallet) || [];
+        ids.push(p.id);
+        store.positionsByWallet.set(p.wallet, ids);
+      }
+      store.tradesByWallet = new Map<string, string[]>();
+      for (const t of store.trades.values()) {
+        const indexFor = (wallet: string) => {
+          const ids = store.tradesByWallet.get(wallet) || [];
+          ids.push(t.id);
+          store.tradesByWallet.set(wallet, ids);
+        };
+        indexFor(t.taker);
+        if (t.maker) indexFor(t.maker);
+      }
+      store.transactionsByWallet = new Map<string, string[]>();
+      for (const [id, t] of store.transactions.entries()) {
+        if (t.wallet) {
+          const ids = store.transactionsByWallet.get(t.wallet) || [];
+          ids.push(id);
+          store.transactionsByWallet.set(t.wallet, ids);
+        }
+      }
 
       if (treasury) {
         const treasuryRecord = treasury as Record<string, unknown>;
@@ -639,19 +671,38 @@ export function createPersistence(): Persistence {
           await tx.order.upsert({ where: { id: o.id }, create: o, update: o });
         }
 
-        // Trades
-        for (const t of trades.changed) {
-          await tx.trade.upsert({ where: { id: t.id }, create: t, update: t });
+        // Trades — BE-H-06: single raw SQL batch upsert (INSERT … ON CONFLICT DO UPDATE)
+        if (trades.changed.length > 0) {
+          const values = trades.changed.map(t =>
+            Prisma.sql`(${t.id}, ${t.marketId}, ${t.pair}, ${t.maker}, ${t.taker}, ${t.side}, ${t.position}, ${t.amount}, ${t.price}, ${t.feeAmount}, ${t.currency}, ${t.createdAt})`
+          );
+          await tx.$executeRaw`
+            INSERT INTO "Trade" ("id","marketId","pair","maker","taker","side","position","amount","price","feeAmount","currency","createdAt")
+            VALUES ${Prisma.join(values)}
+            ON CONFLICT ("id") DO UPDATE SET
+              "marketId"  = EXCLUDED."marketId",
+              "pair"      = EXCLUDED."pair",
+              "maker"     = EXCLUDED."maker",
+              "taker"     = EXCLUDED."taker",
+              "side"      = EXCLUDED."side",
+              "position"  = EXCLUDED."position",
+              "amount"    = EXCLUDED."amount",
+              "price"     = EXCLUDED."price",
+              "feeAmount" = EXCLUDED."feeAmount",
+              "currency"  = EXCLUDED."currency"
+          `;
         }
 
         // Duels
         for (const d of duels.changed) {
-          await tx.duel.upsert({ where: { id: d.id }, create: d, update: d });
+          const { status: _ds, ...duelData } = d as any;
+          await tx.duel.upsert({ where: { id: d.id }, create: duelData, update: duelData });
         }
 
         // Proposals
         for (const p of proposals.changed) {
-          await tx.proposal.upsert({ where: { id: p.id }, create: p, update: p });
+          const { status: _ps, ...proposalData } = p as any;
+          await tx.proposal.upsert({ where: { id: p.id }, create: proposalData, update: proposalData });
         }
 
         // Notifications
@@ -659,14 +710,43 @@ export function createPersistence(): Persistence {
           await tx.notification.upsert({ where: { id: n.id }, create: n, update: n });
         }
 
-        // Transactions
-        for (const t of transactions.changed) {
-          await tx.transaction.upsert({ where: { id: t.id }, create: t, update: t });
+        // Transactions — BE-H-06: batch insert for large tables
+        if (transactions.changed.length > 0) {
+          const newTx: typeof transactions.changed = [];
+          const existingTx: typeof transactions.changed = [];
+          for (const t of transactions.changed) {
+            if (lastTransactions.has(t.id)) {
+              existingTx.push(t);
+            } else {
+              newTx.push(t);
+            }
+          }
+          if (newTx.length > 0) {
+            await tx.transaction.createMany({ data: newTx, skipDuplicates: true });
+          }
+          for (const t of existingTx) {
+            await tx.transaction.upsert({ where: { id: t.id }, create: t, update: t });
+          }
         }
 
-        // LedgerEntries
-        for (const e of ledger.changed) {
-          await tx.ledgerEntry.upsert({ where: { id: e.id }, create: e, update: e });
+        // LedgerEntries — BE-H-06: batch insert for large tables
+        if (ledger.changed.length > 0) {
+          const newLedger: typeof ledger.changed = [];
+          const existingLedger: typeof ledger.changed = [];
+          for (const e of ledger.changed) {
+            if (lastLedger.has(e.id)) {
+              existingLedger.push(e);
+            } else {
+              newLedger.push(e);
+            }
+          }
+          if (newLedger.length > 0) {
+            await tx.ledgerEntry.createMany({ data: newLedger.map(e => { const { type: _t, ...rest } = e as any; return rest; }), skipDuplicates: true });
+          }
+          for (const e of existingLedger) {
+            const { type: _et, ...ledgerData } = e as any;
+            await tx.ledgerEntry.upsert({ where: { id: e.id }, create: ledgerData, update: ledgerData });
+          }
         }
 
         // Deletions, in reverse-dependency order (children before the
@@ -744,47 +824,42 @@ export function createPersistence(): Persistence {
       } as T]);
     },
 
-    async saveAuthUsers<T>(users: [string, T][]) {
-      // Upsert each user individually so we never wipe the whole table at once.
-      // Using a transaction keeps it atomic.
-      const rows = users.map(([, u]) => u as any);
-      await prisma.$transaction(
-        rows.map((u) =>
-          prisma.user.upsert({
-            where:  { id: u.id },
-            create: {
-              id:                     u.id,
-              email:                  u.email,
-              passwordHash:           u.passwordHash ?? '',
-              displayName:            u.displayName ?? null,
-              role:                   u.role ?? 'user',
-              authMethod:             u.authMethod ?? 'email',
-              emailVerified:          u.emailVerified ?? false,
-              walletAddress:          u.walletAddress ?? null,
-              walletLinkedAt:         u.walletLinkedAt ? new Date(u.walletLinkedAt) : null,
-              managedWalletAddress:   u.managedWalletAddress ?? null,
-              emailVerificationToken: u.emailVerificationToken ?? null,
-              passwordResetToken:     u.passwordResetToken ?? null,
-              passwordResetExpiresAt: u.passwordResetExpiresAt ? new Date(u.passwordResetExpiresAt) : null,
-              createdAt:              u.createdAt ? new Date(u.createdAt) : new Date(),
-            },
-            update: {
-              email:                  u.email,
-              passwordHash:           u.passwordHash ?? '',
-              displayName:            u.displayName ?? null,
-              role:                   u.role ?? 'user',
-              authMethod:             u.authMethod ?? 'email',
-              emailVerified:          u.emailVerified ?? false,
-              walletAddress:          u.walletAddress ?? null,
-              walletLinkedAt:         u.walletLinkedAt ? new Date(u.walletLinkedAt) : null,
-              managedWalletAddress:   u.managedWalletAddress ?? null,
-              emailVerificationToken: u.emailVerificationToken ?? null,
-              passwordResetToken:     u.passwordResetToken ?? null,
-              passwordResetExpiresAt: u.passwordResetExpiresAt ? new Date(u.passwordResetExpiresAt) : null,
-            },
-          })
-        )
-      );
+    // BE-H-08: Upsert a single user instead of rewriting the full user table.
+    async saveAuthUser<T>(_userId: string, user: T) {
+      const r = user as any;
+      await prisma.user.upsert({
+        where:  { id: r.id },
+        create: {
+          id:                     r.id,
+          email:                  r.email,
+          passwordHash:           r.passwordHash ?? '',
+          displayName:            r.displayName ?? null,
+          role:                   r.role ?? 'user',
+          authMethod:             r.authMethod ?? 'email',
+          emailVerified:          r.emailVerified ?? false,
+          walletAddress:          r.walletAddress ?? null,
+          walletLinkedAt:         r.walletLinkedAt ? new Date(r.walletLinkedAt) : null,
+          managedWalletAddress:   r.managedWalletAddress ?? null,
+          emailVerificationToken: r.emailVerificationToken ?? null,
+          passwordResetToken:     r.passwordResetToken ?? null,
+          passwordResetExpiresAt: r.passwordResetExpiresAt ? new Date(r.passwordResetExpiresAt) : null,
+          createdAt:              r.createdAt ? new Date(r.createdAt) : new Date(),
+        },
+        update: {
+          email:                  r.email,
+          passwordHash:           r.passwordHash ?? '',
+          displayName:            r.displayName ?? null,
+          role:                   r.role ?? 'user',
+          authMethod:             r.authMethod ?? 'email',
+          emailVerified:          r.emailVerified ?? false,
+          walletAddress:          r.walletAddress ?? null,
+          walletLinkedAt:         r.walletLinkedAt ? new Date(r.walletLinkedAt) : null,
+          managedWalletAddress:   r.managedWalletAddress ?? null,
+          emailVerificationToken: r.emailVerificationToken ?? null,
+          passwordResetToken:     r.passwordResetToken ?? null,
+          passwordResetExpiresAt: r.passwordResetExpiresAt ? new Date(r.passwordResetExpiresAt) : null,
+        },
+      });
     }
   };
 }

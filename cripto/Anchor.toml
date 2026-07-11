@@ -10,7 +10,7 @@ skip-lint = false
 lynx_project = "CiKuW8r71WnTLkGAKvFyYhtV2UhuJ4j8swDPDc8PEXvu"
 
 [provider]
-cluster = "devnet"
+cluster = "localnet" # Change to "devnet" or "mainnet-beta" for deployment
 wallet = "~/.config/solana/id.json"
 
 [scripts]

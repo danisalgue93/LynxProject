@@ -16,7 +16,7 @@ declare_id!("CiKuW8r71WnTLkGAKvFyYhtV2UhuJ4j8swDPDc8PEXvu");
 pub mod lynx_project {
     use super::*;
 
-    pub fn initialize_protocol(ctx: Context<InitializeProtocol>, emergency_delay: i64) -> Result<()> {
+    pub fn initialize_protocol(ctx: Context<InitializeProtocol>) -> Result<()> {
         let config = &mut ctx.accounts.config;
         config.admin = ctx.accounts.admin.key();
         config.treasury = ctx.accounts.treasury.key();
@@ -27,7 +27,6 @@ pub mod lynx_project {
         config.total_lynx_burned = 0;
         config.total_staked = 0;
         config.reward_per_token_scaled = 0;
-        config.emergency_delay = emergency_delay;
         config.bump = ctx.bumps.config;
         config.rewards_vault_bump = ctx.bumps.rewards_vault;
         config.paused = false;
@@ -230,6 +229,12 @@ pub mod lynx_project {
             LynxError::InvalidStatus
         );
 
+        // CR-01: snapshot the mint ratio for the admin fallback path
+        // (which skips propose_resolution).
+        if ctx.accounts.market.currency == Currency::SOL && ctx.accounts.market.mint_ratio_snapshot_bps == 0 {
+            ctx.accounts.market.mint_ratio_snapshot_bps = current_mint_ratio_bps(&ctx.accounts.config)?;
+        }
+
         let proposal_key = ctx.accounts.proposal.key();
         finalize_market_and_fees(
             &mut ctx.accounts.config,
@@ -270,6 +275,7 @@ pub mod lynx_project {
         require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.config.admin, LynxError::Unauthorized);
         let now = Clock::get()?.unix_timestamp;
         require!(cutoff_ts > now, LynxError::CutoffInPast);
+        require!(resolve_ts > now, LynxError::CutoffInPast);
         require!(resolve_ts > cutoff_ts, LynxError::CutoffInPast);
 
         let market = &mut ctx.accounts.market;
@@ -305,6 +311,8 @@ pub mod lynx_project {
         // 0, Pubkey::default()), pero se dejan explicitos aqui por claridad.
         market.proposed_result = Outcome::Unresolved;
         market.proposed_ts = 0;
+        market.mint_ratio_snapshot_bps = 0;
+        market.total_claimed = 0;
         market.resolved_by = Pubkey::default();
 
         let vault = &mut ctx.accounts.vault;
@@ -472,6 +480,7 @@ pub mod lynx_project {
     // puede forzar un fill a mal precio ni robar el escrow: si la condicion no
     // se cumple, la instruccion simplemente falla.
     pub fn execute_prediction_limit_order_sol(ctx: Context<ExecutePredictionLimitOrderSol>) -> Result<()> {
+        require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
         let now = Clock::get()?.unix_timestamp;
         {
             let order = &ctx.accounts.order;
@@ -515,7 +524,6 @@ pub mod lynx_project {
         let is_owner = ctx.accounts.signer.key() == order.owner;
         let is_expired = now >= order.expires_ts;
         require!(is_owner || is_expired, LynxError::Unauthorized);
-        require_keys_eq!(ctx.accounts.owner.key(), order.owner, LynxError::Unauthorized);
 
         let amount = order.amount;
         transfer_lamports(&ctx.accounts.escrow.to_account_info(), &ctx.accounts.owner.to_account_info(), amount)?;
@@ -575,6 +583,7 @@ pub mod lynx_project {
     }
 
     pub fn execute_prediction_limit_order_lynx(ctx: Context<ExecutePredictionLimitOrderLynx>) -> Result<()> {
+        require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
         let now = Clock::get()?.unix_timestamp;
         {
             let order = &ctx.accounts.order;
@@ -710,6 +719,8 @@ pub mod lynx_project {
         require!(now < expires_ts, LynxError::InvalidExpiry);
 
         let sol_amount = spot_sol_amount(amount, price_scaled)?;
+        require!(sol_amount >= MIN_ORDER_LAMPORTS, LynxError::InvalidAmount);
+        require!(sol_amount <= MAX_ORDER_LAMPORTS, LynxError::InvalidAmount);
         invoke(
             &system_instruction::transfer(&ctx.accounts.owner.key(), &ctx.accounts.escrow.key(), sol_amount),
             &[
@@ -783,6 +794,7 @@ pub mod lynx_project {
     // (maker) de las dos, nunca lo elige quien envia la transaccion, y el
     // programa exige que los precios crucen antes de mover nada.
     pub fn match_spot_orders(ctx: Context<MatchSpotOrders>, fill_amount: u64) -> Result<()> {
+        require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
         require!(fill_amount > 0, LynxError::InvalidAmount);
         let now = Clock::get()?.unix_timestamp;
         {
@@ -911,17 +923,23 @@ pub mod lynx_project {
     pub fn propose_resolution(ctx: Context<ProposeResolution>, result: Outcome) -> Result<()> {
         require!(result_is_valid(result, ctx.accounts.market.is_ternary), LynxError::InvalidOutcome);
         require_keys_eq!(ctx.accounts.oracle_authority.key(), ctx.accounts.market.oracle_authority, LynxError::Unauthorized);
+        require!(ctx.accounts.config.multisig_initialized, LynxError::Unauthorized);
         let now = Clock::get()?.unix_timestamp;
         require!(now >= ctx.accounts.market.resolve_ts, LynxError::ResolveTimeNotReached);
 
         let market = &mut ctx.accounts.market;
         require!(
-            market.status == MarketStatus::Open || market.status == MarketStatus::Active || market.status == MarketStatus::CutOff,
+            market.status == MarketStatus::CutOff || market.status == MarketStatus::PendingResolution,
             LynxError::InvalidStatus
         );
         market.status = MarketStatus::PendingResolution;
         market.proposed_result = result;
         market.proposed_ts = now;
+        // Snapshot the LYNX mint ratio now (at proposal time) so that it
+        // cannot be manipulated during the dispute window by burning LYNX.
+        if market.currency == Currency::SOL {
+            market.mint_ratio_snapshot_bps = current_mint_ratio_bps(&ctx.accounts.config)?;
+        }
         Ok(())
     }
 
@@ -974,7 +992,10 @@ pub mod lynx_project {
     }
 
     pub fn claim_market_sol(ctx: Context<ClaimMarketSol>) -> Result<()> {
-        let market = &ctx.accounts.market;
+        let market = &mut ctx.accounts.market;
+        // CR-02: defensive check — binary markets cannot resolve to Draw,
+        // but if they somehow did, no claim should be allowed.
+        require!(!(!market.is_ternary && market.result == Outcome::Draw), LynxError::InvalidOutcome);
         let position = &mut ctx.accounts.position;
         require!(market.currency == Currency::SOL, LynxError::InvalidCurrency);
         require!(market.status == MarketStatus::Resolved, LynxError::InvalidStatus);
@@ -987,6 +1008,9 @@ pub mod lynx_project {
         let payout = payout_pool
             .checked_mul(position.amount).ok_or(LynxError::MathOverflow)?
             .checked_div(denominator).ok_or(LynxError::MathOverflow)?;
+
+        // MD-06: track total claimed so dust-sweep can detect completion.
+        market.total_claimed = market.total_claimed.checked_add(payout).ok_or(LynxError::MathOverflow)?;
 
         transfer_lamports(&ctx.accounts.vault.to_account_info(), &ctx.accounts.claimant.to_account_info(), payout)?;
         position.claimed = true;
@@ -1074,16 +1098,26 @@ pub mod lynx_project {
         let market = &mut ctx.accounts.market;
         require!(market.currency == Currency::SOL, LynxError::InvalidCurrency);
         require!(market.status == MarketStatus::Resolved, LynxError::InvalidStatus);
-        require!(market.winning_total == 0, LynxError::NoWinningPool);
+        // CR-02: defensive check — binary markets cannot resolve to Draw.
+        require!(!(!market.is_ternary && market.result == Outcome::Draw), LynxError::InvalidOutcome);
         require!(!market.swept, LynxError::AlreadySwept);
-        require!(market.pool_total > 0, LynxError::NothingToSweep);
 
-        // Mirrors the payout_pool computed in claim_market_sol: STAKER_REWARD_FEE_BPS +
-        // TREASURY_EVENT_FEE_BPS (== EVENT_PROTOCOL_FEE_BPS) were already moved out of
-        // vault in finalize_market_and_fees regardless of winning_total, so this is
-        // exactly what is left sitting in vault with no claimant able to reach it.
-        let net_pool = bps(market.pool_total, BPS_DENOMINATOR - EVENT_PROTOCOL_FEE_BPS)?;
-        transfer_lamports(&ctx.accounts.vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), net_pool)?;
+        if market.winning_total == 0 {
+            // No winners: sweep the entire net pool to treasury.
+            require!(market.pool_total > 0, LynxError::NothingToSweep);
+            let net_pool = bps(market.pool_total, BPS_DENOMINATOR - EVENT_PROTOCOL_FEE_BPS)?;
+            transfer_lamports(&ctx.accounts.vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), net_pool)?;
+        } else {
+            // MD-06: Dust sweep. After all winners have claimed, integer-division
+            // rounding may leave a few lamports in the vault. When total_claimed
+            // reaches the payout pool, only rent-exempt dust remains.
+            let payout_pool = bps(market.pool_total, BPS_DENOMINATOR - EVENT_PROTOCOL_FEE_BPS)?;
+            require!(market.total_claimed >= payout_pool, LynxError::NothingToSweep);
+            let rent_minimum = Rent::get()?.minimum_balance(ctx.accounts.vault.data_len());
+            let excess = ctx.accounts.vault.to_account_info().lamports().saturating_sub(rent_minimum);
+            require!(excess > 0, LynxError::NothingToSweep);
+            transfer_lamports(&ctx.accounts.vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), excess)?;
+        }
 
         market.swept = true;
         Ok(())
@@ -1523,7 +1557,7 @@ pub struct BuyPositionLynxWithBurn<'info> {
     pub position: Box<Account<'info, UserPosition>>,
     #[account(mut, address = config.lynx_mint)]
     pub lynx_mint: Box<Account<'info, Mint>>,
-    #[account(mut)]
+    #[account(mut, constraint = user_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub user_lynx_account: Box<Account<'info, TokenAccount>>,
     // PDA'd to this specific market so custody can never be mixed across LYNX markets,
     // unlike the old arbitrary-account-validated-by-mint+owner design.
@@ -1636,7 +1670,7 @@ pub struct CreatePredictionLimitOrderLynx<'info> {
     pub order: Box<Account<'info, PredictionOrder>>,
     #[account(mut, address = config.lynx_mint)]
     pub lynx_mint: Box<Account<'info, Mint>>,
-    #[account(mut)]
+    #[account(mut, constraint = user_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub user_lynx_account: Box<Account<'info, TokenAccount>>,
     // Token account cuya AUTHORITY es la propia cuenta `order` (PDA), no el
     // usuario ni config: solo execute_/cancel_prediction_limit_order_lynx,
@@ -1697,6 +1731,8 @@ pub struct ExecutePredictionLimitOrderLynx<'info> {
 
 #[derive(Accounts)]
 pub struct CancelPredictionLimitOrderLynx<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProtocolConfig>,
     #[account(seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
     pub market: Account<'info, Market>,
     #[account(
@@ -1709,7 +1745,7 @@ pub struct CancelPredictionLimitOrderLynx<'info> {
     pub escrow: Account<'info, TokenAccount>,
     // Debe ser la token account del propio order.owner; se valida en la
     // instruccion (require_keys_eq! sobre owner_lynx_account.owner).
-    #[account(mut)]
+    #[account(mut, constraint = owner_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub owner_lynx_account: Account<'info, TokenAccount>,
     pub signer: Signer<'info>,
     pub token_program: Program<'info, Token>,
@@ -1756,7 +1792,7 @@ pub struct PlaceSpotOrderSell<'info> {
     pub order: Box<Account<'info, SpotOrder>>,
     #[account(mut, address = config.lynx_mint)]
     pub lynx_mint: Box<Account<'info, Mint>>,
-    #[account(mut)]
+    #[account(mut, constraint = user_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub user_lynx_account: Box<Account<'info, TokenAccount>>,
     #[account(
         init,
@@ -1800,7 +1836,7 @@ pub struct MatchSpotOrders<'info> {
     pub seller_wallet: UncheckedAccount<'info>,
     // Token account de LYNX del comprador (buy_order.owner), destino del LYNX
     // comprado. Validado en la instruccion con require_keys_eq! sobre .owner.
-    #[account(mut)]
+    #[account(mut, constraint = buyer_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub buyer_lynx_account: Box<Account<'info, TokenAccount>>,
     /// CHECK: checked against config.treasury
     #[account(mut, address = config.treasury)]
@@ -1826,6 +1862,8 @@ pub struct CancelSpotOrderBuy<'info> {
 
 #[derive(Accounts)]
 pub struct CancelSpotOrderSell<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProtocolConfig>,
     #[account(
         mut,
         seeds = [b"spot_order", order.owner.as_ref(), order.id.to_le_bytes().as_ref()],
@@ -1834,7 +1872,7 @@ pub struct CancelSpotOrderSell<'info> {
     pub order: Account<'info, SpotOrder>,
     #[account(mut, seeds = [b"spot_order_escrow_lynx", order.key().as_ref()], bump = order.escrow_bump)]
     pub escrow: Account<'info, TokenAccount>,
-    #[account(mut)]
+    #[account(mut, constraint = owner_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub owner_lynx_account: Account<'info, TokenAccount>,
     pub signer: Signer<'info>,
     pub token_program: Program<'info, Token>,
@@ -1848,6 +1886,8 @@ pub struct CutOffMarket<'info> {
 
 #[derive(Accounts)]
 pub struct ProposeResolution<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProtocolConfig>,
     #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
     pub market: Account<'info, Market>,
     pub oracle_authority: Signer<'info>,
@@ -1962,7 +2002,7 @@ pub struct ExecuteResolveMarketAdmin<'info> {
 
 #[derive(Accounts)]
 pub struct ClaimMarketSol<'info> {
-    #[account(seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
+    #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
     pub market: Account<'info, Market>,
     #[account(mut, seeds = [b"vault", market.key().as_ref()], bump = vault.bump)]
     pub vault: Account<'info, MarketVault>,
@@ -1986,6 +2026,7 @@ pub struct ClaimMarketLynx<'info> {
         mut,
         seeds = [b"lynx_vault", market.key().as_ref()],
         bump = market.lynx_vault_bump,
+        constraint = market_lynx_vault.mint == config.lynx_mint @ LynxError::InvalidCurrency,
     )]
     pub market_lynx_vault: Account<'info, TokenAccount>,
     #[account(mut, constraint = claimant_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
@@ -2024,6 +2065,7 @@ pub struct SweepUnclaimedMarketLynx<'info> {
         mut,
         seeds = [b"lynx_vault", market.key().as_ref()],
         bump = market.lynx_vault_bump,
+        constraint = market_lynx_vault.mint == config.lynx_mint @ LynxError::InvalidCurrency,
     )]
     pub market_lynx_vault: Account<'info, TokenAccount>,
     #[account(
@@ -2048,9 +2090,17 @@ pub struct MintLynxDistribution<'info> {
     pub lynx_mint: Account<'info, Mint>,
     #[account(mut, constraint = holder_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub holder_lynx_account: Account<'info, TokenAccount>,
-    #[account(mut, constraint = treasury_lynx_account.owner == config.treasury @ LynxError::Unauthorized)]
+    #[account(
+        mut,
+        constraint = treasury_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency,
+        constraint = treasury_lynx_account.owner == config.treasury @ LynxError::Unauthorized
+    )]
     pub treasury_lynx_account: Account<'info, TokenAccount>,
-    #[account(mut, constraint = initial_sale_lynx_account.owner == config.treasury @ LynxError::Unauthorized)]
+    #[account(
+        mut,
+        constraint = initial_sale_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency,
+        constraint = initial_sale_lynx_account.owner == config.treasury @ LynxError::Unauthorized
+    )]
     pub initial_sale_lynx_account: Account<'info, TokenAccount>,
     #[account(mut)]
     pub payer: Signer<'info>,
@@ -2061,7 +2111,7 @@ pub struct MintLynxDistribution<'info> {
 pub struct StakeLynx<'info> {
     #[account(mut, seeds = [b"config"], bump = config.bump)]
     pub config: Account<'info, ProtocolConfig>,
-    #[account(mut, address = config.stake_vault)]
+    #[account(mut, constraint = stake_vault.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub stake_vault: Account<'info, TokenAccount>,
     #[account(
         init_if_needed,
@@ -2071,7 +2121,7 @@ pub struct StakeLynx<'info> {
         bump
     )]
     pub stake_position: Account<'info, StakePosition>,
-    #[account(mut)]
+    #[account(mut, constraint = user_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub user_lynx_account: Account<'info, TokenAccount>,
     #[account(address = config.lynx_mint)]
     pub lynx_mint: Account<'info, Mint>,
@@ -2085,11 +2135,11 @@ pub struct StakeLynx<'info> {
 pub struct UnstakeLynx<'info> {
     #[account(mut, seeds = [b"config"], bump = config.bump)]
     pub config: Account<'info, ProtocolConfig>,
-    #[account(mut, address = config.stake_vault)]
+    #[account(mut, constraint = stake_vault.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub stake_vault: Account<'info, TokenAccount>,
     #[account(mut, seeds = [b"stake", owner.key().as_ref()], bump = stake_position.bump, has_one = owner)]
     pub stake_position: Account<'info, StakePosition>,
-    #[account(mut)]
+    #[account(mut, constraint = user_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub user_lynx_account: Account<'info, TokenAccount>,
     #[account(address = config.lynx_mint)]
     pub lynx_mint: Account<'info, Mint>,
@@ -2174,7 +2224,7 @@ pub struct ResolveProtocolDuel<'info> {
     pub recipient: UncheckedAccount<'info>,
     #[account(mut, address = config.lynx_mint)]
     pub lynx_mint: Account<'info, Mint>,
-    #[account(mut, constraint = recipient_lynx_account.owner == recipient.key() @ LynxError::Unauthorized)]
+    #[account(mut, constraint = recipient_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub recipient_lynx_account: Account<'info, TokenAccount>,
     /// CHECK: checked against config.treasury
     #[account(mut, address = config.treasury)]
@@ -2238,6 +2288,14 @@ fn finalize_market_and_fees<'info>(
     result: Outcome,
     resolved_by: Pubkey,
 ) -> Result<()> {
+    // CR-02: Binary markets must never resolve to Draw — it permanently locks
+    // funds because no position can be a winner (Draw positions don't exist
+    // for binary markets).
+    require!(
+        !(!market.is_ternary && result == Outcome::Draw),
+        LynxError::InvalidOutcome
+    );
+
     require!(
         market.status == MarketStatus::CutOff
             || market.status == MarketStatus::Active
@@ -2258,14 +2316,18 @@ fn finalize_market_and_fees<'info>(
         Outcome::Unresolved => 0,
     };
 
-    // Freeze the LYNX mint ratio for this market right now, at resolution time,
-    // instead of letting mint_lynx_distribution recompute it later from the
-    // (constantly moving) global config.total_lynx_supply on every individual
-    // claim. Without this, two winners of the exact same market could end up
-    // with different ratios purely because of claim order and unrelated
-    // minting activity elsewhere in the protocol between their claims.
+    // CR-01: Use the mint ratio snapshot taken at propose_resolution time
+    // instead of calling current_mint_ratio_bps() which reads the
+    // instantaneous circulating supply and is manipulable during the
+    // dispute window. If no snapshot exists (e.g. admin fallback path via
+    // execute_resolve_market_admin that skipped propose_resolution),
+    // fall back to computing it now.
     if market.currency == Currency::SOL {
-        market.mint_ratio_bps = current_mint_ratio_bps(&*config)?;
+        if market.mint_ratio_snapshot_bps > 0 {
+            market.mint_ratio_bps = market.mint_ratio_snapshot_bps;
+        } else {
+            market.mint_ratio_bps = current_mint_ratio_bps(&*config)?;
+        }
     }
 
     if market.currency == Currency::SOL && market.pool_total > 0 {
@@ -2366,6 +2428,10 @@ fn settle_staker(config: &Account<ProtocolConfig>, stake: &mut Account<StakePosi
     let accumulated = reward_debt(stake.amount, config.reward_per_token_scaled)?;
     if accumulated > stake.reward_debt_scaled {
         let delta_scaled = accumulated.checked_sub(stake.reward_debt_scaled).ok_or(LynxError::MathOverflow)?;
+        // MD-05 (known limitation): integer division truncates downward, so each
+        // settle_staker call may lose up to (REWARD_SCALE - 1) micro-lamports of
+        // rewards. With REWARD_SCALE = 10^12 this is at most ~1 nano-lamport per
+        // settle — economically insignificant but documented for completeness.
         let delta = delta_scaled.checked_div(REWARD_SCALE).ok_or(LynxError::MathOverflow)? as u64;
         stake.pending_rewards = stake.pending_rewards.checked_add(delta).ok_or(LynxError::MathOverflow)?;
     }
@@ -2422,10 +2488,13 @@ fn mint_to_lynx<'info>(
 //    ratio (e.g. resolve_protocol_duel) MUST use the `mint_ratio_bps`
 //    frozen on the Market account at resolve-time, *not* this function.
 fn current_mint_ratio_bps(config: &ProtocolConfig) -> Result<u64> {
+    // MD-03: Use saturating_sub to prevent underflow if total_lynx_burned ever
+    // exceeds total_lynx_supply (e.g. due to a bug elsewhere). Floor the
+    // circulating supply at 1 to avoid division-by-zero in callers.
     let circulating = config
         .total_lynx_supply
-        .checked_sub(config.total_lynx_burned)
-        .ok_or(LynxError::MathOverflow)?;
+        .saturating_sub(config.total_lynx_burned)
+        .max(1);
     let circulating_lynx = circulating / MICRO_LYNX_PER_LYNX;
 
     let ratio_bps = if circulating_lynx < TIER_1_MAX_LYNX {

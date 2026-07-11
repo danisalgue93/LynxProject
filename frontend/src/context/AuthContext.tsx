@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { apiUrl, clearAccessToken, setAccessToken } from '../lib/api';
 import { clearManagedAuthSession, saveManagedAuthSession } from '../lib/auth';
 
@@ -145,12 +145,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ email, password })
     });
 
+    const data = await response.json();
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Login failed');
+      throw new Error(data.error || 'Login failed');
     }
 
-    applySession(await response.json());
+    applySession(data);
   };
 
   const register = async (email: string, password: string): Promise<{ requiresEmailVerification?: boolean; devVerificationToken?: string; email?: string } | void> => {
@@ -171,7 +171,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     applySession(data);
   };
 
-  const verifyEmail = async (verificationToken: string) => {
+  const verifyEmail = useCallback(async (verificationToken: string) => {
     const response = await fetchWithTimeout(apiUrl('/auth/verify-email'), {
       method: 'POST',
       credentials: 'include',
@@ -185,7 +185,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     applySession(await response.json());
-  };
+  }, []);
 
   const requestPasswordReset = async (email: string) => {
     const response = await fetchWithTimeout(apiUrl('/auth/request-password-reset'), {
@@ -265,7 +265,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(error.error || 'Wallet linking failed');
     }
 
-    rememberUser(await response.json());
+    const data = await response.json();
+    rememberUser(user ? { ...user, ...data } : data);
   };
 
   const unlinkWallet = async () => {
@@ -284,7 +285,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(error.error || 'Wallet unlink failed');
     }
 
-    rememberUser(await response.json());
+    const data = await response.json();
+    rememberUser(user ? { ...user, ...data } : data);
   };
 
   const logout = () => {

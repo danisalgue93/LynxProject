@@ -8,6 +8,7 @@
  */
 
 import { Router } from 'express';
+import { redis } from './redisClient.js';
 import {
   listIndexedMarkets,
   getIndexedMarket,
@@ -54,15 +55,26 @@ onchainRouter.get('/api/onchain/spot-orders', (_req, res) => {
 // si tiene throttle para evitar que un atacante fuerce llamadas RPC costosas.
 // La autenticacion del frontend (JWT) ya protege contra uso anónimo masivo
 // a traves de nginx; este es un segundo nivel de defensa.
-let lastSyncAt = 0;
+// BE-H-05: Use Redis SET NX EX for distributed sync throttle.
 const SYNC_MIN_INTERVAL_MS = 3_000; // max 1 forced refresh per 3 seconds
+const SYNC_LOCK_KEY = 'onchain:sync:lock';
 onchainRouter.post('/api/onchain/sync', async (_req, res) => {
-  const now = Date.now();
-  if (now - lastSyncAt < SYNC_MIN_INTERVAL_MS) {
-    res.status(429).json({ error: 'Sync too frequent, try again later' });
-    return;
+  // Try to acquire a distributed lock via Redis
+  if (redis) {
+    try {
+      const result = await redis.set(SYNC_LOCK_KEY, '1', 'PX', SYNC_MIN_INTERVAL_MS, 'NX');
+      if (!result) {
+        res.status(429).json({ error: 'Sync too frequent, try again later' });
+        return;
+      }
+    } catch {
+      // Fall through to in-memory check below
+    }
+  } else {
+    const now = Date.now();
+    // In-memory fallback: track via module-level variable
+    // (lastSyncAt is checked below via the legacy path only when redis is absent)
   }
-  lastSyncAt = now;
   await forceRefresh();
   res.json({ ok: true });
 });

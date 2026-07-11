@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { setOtp } from '@/lib/otp-store';
 import { rateLimit } from '@/lib/rate-limit';
-import { assertEnv, clientKey, hashSecret, verifySecret, isDevMode, notifyRateLimitHit, sendTelegram } from '@/lib/security';
+import { assertEnv, clientKey, escapeMarkdown, hashSecret, verifySecret, isDevMode, notifyRateLimitHit, sendTelegram } from '@/lib/security';
 
 export async function POST(req: NextRequest) {
   const key = clientKey(req);
@@ -11,7 +11,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Too many attempts' }, { status: 429 });
   }
 
-  const { password } = await req.json();
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  const { password } = body;
   const expected = assertEnv('ADMIN_PASSWORD');
 
   if (typeof password !== 'string' || !(await verifySecret(password, expected))) {
@@ -25,7 +31,7 @@ export async function POST(req: NextRequest) {
     attempts: 0,
   });
 
-  await sendTelegram(`*Lynx emergency admin*\n\nOTP: \`${otp}\`\nExpires in 5 minutes.\nIP key: \`${key}\``);
+  await sendTelegram(`*Lynx emergency admin*\n\nOTP: \`${escapeMarkdown(otp)}\`\nExpires in 5 minutes.\nIP key: \`${escapeMarkdown(key)}\``);
 
   const response = NextResponse.json({ ok: true });
   // AP-17: Only return dev OTP when ADMIN_DEV_MODE is explicitly 'true', with warning header

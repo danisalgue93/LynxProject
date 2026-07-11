@@ -50,8 +50,10 @@ export const PRICE_SCALE = 1_000_000_000n;
 // Convierte un precio "SOL por LYNX" (humano) al price_scaled (lamports por
 // micro-LYNX * PRICE_SCALE) que espera el programa para el libro spot.
 export function solPerLynxToPriceScaled(solPerLynx: number): bigint {
-  const lamportsPerMicroLynx = (solPerLynx * 1_000_000_000) / Math.pow(10, LYNX_DECIMALS);
-  return BigInt(Math.round(lamportsPerMicroLynx * Number(PRICE_SCALE)));
+  const decimals = 10n ** BigInt(LYNX_DECIMALS);
+  const numerator = BigInt(Math.round(solPerLynx * 1e9));
+  const scaled = (numerator * PRICE_SCALE) / (1_000_000_000n * decimals);
+  return scaled;
 }
 
 export function priceScaledToSolPerLynx(priceScaled: bigint): number {
@@ -177,9 +179,11 @@ export function randomOrderId(): bigint {
 // --- Lectura de ProtocolConfig (para obtener el mint de LYNX y la tesoreria) ---
 
 let cachedConfig: { lynxMint: PublicKey; treasury: PublicKey } | null = null;
+let cachedConfigTimestamp = 0;
+const CONFIG_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 export async function getProtocolConfigInfo(connection: Connection): Promise<{ lynxMint: PublicKey; treasury: PublicKey }> {
-  if (cachedConfig) return cachedConfig;
+  if (cachedConfig && Date.now() - cachedConfigTimestamp < CONFIG_CACHE_TTL_MS) return cachedConfig;
   const config = configPda();
   const info = await connection.getAccountInfo(config);
   if (!info) throw new Error('No se encontro la cuenta ProtocolConfig on-chain. ¿Esta bien configurado VITE_PROGRAM_ID?');
@@ -192,12 +196,14 @@ export async function getProtocolConfigInfo(connection: Connection): Promise<{ l
   const lynxMint = new PublicKey(info.data.subarray(offset, offset + 32)); offset += 32;
   void admin;
   cachedConfig = { lynxMint, treasury };
+  cachedConfigTimestamp = Date.now();
   return cachedConfig;
 }
 
 // Reset util para tests / si el programa se redespliega con otra config.
 export function clearProtocolConfigCache() {
   cachedConfig = null;
+  cachedConfigTimestamp = 0;
 }
 
 async function ensureAtaInstruction(
@@ -207,7 +213,10 @@ async function ensureAtaInstruction(
   mint: PublicKey
 ): Promise<{ address: PublicKey; instruction: TransactionInstruction | null }> {
   const address = await getAssociatedTokenAddress(mint, owner);
-  const info = await connection.getAccountInfo(address);
+  const info = await Promise.race([
+    connection.getAccountInfo(address),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('RPC timeout')), 10000)),
+  ]);
   if (info) return { address, instruction: null };
   return {
     address,

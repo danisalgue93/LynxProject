@@ -11,12 +11,11 @@
  * on-chain para resolver mercados (ver AUDIT_REPORT / auditoria del
  * proyecto), aplicado aqui al lado off-chain.
  *
- * Almacenamiento intencionalmente en memoria (no se persiste a Prisma): son
- * solicitudes de corta vida y de bajo riesgo si se pierden en un reinicio
- * (el admin simplemente vuelve a proponer). El credito real, una vez
- * ejecutado, se aplica via store.deposit() y SI queda persistido con el resto
- * del ledger/wallets como siempre.
+ * Pending credit approval requests and market resolutions are persisted in
+ * Redis with a TTL of 24 hours so they survive server restarts.
  */
+
+import { redis } from './redisClient.js';
 
 export type CreditRequest = {
   id: string;
@@ -33,6 +32,7 @@ export type CreditRequest = {
 };
 
 const REQUEST_TTL_MS = 24 * 60 * 60 * 1000; // 24h para juntar la segunda aprobacion
+const REQUEST_TTL_SECONDS = 24 * 60 * 60; // Redis TTL in seconds
 const REQUIRED_APPROVALS = 2; // incluyendo al proponente => 1 propuesta + 1 aprobacion de OTRO admin
 export const MAX_MANUAL_CREDIT_AMOUNT = {
   SOL: Number(process.env.MAX_MANUAL_CREDIT_SOL || 5),
@@ -85,12 +85,75 @@ export function checkAndRecordDailyCredit(wallet: string, currency: 'SOL' | 'LYN
   console.log(`[creditApprovals] BE-19: Daily credit tracker: ${key} = ${newTotal}/${dailyLimit}`);
 }
 
+// ── Redis-backed credit request storage ────────────────────────────────────────
+
+const CREDIT_REDIS_PREFIX = 'credit_approval:';
+const RESOLUTION_REDIS_PREFIX = 'market_resolution:';
+
+// In-memory fallback for when Redis is not available (same as before)
 const requests = new Map<string, CreditRequest>();
+
+async function saveCreditRequestToRedis(req: CreditRequest): Promise<void> {
+  if (!redis) return;
+  try {
+    const remainingTtl = Math.max(0, Math.ceil((req.expiresAt - Date.now()) / 1000));
+    if (remainingTtl <= 0) return;
+    await redis.set(
+      `${CREDIT_REDIS_PREFIX}${req.id}`,
+      JSON.stringify(req),
+      'EX',
+      remainingTtl
+    );
+  } catch (err) {
+    console.error('[creditApprovals] redis save error:', err instanceof Error ? err.message : err);
+  }
+}
+
+async function removeCreditRequestFromRedis(id: string): Promise<void> {
+  if (!redis) return;
+  try {
+    await redis.set(`${CREDIT_REDIS_PREFIX}${id}`, '', 'PX', 1); // effectively delete
+  } catch (err) {
+    console.error('[creditApprovals] redis remove error:', err instanceof Error ? err.message : err);
+  }
+}
 
 function purgeExpired() {
   const now = Date.now();
   for (const [id, req] of requests) {
     if (!req.executed && req.expiresAt < now) requests.delete(id);
+  }
+}
+
+export async function loadPendingCreditApprovalsFromRedis(): Promise<void> {
+  if (!redis) return;
+  try {
+    const RedisClient = (await import('ioredis')).default;
+    const compatibleRedis = redis as unknown as { keys(pattern: string): Promise<string[]>; get(key: string): Promise<string | null> };
+    const keys = await compatibleRedis.keys(`${CREDIT_REDIS_PREFIX}*`);
+    let loaded = 0;
+    for (const key of keys) {
+      try {
+        const raw = await compatibleRedis.get(key);
+        if (raw) {
+          const req = JSON.parse(raw) as CreditRequest;
+          if (!req.executed && req.expiresAt > Date.now()) {
+            requests.set(req.id, req);
+            loaded++;
+          } else {
+            // Clean up expired or executed entries
+            await removeCreditRequestFromRedis(req.id);
+          }
+        }
+      } catch {
+        // Skip malformed entries
+      }
+    }
+    if (loaded > 0) {
+      console.log(`[creditApprovals] Loaded ${loaded} pending credit approval(s) from Redis`);
+    }
+  } catch (err) {
+    console.error('[creditApprovals] Failed to load from Redis:', err instanceof Error ? err.message : err);
   }
 }
 
@@ -122,6 +185,7 @@ export function proposeCredit(input: { wallet: string; currency: 'SOL' | 'LYNX';
     executed: false,
   };
   requests.set(id, request);
+  saveCreditRequestToRedis(request).catch(() => {});
   console.log(`[creditApprovals] PROPOSED ${id}: ${input.amount} ${input.currency} -> ${input.wallet} by admin=${input.proposedBy} reason="${request.reason}"`);
   return request;
 }
@@ -137,6 +201,7 @@ export function approveCredit(id: string, approverUserId: string): CreditRequest
   if (!request.approvals.includes(approverUserId)) {
     request.approvals.push(approverUserId);
   }
+  saveCreditRequestToRedis(request).catch(() => {});
   console.log(`[creditApprovals] APPROVED ${id} by admin=${approverUserId} (${request.approvals.length + 1}/${REQUIRED_APPROVALS} total)`);
   return request;
 }
@@ -156,6 +221,8 @@ export function markExecuted(id: string) {
   if (request) {
     request.executed = true;
     request.executedAt = Date.now();
+    requests.delete(id);
+    removeCreditRequestFromRedis(id).catch(() => {});
     console.log(`[creditApprovals] EXECUTED ${id}`);
   }
 }
@@ -185,10 +252,65 @@ export type MarketResolutionRequest = {
 
 const marketResolutions = new Map<string, MarketResolutionRequest>();
 
+async function saveResolutionToRedis(req: MarketResolutionRequest): Promise<void> {
+  if (!redis) return;
+  try {
+    const remainingTtl = Math.max(0, Math.ceil((req.expiresAt - Date.now()) / 1000));
+    if (remainingTtl <= 0) return;
+    await redis.set(
+      `${RESOLUTION_REDIS_PREFIX}${req.id}`,
+      JSON.stringify(req),
+      'EX',
+      remainingTtl
+    );
+  } catch (err) {
+    console.error('[creditApprovals] redis save resolution error:', err instanceof Error ? err.message : err);
+  }
+}
+
+async function removeResolutionFromRedis(id: string): Promise<void> {
+  if (!redis) return;
+  try {
+    await redis.set(`${RESOLUTION_REDIS_PREFIX}${id}`, '', 'PX', 1);
+  } catch (err) {
+    console.error('[creditApprovals] redis remove resolution error:', err instanceof Error ? err.message : err);
+  }
+}
+
 function purgeExpiredResolutions() {
   const now = Date.now();
   for (const [id, req] of marketResolutions) {
     if (!req.executed && req.expiresAt < now) marketResolutions.delete(id);
+  }
+}
+
+export async function loadPendingMarketResolutionsFromRedis(): Promise<void> {
+  if (!redis) return;
+  try {
+    const compatibleRedis = redis as unknown as { keys(pattern: string): Promise<string[]>; get(key: string): Promise<string | null> };
+    const keys = await compatibleRedis.keys(`${RESOLUTION_REDIS_PREFIX}*`);
+    let loaded = 0;
+    for (const key of keys) {
+      try {
+        const raw = await compatibleRedis.get(key);
+        if (raw) {
+          const req = JSON.parse(raw) as MarketResolutionRequest;
+          if (!req.executed && req.expiresAt > Date.now()) {
+            marketResolutions.set(req.id, req);
+            loaded++;
+          } else {
+            await removeResolutionFromRedis(req.id);
+          }
+        }
+      } catch {
+        // Skip malformed entries
+      }
+    }
+    if (loaded > 0) {
+      console.log(`[creditApprovals] Loaded ${loaded} pending market resolution(s) from Redis`);
+    }
+  } catch (err) {
+    console.error('[creditApprovals] Failed to load resolutions from Redis:', err instanceof Error ? err.message : err);
   }
 }
 
@@ -207,6 +329,7 @@ export function proposeMarketResolution(input: { marketId: string; result: strin
     executed: false,
   };
   marketResolutions.set(id, request);
+  saveResolutionToRedis(request).catch(() => {});
   console.log(`[creditApprovals] MARKET RESOLUTION PROPOSED ${id}: market=${input.marketId} result=${input.result} by admin=${input.proposedBy}`);
   return request;
 }
@@ -222,6 +345,7 @@ export function approveMarketResolution(id: string, approverUserId: string): Mar
   if (!request.approvals.includes(approverUserId)) {
     request.approvals.push(approverUserId);
   }
+  saveResolutionToRedis(request).catch(() => {});
   console.log(`[creditApprovals] MARKET RESOLUTION APPROVED ${id} by admin=${approverUserId}`);
   return request;
 }
@@ -240,6 +364,8 @@ export function markResolutionExecuted(id: string) {
   if (request) {
     request.executed = true;
     request.executedAt = Date.now();
+    marketResolutions.delete(id);
+    removeResolutionFromRedis(id).catch(() => {});
     console.log(`[creditApprovals] MARKET RESOLUTION EXECUTED ${id}`);
   }
 }

@@ -21,7 +21,7 @@ async function openSignedMoonPay(walletAddress?: string) {
     throw new Error(data?.error || 'MoonPay is not configured');
   }
 
-  window.open(data.url, '_blank', 'width=500,height=700,noopener');
+  window.open(data.url, '_blank', 'width=500,height=700,noopener,noreferrer');
 }
 
 function getPendingRewards(portfolio?: Portfolio | null) {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { Bell, ChevronDown, Globe, LogOut, Menu, User, Wallet, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
@@ -25,7 +25,7 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
   const { i18n, t } = useTranslation();
   const navigate = useNavigate();
   const { disconnect } = useWallet();
-  const { logout, user, isAuthenticated, changePassword } = useAuth();
+  const { logout, user, isAuthenticated } = useAuth();
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
@@ -33,6 +33,22 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
   const [authMode, setAuthMode] = useState<"login" | "signup" | "change" | "reset" | "verify">("login");
   const [authPrefilledToken, setAuthPrefilledToken] = useState<string>("");
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const langMenuRef = useRef<HTMLDivElement>(null);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (langMenuRef.current && !langMenuRef.current.contains(e.target as Node)) {
+        setShowLangMenu(false);
+      }
+      if (accountMenuRef.current && !accountMenuRef.current.contains(e.target as Node)) {
+        setShowAccountMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const accountWallet = user?.walletAddress || user?.managedWalletAddress || "";
   const isWalletAccount = user?.authMethod === "wallet";
@@ -116,10 +132,10 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
         <div className="flex items-center gap-2 md:gap-4">
           <div className="hidden md:flex items-center gap-2 bg-[#18181B] px-3 py-1.5 rounded border border-[#27272A]">
             <div className="w-2 h-2 rounded-full bg-[#00FFD1] animate-pulse" />
-            <span className="text-[10px] font-mono text-[#A1A1AA]">{t("header.solanaMainnet", "SOLANA DEVNET")}</span>
+            <span className="text-[10px] font-mono text-[#A1A1AA]">{t("header.networkBadge", "SOLANA {{network}}", { network: (import.meta.env.VITE_SOLANA_NETWORK || 'devnet').toUpperCase() })}</span>
           </div>
 
-          <div className="relative">
+          <div className="relative" ref={langMenuRef}>
             <button
               type="button"
               aria-label={t("header.changeLanguage", "Change language")}
@@ -174,7 +190,7 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
           </div>
 
           {isAuthenticated && user ? (
-            <div className="relative">
+            <div className="relative" ref={accountMenuRef}>
               <button
                 type="button"
                 onClick={() => setShowAccountMenu((value) => !value)}

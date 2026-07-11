@@ -69,6 +69,7 @@ export class ErrorBoundary extends Component<Props, State> {
           <div className="flex gap-3 justify-center mt-6">
             <button
               onClick={this.handleReset}
+              type="button"
               className="flex items-center gap-2 px-4 py-2 bg-[#18181B] border border-[#27272A] text-white text-sm rounded hover:border-[#00FFD1]/50 transition-colors"
             >
               <RefreshCw className="w-4 h-4" />
@@ -76,6 +77,7 @@ export class ErrorBoundary extends Component<Props, State> {
             </button>
             <button
               onClick={() => window.location.reload()}
+              type="button"
               className="px-4 py-2 bg-[#00FFD1] text-black text-sm font-bold rounded hover:bg-[#00E5BC] transition-colors"
             >
               Reload page

@@ -295,7 +295,8 @@
     "stakingProgram": "Staking Program",
     "foundationTreasury": "Foundation Treasury",
     "protocolRewards": "Protocol Rewards Vault",
-    "feeCollector": "Fee Collector (Hot)"
+    "feeCollector": "Fee Collector (Hot)",
+    "configureInEnv": "Configure in .env"
   },
   "nav": {
     "markets": "Markets",
@@ -499,9 +500,9 @@
     "subtitle": "$LYNX stakers drive the evolution of Lynx Market.",
     "createProposal": "Create Proposal",
     "activeVoters": "Active Voters",
-    "vsLastWeek": "+12% vs last week",
+    "vsLastWeek": "{{change}} vs last week",
     "totalStaked": "Total LYNX Staked",
-    "ofSupply": "62.4% of Supply",
+    "ofSupply": "{{percent}}% of Supply",
     "forumActivity": "Forum Activity",
     "high": "High",
     "activeDiscussions": "{{count}} active discussions",

@@ -7,7 +7,8 @@ export async function GET() {
     await requireAdminSession();
     const markets = await fetchPendingMarkets();
     return NextResponse.json({ markets });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message ?? 'Unauthorized' }, { status: 401 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unauthorized';
+    return NextResponse.json({ error: message }, { status: 401 });
   }
 }

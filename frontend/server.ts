@@ -50,12 +50,14 @@ async function startServer() {
             if (!origin || allowedOrigins.includes(origin)) {
               callback(null, true);
             } else {
-              callback(new Error(`CORS: origin ${origin} not allowed`));
+              callback(null, false);
             }
           },
           credentials: true,
         }
-      : undefined
+      : process.env.NODE_ENV === 'production'
+        ? { origin: false as const }
+        : undefined
   ));
   app.use(express.json());
 
@@ -105,20 +107,34 @@ async function startServer() {
     const timeoutId = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS);
 
     try {
+      // Only forward safe headers to the backend proxy.
+      // Explicitly exclude forwarding headers that could be spoofed or
+      // that the frontend server should set itself.
+      const SAFE_FORWARD_HEADERS = new Set([
+        'accept', 'accept-language', 'content-type', 'authorization',
+        'x-requested-with', 'x-client-version',
+      ]);
+      const BLOCKED_HEADERS = new Set([
+        'connection', 'content-length', 'host',
+        'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto',
+        'x-original-forwarded-for',
+      ]);
       const headers = new Headers();
       for (const [key, value] of Object.entries(req.headers)) {
-        if (!value || ['connection', 'content-length', 'host'].includes(key.toLowerCase())) continue;
+        if (!value) continue;
+        const lower = key.toLowerCase();
+        if (BLOCKED_HEADERS.has(lower)) continue;
+        if (lower.startsWith('x-forwarded-')) continue;
+        // Only forward headers that are in the safe allowlist
+        if (!SAFE_FORWARD_HEADERS.has(lower)) continue;
         headers.set(key, Array.isArray(value) ? value.join(',') : value);
       }
       if (!headers.has('content-type') && !['GET', 'HEAD'].includes(req.method)) {
         headers.set('content-type', 'application/json');
       }
-      // Forward X-Forwarded-Proto so the backend can enforce HTTPS in production.
-      // Nginx sets this to 'https'; here we preserve it through the frontend→backend hop.
-      if (!headers.has('x-forwarded-proto')) {
-        const proto = req.headers['x-forwarded-proto'] as string | undefined;
-        if (proto) headers.set('x-forwarded-proto', proto);
-      }
+      // The frontend server sets X-Forwarded-Proto based on its own
+      // trusted configuration, not from client-supplied headers.
+      headers.set('x-forwarded-proto', req.secure ? 'https' : 'http');
 
       const upstream = await fetch(`${BACKEND_URL}${req.originalUrl}`, {
         method: req.method,

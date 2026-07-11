@@ -295,7 +295,8 @@
     "stakingProgram": "Programa de Staking",
     "foundationTreasury": "Tesorería de la Fundación",
     "protocolRewards": "Bóveda de Recompensas",
-    "feeCollector": "Recolector de Tarifas (Hot)"
+    "feeCollector": "Recolector de Tarifas (Hot)",
+    "configureInEnv": "Configurar en .env"
   },
   "nav": {
     "markets": "Mercados",
@@ -499,9 +500,9 @@
     "subtitle": "Los stakers de $LYNX impulsan la evolución de Lynx Market.",
     "createProposal": "Crear Propuesta",
     "activeVoters": "Votantes Activos",
-    "vsLastWeek": "+12% vs la semana pasada",
+    "vsLastWeek": "{{change}} vs la semana pasada",
     "totalStaked": "Total de LYNX en Staking",
-    "ofSupply": "62.4% del Suministro",
+    "ofSupply": "{{percent}}% del Suministro",
     "forumActivity": "Actividad del Foro",
     "high": "Alta",
     "activeDiscussions": "{{count}} discusiones activas",

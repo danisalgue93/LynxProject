@@ -27,6 +27,8 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
   const rewardLabel = poolAmount > 0
     ? `Up to +${Math.max((market.noAmount * 0.9 / (market.yesAmount || 1)) * 100, (market.yesAmount * 0.9 / (market.noAmount || 1)) * 100).toFixed(0)}% ROI`
     : 'No pool yet';
+  const rawRoi = Math.max((market.noAmount * 0.9 / (market.yesAmount || 1)) * 100, (market.yesAmount * 0.9 / (market.noAmount || 1)) * 100);
+  const displayRoi = isFinite(rawRoi) ? rawRoi : 0;
   
   return (
     <motion.div 
@@ -93,6 +95,7 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
               <div className="flex flex-col items-end gap-1.5">
                 <div className="text-sm md:text-lg font-mono font-bold text-[#00FFD1] leading-none tracking-tighter">
                   {rewardLabel}
+                  {isFinite(rawRoi) ? ` (ROI: ${displayRoi.toFixed(0)}%)` : ''}
                 </div>
                 {!isLynx ? (
                   <div className="text-[6px] md:text-[8px] bg-[#9945FF]/10 border border-[#9945FF]/30 text-[#9945FF] px-1.5 py-0.5 rounded uppercase tracking-widest">

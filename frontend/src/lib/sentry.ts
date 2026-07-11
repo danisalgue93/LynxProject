@@ -36,7 +36,6 @@ if (dsn) {
       Sentry.replayIntegration({
         maskAllText: true,
         blockAllMedia: true,
-        maskInputOptions: { password: true, email: true },
       }),
     ],
 

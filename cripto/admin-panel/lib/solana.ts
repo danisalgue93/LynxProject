@@ -9,12 +9,10 @@ import {
 import bs58 from 'bs58';
 import { assertEnv, isDevMode } from './security';
 
-// Discriminadores Anchor = primeros 8 bytes de sha256("global:<nombre_snake_case_de_la_instruccion>").
-// Se recalculan a mano (sin @coral-xyz/anchor) porque este panel construye las
-// instrucciones en crudo. Si cambias el nombre de una instruccion en lib.rs,
-// recalcula el discriminador correspondiente.
+// Anchor discriminators for global:<instruction_name> SHA256 first 8 bytes.
+// Verify after any program redeployment.
 //
-// AP-23: To verify/recompute these discriminators, use:
+// To verify/recompute these discriminators, use:
 //   echo -n "global:config" | sha256sum | head -c 16
 // or the Anchor CLI: `anchor idl parse` to extract from the IDL.
 // The 8 bytes shown are the first 8 bytes of the SHA-256 hash of
@@ -188,6 +186,7 @@ export function getAdminKeypair() {
 
 // AP-14: Zero out keypair secret key bytes to reduce window for memory scraping attacks.
 // Call this in a finally block after any transaction that uses a keypair.
+// Best-effort wipe. V8 GC may have copied the buffer. For maximum security, use Node.js secure heap.
 export function wipeKeypair(kp: Keypair) {
   kp.secretKey.fill(0);
 }
@@ -406,10 +405,11 @@ export async function fetchPendingMarkets() {
 
   const connection = getConnection();
   const programId = getProgramId();
-  const accounts = await connection.getProgramAccounts(programId);
+  const accounts = await connection.getProgramAccounts(programId, {
+    filters: [{ memcmp: { offset: 0, bytes: DISCRIMINATORS.market.toString('base64') } }],
+  });
 
   return accounts
-    .filter(({ account }) => hasDiscriminator(account.data, DISCRIMINATORS.market))
     .map(({ pubkey, account }) => decodeMarket(pubkey, account.data))
     .filter((market) => market.status === 'CutOff' || market.status === 'PendingResolution')
     .sort((a, b) => a.oracleDeadline - b.oracleDeadline);
@@ -427,9 +427,10 @@ export async function fetchMultisig(): Promise<MultisigInfo> {
 export async function fetchOpenProposals(): Promise<GovernanceProposalInfo[]> {
   const connection = getConnection();
   const programId = getProgramId();
-  const accounts = await connection.getProgramAccounts(programId);
+  const accounts = await connection.getProgramAccounts(programId, {
+    filters: [{ memcmp: { offset: 0, bytes: DISCRIMINATORS.proposal.toString('base64') } }],
+  });
   return accounts
-    .filter(({ account }) => hasDiscriminator(account.data, DISCRIMINATORS.proposal))
     .map(({ pubkey, account }) => decodeProposal(pubkey, account.data))
     .filter((p) => !p.executed && !p.cancelled)
     .sort((a, b) => a.createdTs - b.createdTs);
@@ -501,6 +502,12 @@ export async function approveProposal(proposalPubkey: string) {
   const config = configPda(programId);
   const multisig = multisigPda(config, programId);
   const proposal = new PublicKey(proposalPubkey);
+
+  const msInfo = await fetchMultisig();
+  const signerPubkey = signerKeypair.publicKey.toBase58();
+  if (!msInfo.signers.includes(signerPubkey)) {
+    throw new Error('This admin key is not a multisig signer');
+  }
 
   const ix = new TransactionInstruction({
     programId,

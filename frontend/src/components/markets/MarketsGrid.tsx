@@ -8,7 +8,6 @@ import { eventBus } from '@/src/lib/eventBus';
 
 interface MarketsGridProps {
   onMarketSelect: (market: Market) => void;
-  readOnly?: boolean;
   canCreateMarket?: boolean;
   onCreateMarket?: () => void;
 }

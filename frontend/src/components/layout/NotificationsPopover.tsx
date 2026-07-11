@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Trophy, Coins, Info } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/src/lib/utils';
@@ -27,12 +27,15 @@ interface NotificationsPopoverProps {
 export function NotificationsPopover({ isOpen, onClose, wallet, notifications, setNotifications }: NotificationsPopoverProps) {
   const { t } = useTranslation();
   const { addToast } = useToast();
+  const [isActionLoading, setIsActionLoading] = useState(false);
 
   if (!isOpen) return null;
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
   const handleMarkAllRead = async () => {
+    if (isActionLoading) return;
+    setIsActionLoading(true);
     try {
       const data = await apiFetch<Notification[]>('/api/notifications/read', {
         method: 'POST',
@@ -45,10 +48,14 @@ export function NotificationsPopover({ isOpen, onClose, wallet, notifications, s
         type: 'error',
         message: err?.message || t('notifications.markReadFailed', 'Failed to update notifications'),
       });
+    } finally {
+      setIsActionLoading(false);
     }
   };
 
   const handleMarkRead = async (id: string) => {
+    if (isActionLoading) return;
+    setIsActionLoading(true);
     try {
       const data = await apiFetch<Notification[]>('/api/notifications/read', {
         method: 'POST',
@@ -61,6 +68,8 @@ export function NotificationsPopover({ isOpen, onClose, wallet, notifications, s
         type: 'error',
         message: err?.message || t('notifications.markReadFailed', 'Failed to update notifications'),
       });
+    } finally {
+      setIsActionLoading(false);
     }
   };
 
@@ -112,7 +121,8 @@ export function NotificationsPopover({ isOpen, onClose, wallet, notifications, s
                 onClick={() => handleMarkRead(notification.id)}
                 className={cn(
                   "p-3 rounded-lg mb-1 flex items-start gap-3 cursor-pointer transition-colors relative group",
-                  notification.read ? "hover:bg-[#18181B]" : "bg-[#18181B]/50 hover:bg-[#18181B]"
+                  notification.read ? "hover:bg-[#18181B]" : "bg-[#18181B]/50 hover:bg-[#18181B]",
+                  isActionLoading && "opacity-50 pointer-events-none"
                 )}
               >
                 {!notification.read && (

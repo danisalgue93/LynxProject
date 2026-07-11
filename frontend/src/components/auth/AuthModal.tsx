@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { X, Mail, Wallet, Loader2, KeyRound } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
@@ -49,6 +49,7 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [walletLoginRequested, setWalletLoginRequested] = useState(false);
+  const loginAttemptedRef = useRef(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -56,9 +57,13 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
       setError(null);
       setStatus(null);
       setWalletLoginRequested(false);
+      loginAttemptedRef.current = false;
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
+      setPassword("");
+      setVerificationToken("");
+      setResetToken("");
       // Pre-fill token from email deep-link (e.g. /?reset=TOKEN or /?verify=TOKEN)
       if (prefilledToken) {
         if (defaultMode === "reset") setResetToken(prefilledToken);
@@ -69,6 +74,8 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
 
   useEffect(() => {
     if (!walletLoginRequested || !connected || !publicKey || !signMessage || !isOpen) return;
+    if (loginAttemptedRef.current) return;
+    loginAttemptedRef.current = true;
 
     const runWalletLogin = async () => {
       setIsSubmitting(true);

@@ -3,8 +3,8 @@ export type Currency = 'SOL' | 'LYNX';
 export type Position = 'YES' | 'NO' | 'A' | 'B' | 'DRAW';
 export type OrderSide = 'BUY' | 'SELL';
 export type OrderStatus = 'OPEN' | 'PARTIAL_FILLED' | 'FILLED' | 'CANCELLED';
-export type DuelStatus = 'OPEN' | 'ACTIVE' | 'RESOLVED' | 'CANCELLED';
-export type ProposalStatus = 'active' | 'passed' | 'rejected' | 'pending';
+export type DuelStatus = 'OPEN' | 'ACCEPTED' | 'ACTIVE' | 'RESOLVED' | 'CANCELLED' | 'EXPIRED';
+export type ProposalStatus = 'ACTIVE' | 'PASSED' | 'REJECTED' | 'CANCELLED' | 'PENDING';
 
 export interface Market {
   id: string;

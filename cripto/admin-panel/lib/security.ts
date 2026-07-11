@@ -56,6 +56,10 @@ export function isDevMode() {
   return process.env.ADMIN_DEV_MODE === 'true';
 }
 
+export function escapeMarkdown(text: string): string {
+  return text.replace(/([_*\[\]()~`>#+\-=|{}.!])/g, '\\$1');
+}
+
 export async function sendTelegram(text: string) {
   if (isDevMode()) {
     console.log(`[DEV MODE - AUDIT LOG SUPPRESSED] ${text}`);

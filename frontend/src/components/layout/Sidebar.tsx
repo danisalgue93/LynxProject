@@ -56,7 +56,7 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, onClose }: SidebarPro
             </div>
           </div>
 
-          <nav className="space-y-1">
+          <nav className="space-y-1" role="navigation" aria-label="Navegacion principal">
             {menuItems.map((item) => (
               <button
                 key={item.id}
@@ -68,6 +68,7 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, onClose }: SidebarPro
                     : "text-[#71717A] hover:text-white"
                 )}
                 id={`nav-${item.id}`}
+                aria-current={activeTab === item.id ? "page" : undefined}
               >
                 <item.icon className={cn(
                   "w-4 h-4",

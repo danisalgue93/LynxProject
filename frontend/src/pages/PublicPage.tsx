@@ -1,8 +1,3 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -49,26 +44,8 @@ export function PublicPage() {
   const socketRef = useRef<any>(null);
 
   useEffect(() => {
-    try {
-      const socket = io(API_BASE_URL, { transports: ['websocket'] });
-      socketRef.current = socket;
-      socket.on('connect', () => {
-        if (activeWallet) socket.emit('identify', activeWallet);
-      });
-      const events = ['market:created','market:updated','duel:created','duel:accepted','orderbook:updated','portfolio:updated','portfolio:updated:private','dao:proposal-created','dao:proposal-updated','dev:reset','crypto:tx'];
-      for (const ev of events) {
-        socket.on(ev, (payload: any) => {
-          eventBus.dispatchEvent(new CustomEvent(ev, { detail: payload }));
-        });
-      }
-      return () => {
-        socket.disconnect();
-        socketRef.current = null;
-      };
-    } catch (err) {
-      // Socket unavailable in SSR or test env — silently ignore
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Public page does not connect to socket to avoid receiving private events.
+    // Authenticated users can access real-time data via the Dashboard.
   }, []);
 
   // Re-identify when wallet changes without reconnecting the socket
@@ -169,7 +146,7 @@ export function PublicPage() {
                 exit={{ opacity: 0, y: -20 }}
                 transition={{ duration: 0.3 }}
               >
-                <MarketsGrid onMarketSelect={setSelectedMarket} readOnly={!isAuthenticated} />
+                <MarketsGrid onMarketSelect={setSelectedMarket} />
               </motion.div>
             ) : activeTab === 'duels' ? (
               <motion.div
@@ -181,7 +158,6 @@ export function PublicPage() {
               >
                 <DuelsGrid 
                   onCreateDuel={() => handleActionClick('crear duel')}
-                  readOnly={!isAuthenticated}
                 />
               </motion.div>
             ) : activeTab === 'orderbook' ? (
@@ -192,7 +168,7 @@ export function PublicPage() {
                 exit={{ opacity: 0, x: -20 }}
                 transition={{ duration: 0.3 }}
               >
-                <OrderBookView readOnly={!isAuthenticated} onAuthRequired={handleActionClick} />
+                <OrderBookView onAuthRequired={handleActionClick} />
               </motion.div>
             ) : activeTab === 'portfolio' ? (
               <motion.div
@@ -232,7 +208,7 @@ export function PublicPage() {
                 exit={{ opacity: 0, x: -20 }}
                 transition={{ duration: 0.3 }}
               >
-                <GovernanceView readOnly={!isAuthenticated} />
+                <GovernanceView readOnly />
               </motion.div>
             ) : activeTab === 'docs' ? (
               <motion.div
@@ -292,7 +268,6 @@ export function PublicPage() {
           <MarketDetail 
             market={selectedMarket} 
             onClose={() => setSelectedMarket(null)}
-            readOnly={!isAuthenticated}
             onAuthRequired={handleActionClick}
             onHostDuel={() => setIsCreateDuelOpen(true)}
           />

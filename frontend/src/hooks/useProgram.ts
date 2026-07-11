@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { Market, Duel, Proposal, Portfolio } from '../types';
+import { useState, useCallback, useRef } from 'react';
+import { Market, Duel, Proposal, Portfolio, Position } from '../types';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { PublicKey } from '@solana/web3.js';
 import { apiFetch } from '../lib/api';
@@ -42,9 +42,71 @@ function toOnChainOutcome(position: string): OnChainOutcome {
   throw new Error(`Posicion "${position}" no soportada on-chain.`);
 }
 
+export interface CreateDuelParams {
+  marketId: string;
+  side: Position;
+  amount: number;
+  currency: 'SOL' | 'LYNX';
+  type?: string;
+}
+
+export interface CreateMarketParams {
+  title: string;
+  description?: string;
+  category?: string;
+  oracleId?: string;
+  cutoffAt?: number;
+  resolvedAt?: number;
+  isTernary?: boolean;
+  currency?: 'SOL' | 'LYNX';
+}
+
+export interface OrderBookEntry {
+  id: string;
+  marketId: string;
+  owner: string;
+  side: 'BUY' | 'SELL';
+  position: Position;
+  amount: number;
+  price: number;
+  createdAt: number;
+  onChain?: boolean;
+  onChainOrderPubkey?: string;
+  onChainMarket?: string;
+  currency?: 'SOL' | 'LYNX';
+}
+
+export interface PositionEntry {
+  id: string;
+  marketId: string;
+  position: Position;
+  amount: number;
+  avgPrice: number;
+  currency: 'SOL' | 'LYNX';
+  outcome?: string;
+  onChainMarket?: string;
+  estimatedPayout?: number;
+  status?: string;
+}
+
+// Helper to manage loading state with unique operation IDs via a Set
+function useOpTracker() {
+  const pendingOpsRef = useRef(new Set<string>());
+  const isLoading = pendingOpsRef.current.size > 0;
+
+  const startOp = useCallback((opId: string) => {
+    pendingOpsRef.current.add(opId);
+  }, []);
+
+  const endOp = useCallback((opId: string) => {
+    pendingOpsRef.current.delete(opId);
+  }, []);
+
+  return { isLoading, startOp, endOp };
+}
+
 export function useProgram() {
-  const [loadingCount, setLoadingCount] = useState(0);
-  const isLoading = loadingCount > 0;
+  const { isLoading, startOp, endOp } = useOpTracker();
   const [error, setError] = useState<string | null>(null);
   const { publicKey, signMessage, sendTransaction } = useWallet();
   const { connection } = useConnection();
@@ -137,7 +199,8 @@ export function useProgram() {
 
   // Fetch all active markets from the backend indexer
   const fetchMarkets = useCallback(async (): Promise<Market[]> => {
-    setLoadingCount(c => c + 1);
+    const opId = `fetchMarkets-${Date.now()}`;
+    startOp(opId);
     setError(null);
     try {
       const response = await apiFetch<{ data: Market[]; total: number; limit: number; offset: number }>('/api/markets?limit=200');
@@ -147,9 +210,9 @@ export function useProgram() {
       setError(err.message || 'Failed to fetch markets');
       return [];
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [setLoadingCount, setError]);
+  }, [startOp, endOp]);
 
   // Compra a mercado o crea una orden limite. Si `market.onChainMarket` esta
   // presente, esto firma y envia una transaccion real contra el programa
@@ -163,7 +226,8 @@ export function useProgram() {
     tradeType: 'limit' | 'swap' | 'market',
     limitPrice?: number
   ) => {
-    setLoadingCount(c => c + 1);
+    const opId = `executeTrade-${Date.now()}`;
+    startOp(opId);
     try {
       const position = typeof side === 'boolean' ? (side ? 'YES' : 'NO') : side;
       const marketObj = typeof market === 'string' ? null : market;
@@ -221,20 +285,14 @@ export function useProgram() {
     } catch (err: any) {
       throw err;
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [ensureApproved, publicKey, connection, signAndSendOnChain]);
+  }, [ensureApproved, publicKey, connection, signAndSendOnChain, startOp, endOp]);
 
   // Coloca una orden en el libro LYNX/SOL on-chain (ver ../lib/lynxProgram.ts).
-  // No hay una instruccion "market order" separada: en un libro on-chain, una
-  // orden a mercado es simplemente una orden limite con un precio agresivo
-  // (compra muy por encima / venta muy por debajo del mejor precio) que el
-  // keeper (o cualquiera) cruza casi al instante contra el libro — el mismo
-  // patron que usan los libros on-chain de Solana como OpenBook/Serum. Por
-  // eso `price` es obligatorio: para tradeType 'market', pasa el peor precio
-  // que estarias dispuesto a aceptar (tu limite de slippage).
   const executeLynxOrder = useCallback(async (side: 'BUY' | 'SELL', amount: number, price?: number, tradeType: 'limit' | 'market' = 'limit') => {
-    setLoadingCount(c => c + 1);
+    const opId = `executeLynxOrder-${Date.now()}`;
+    startOp(opId);
     try {
       if (!publicKey) {
         throw new Error('Connect a Solana wallet (Phantom, Solflare, etc.) to trade LYNX/SOL on-chain.');
@@ -257,19 +315,20 @@ export function useProgram() {
     } catch (err: any) {
       throw err;
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [publicKey, connection, signAndSendOnChain]);
+  }, [publicKey, connection, signAndSendOnChain, startOp, endOp]);
 
   const fetchOrderBook = useCallback(async (pair = 'LYNX/SOL', marketId?: string) => {
     const params = new URLSearchParams({ pair });
     if (marketId) params.set('marketId', marketId);
-    return await apiFetch<any>(`/api/orderbook?${params.toString()}`);
+    return await apiFetch<OrderBookEntry[]>(`/api/orderbook?${params.toString()}`);
   }, []);
 
   // Fetch duels from backend
   const fetchDuels = useCallback(async (): Promise<Duel[]> => {
-    setLoadingCount(c => c + 1);
+    const opId = `fetchDuels-${Date.now()}`;
+    startOp(opId);
     try {
       const response = await apiFetch<{ data: Duel[]; total: number; limit: number; offset: number }>('/api/duels?limit=200');
       return response.data;
@@ -277,12 +336,13 @@ export function useProgram() {
       console.error('Failed to fetch duels', err);
       return [];
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, []);
+  }, [startOp, endOp]);
 
-  const createDuel = useCallback(async (duelParams: any) => {
-    setLoadingCount(c => c + 1);
+  const createDuel = useCallback(async (duelParams: CreateDuelParams) => {
+    const opId = `createDuel-${Date.now()}`;
+    startOp(opId);
     try {
       const currentWallet = await ensureApproved();
       return await apiFetch('/api/duels', {
@@ -292,14 +352,15 @@ export function useProgram() {
     } catch (err: any) {
       throw err;
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [ensureApproved]);
+  }, [ensureApproved, startOp, endOp]);
 
-  const createMarket = useCallback(async (marketParams: any) => {
-    setLoadingCount(c => c + 1);
+  const createMarket = useCallback(async (marketParams: CreateMarketParams) => {
+    const opId = `createMarket-${Date.now()}`;
+    startOp(opId);
     try {
-      const signed = await signAction('CREATE_MARKET', marketParams);
+      const signed = await signAction('CREATE_MARKET', marketParams as unknown as Record<string, unknown>);
       return await apiFetch('/api/markets', {
         method: 'POST',
         body: JSON.stringify({ ...marketParams, ...signed }),
@@ -307,13 +368,14 @@ export function useProgram() {
     } catch (err: any) {
       throw err;
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [signAction]);
+  }, [signAction, startOp, endOp]);
 
   // Fetch user portfolio
   const fetchPortfolio = useCallback(async (): Promise<Portfolio> => {
-    setLoadingCount(c => c + 1);
+    const opId = `fetchPortfolio-${Date.now()}`;
+    startOp(opId);
     setError(null);
     try {
       const currentWallet = requireWallet();
@@ -329,25 +391,27 @@ export function useProgram() {
         history: []
       };
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [requireWallet, setError]);
+  }, [requireWallet, startOp, endOp]);
 
   // Fetch DAO proposals
   const fetchProposals = useCallback(async (): Promise<Proposal[]> => {
-    setLoadingCount(c => c + 1);
+    const opId = `fetchProposals-${Date.now()}`;
+    startOp(opId);
     try {
       return await apiFetch<Proposal[]>('/api/proposals');
     } catch (err: any) {
       setError(err.message || 'Failed to fetch proposals');
       return [];
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, []);
+  }, [startOp, endOp]);
 
   const createProposal = useCallback(async (input: { title: string; description?: string; category?: string; author?: string }) => {
-    setLoadingCount(c => c + 1);
+    const opId = `createProposal-${Date.now()}`;
+    startOp(opId);
     try {
       return await apiFetch('/api/proposals', {
         method: 'POST',
@@ -357,25 +421,27 @@ export function useProgram() {
       setError(err.message || 'Failed to create proposal');
       throw err;
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, []);
+  }, [startOp, endOp]);
 
   // Fetch DAO Stats
   const fetchDaoStats = useCallback(async (): Promise<any> => {
-    setLoadingCount(c => c + 1);
+    const opId = `fetchDaoStats-${Date.now()}`;
+    startOp(opId);
     try {
        return await apiFetch('/api/daostats');
     } catch (err: any) {
        setError(err.message || 'Failed to fetch DAO stats');
        return null;
     } finally {
-       setLoadingCount(c => Math.max(0, c - 1));
+       endOp(opId);
     }
-  }, []);
+  }, [startOp, endOp]);
 
   const castVote = useCallback(async (proposalId: string, voteType: 'yes' | 'no') => {
-    setLoadingCount(c => c + 1);
+    const opId = `castVote-${Date.now()}`;
+    startOp(opId);
     try {
       const currentWallet = await ensureApproved();
       return await apiFetch(`/api/proposals/${proposalId}/vote`, {
@@ -385,12 +451,13 @@ export function useProgram() {
     } catch (err: any) {
       throw err;
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [ensureApproved]);
+  }, [ensureApproved, startOp, endOp]);
 
   const stakeLynx = useCallback(async (amount: number) => {
-    setLoadingCount(c => c + 1);
+    const opId = `stakeLynx-${Date.now()}`;
+    startOp(opId);
     try {
       const currentWallet = await ensureApproved();
       return await apiFetch<Portfolio>('/api/staking/stake', {
@@ -400,12 +467,13 @@ export function useProgram() {
     } catch (err: any) {
       throw err;
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [ensureApproved]);
+  }, [ensureApproved, startOp, endOp]);
 
   const unstakeLynx = useCallback(async (amount: number) => {
-    setLoadingCount(c => c + 1);
+    const opId = `unstakeLynx-${Date.now()}`;
+    startOp(opId);
     try {
       const currentWallet = await ensureApproved();
       return await apiFetch<Portfolio>('/api/staking/unstake', {
@@ -415,12 +483,13 @@ export function useProgram() {
     } catch (err: any) {
       throw err;
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [ensureApproved]);
+  }, [ensureApproved, startOp, endOp]);
 
   const claimRewards = useCallback(async () => {
-    setLoadingCount(c => c + 1);
+    const opId = `claimRewards-${Date.now()}`;
+    startOp(opId);
     try {
       const currentWallet = await ensureApproved();
       return await apiFetch<{ claimed: number; portfolio: Portfolio }>('/api/staking/claim', {
@@ -430,12 +499,13 @@ export function useProgram() {
     } catch (err: any) {
       throw err;
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [ensureApproved]);
+  }, [ensureApproved, startOp, endOp]);
 
   const acceptDuel = useCallback(async (duelId: string, position?: string) => {
-    setLoadingCount(c => c + 1);
+    const opId = `acceptDuel-${Date.now()}`;
+    startOp(opId);
     try {
       const currentWallet = await ensureApproved();
       return await apiFetch(`/api/duels/${duelId}/accept`, {
@@ -445,12 +515,13 @@ export function useProgram() {
     } catch (err: any) {
       throw err;
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [ensureApproved]);
+  }, [ensureApproved, startOp, endOp]);
 
   const cancelDuel = useCallback(async (duelId: string) => {
-    setLoadingCount(c => c + 1);
+    const opId = `cancelDuel-${Date.now()}`;
+    startOp(opId);
     try {
       const currentWallet = await ensureApproved();
       return await apiFetch(`/api/duels/${duelId}`, {
@@ -460,13 +531,14 @@ export function useProgram() {
     } catch (err: any) {
       throw err;
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [ensureApproved]);
+  }, [ensureApproved, startOp, endOp]);
 
 
   const depositSol = useCallback(async (amount: number, onChainSignature?: string) => {
-    setLoadingCount(c => c + 1);
+    const opId = `depositSol-${Date.now()}`;
+    startOp(opId);
     try {
       const currentWallet = await ensureApproved();
       // If no signature was supplied by the caller and this is an external wallet,
@@ -489,12 +561,13 @@ export function useProgram() {
     } catch (err: any) {
       throw err;
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [ensureApproved, publicKey, sendSolTransfer]);
+  }, [ensureApproved, publicKey, sendSolTransfer, startOp, endOp]);
 
   const withdrawSol = useCallback(async (amount: number) => {
-    setLoadingCount(c => c + 1);
+    const opId = `withdrawSol-${Date.now()}`;
+    startOp(opId);
     try {
       const currentWallet = await ensureApproved();
       const result = await apiFetch<{ portfolio: Portfolio }>('/api/ledger/withdraw', {
@@ -505,15 +578,16 @@ export function useProgram() {
     } catch (err: any) {
       throw err;
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [ensureApproved]);
+  }, [ensureApproved, startOp, endOp]);
 
   // `pos` es el objeto devuelto por fetchPositions(). Si trae onChainMarket,
   // esto firma y envia claim_market_sol/claim_market_lynx directamente; si
   // no, cae al endpoint legacy /api/positions/:id/claim.
-  const claimPosition = useCallback(async (pos: any) => {
-    setLoadingCount(c => c + 1);
+  const claimPosition = useCallback(async (pos: PositionEntry | string) => {
+    const opId = `claimPosition-${Date.now()}`;
+    startOp(opId);
     try {
       if (pos && typeof pos === 'object' && pos.onChainMarket) {
         if (!publicKey) {
@@ -540,16 +614,17 @@ export function useProgram() {
     } catch (err: any) {
       throw err;
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [ensureApproved, publicKey, connection, signAndSendOnChain]);
+  }, [ensureApproved, publicKey, connection, signAndSendOnChain, startOp, endOp]);
 
   // Cancel an open order. `order` es el objeto devuelto por fetchOrderBook();
   // si trae onChain=true esto firma y envia cancel_prediction_limit_order_*
   // directamente. Las ordenes del par LYNX/SOL (off-chain por ahora) siguen
   // el flujo legacy DELETE /api/orders/:id.
-  const cancelOrder = useCallback(async (order: any) => {
-    setLoadingCount(c => c + 1);
+  const cancelOrder = useCallback(async (order: OrderBookEntry | string) => {
+    const opId = `cancelOrder-${Date.now()}`;
+    startOp(opId);
     try {
       if (order && typeof order === 'object' && order.onChain && order.onChainOrderPubkey) {
         if (!publicKey) {
@@ -585,9 +660,9 @@ export function useProgram() {
     } catch (err: any) {
       throw err;
     } finally {
-      setLoadingCount(c => Math.max(0, c - 1));
+      endOp(opId);
     }
-  }, [ensureApproved, publicKey, connection, signAndSendOnChain]);
+  }, [ensureApproved, publicKey, connection, signAndSendOnChain, startOp, endOp]);
 
   const fetchTransactions = useCallback(async () => {
     try {
@@ -603,7 +678,7 @@ export function useProgram() {
   const fetchPositions = useCallback(async () => {
     try {
       const currentWallet = requireWallet();
-      return await apiFetch<any[]>(`/api/positions?wallet=${encodeURIComponent(currentWallet)}`);
+      return await apiFetch<PositionEntry[]>(`/api/positions?wallet=${encodeURIComponent(currentWallet)}`);
     } catch (err: any) {
       console.error('Failed to fetch positions', err);
       return [];

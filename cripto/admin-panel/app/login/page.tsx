@@ -8,7 +8,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [otp, setOtp] = useState('');
   const [error, setError] = useState('');
-  const [devOtp, setDevOtp] = useState('');
   const [loading, setLoading] = useState(false);
 
   async function requestOtp(event: FormEvent) {
@@ -23,10 +22,12 @@ export default function LoginPage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Login failed');
-      if (data.devOtp) setDevOtp(data.devOtp);
+      if (data.devOtp) {
+        window.alert(`Dev OTP: ${data.devOtp}`);
+      }
       setStep('otp');
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
       setLoading(false);
     }
@@ -45,8 +46,8 @@ export default function LoginPage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'OTP failed');
       window.location.href = '/admin';
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'OTP failed');
     } finally {
       setLoading(false);
     }
@@ -86,11 +87,6 @@ export default function LoginPage() {
                 <p style={{ margin: 0, color: '#bfdbfe', fontSize: 13 }}>
                   Enter your 2FA code from your authenticator app (TOTP), or use the Telegram OTP that was sent.
                 </p>
-                {devOtp && (
-                  <p style={{ margin: '10px 0 0', color: '#fff', fontSize: 18, fontWeight: 800 }}>
-                    Local dev OTP: {devOtp}
-                  </p>
-                )}
               </div>
               <label>
                 <span className="muted" style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>

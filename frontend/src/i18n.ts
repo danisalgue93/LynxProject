@@ -16,7 +16,9 @@ i18n
     resources,
     fallbackLng: 'en',
     interpolation: {
-      escapeValue: false, // react already safes from xss
+      // escapeValue: false is safe here because React JSX automatically escapes
+      // interpolated values (curly braces), so XSS via translations is not possible.
+      escapeValue: false,
     },
   });
 

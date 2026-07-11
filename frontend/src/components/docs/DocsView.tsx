@@ -115,14 +115,14 @@ export function DocsView() {
 
   const addresses = {
     contracts: [
-      { label: t('docs.lynxToken', "$LYNX Token"), address: "LYNx8...w9A2", color: "#00FFD1" },
-      { label: t('docs.marketCoreProg', "Market Core Program"), address: "mRk7...vL41", color: "#9945FF" },
-      { label: t('docs.stakingProgram', "Staking Program"), address: "stAk...eR29", color: "#14F195" }
+      { label: t('docs.lynxToken', "$LYNX Token"), address: import.meta.env.VITE_PROGRAM_ID ? `${import.meta.env.VITE_PROGRAM_ID.slice(0, 6)}...${import.meta.env.VITE_PROGRAM_ID.slice(-4)}` : t('docs.configureInEnv', 'Configure VITE_PROGRAM_ID'), color: "#00FFD1" },
+      { label: t('docs.marketCoreProg', "Market Core Program"), address: import.meta.env.VITE_PROGRAM_ID ? `${import.meta.env.VITE_PROGRAM_ID.slice(0, 4)}...${import.meta.env.VITE_PROGRAM_ID.slice(-4)}` : t('docs.configureInEnv', 'Configure VITE_PROGRAM_ID'), color: "#9945FF" },
+      { label: t('docs.stakingProgram', "Staking Program"), address: t('docs.configureInEnv', 'Configure in backend'), color: "#14F195" }
     ],
     wallets: [
-      { label: t('docs.foundationTreasury', "Foundation Treasury"), address: "trEa...xP88", color: "#F0E040" },
-      { label: t('docs.protocolRewards', "Protocol Rewards Vault"), address: "rEwA...mC55", color: "#00FFD1" },
-      { label: t('docs.feeCollector', "Fee Collector (Hot)"), address: "fEeC...vB12", color: "#FF4545" }
+      { label: t('docs.foundationTreasury', "Foundation Treasury"), address: import.meta.env.VITE_TREASURY_WALLET ? `${import.meta.env.VITE_TREASURY_WALLET.slice(0, 6)}...${import.meta.env.VITE_TREASURY_WALLET.slice(-4)}` : t('docs.configureInEnv', 'Configure VITE_TREASURY_WALLET'), color: "#F0E040" },
+      { label: t('docs.protocolRewards', "Protocol Rewards Vault"), address: t('docs.configureInEnv', 'Configure in backend'), color: "#00FFD1" },
+      { label: t('docs.feeCollector', "Fee Collector (Hot)"), address: t('docs.configureInEnv', 'Configure in backend'), color: "#FF4545" }
     ]
   };
 

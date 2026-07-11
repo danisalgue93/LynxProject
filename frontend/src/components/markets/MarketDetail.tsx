@@ -55,6 +55,7 @@ function MiniMarketChart({
     const loadHistory = async () => {
       try {
         const response = await fetch(apiUrl(`/api/chart/klines?marketId=${encodeURIComponent(market.id)}&interval=1h&limit=48`));
+        if (!response.ok) throw new Error('Failed to fetch chart data');
         const candles = await response.json();
         if (!cancelled && Array.isArray(candles)) {
           setHistoricalData(candles.map((candle: any) => {

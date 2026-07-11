@@ -4,6 +4,7 @@ type OtpEntry = {
   attempts: number;
 };
 
+// NOTE: In-memory storage - will not work correctly with multiple instances.
 // In-memory OTP store — REQUIRES this admin panel to run as a single
 // process/instance (as documented in the project README: local dev or one
 // instance behind a VPN/localhost tunnel, never scaled to multiple replicas).

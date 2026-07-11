@@ -13,16 +13,18 @@
  * tal como especifica RFC 4226 (HOTP) / RFC 6238 (TOTP).
  */
 
-import crypto from 'crypto';
+import crypto, { timingSafeEqual } from 'crypto';
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const STEP_SECONDS = 30;
 
 function base32Decode(input: string): Buffer {
   let bits = '';
-  for (const char of input.toUpperCase().replace(/=+$/, '')) {
+  const cleaned = input.toUpperCase().replace(/=+$/, '');
+  for (let i = 0; i < cleaned.length; i++) {
+    const char = cleaned[i];
     const val = BASE32_ALPHABET.indexOf(char);
-    if (val === -1) continue; // ignora separadores/espacios
+    if (val === -1) throw new Error(`Invalid base32 character: ${char} at position ${i}`);
     bits += val.toString(2).padStart(5, '0');
   }
   const bytes: number[] = [];
@@ -54,10 +56,9 @@ export function verifyTotp(base32Secret: string, token: string, windowSteps = 1)
   if (secret.length === 0) return false;
   const counter = Math.floor(Date.now() / 1000 / STEP_SECONDS);
   for (let delta = -windowSteps; delta <= windowSteps; delta++) {
-    // Comparacion no estrictamente constant-time, pero el rate limit del
-    // endpoint (8 intentos / 15 min) ya hace inviable un ataque de fuerza
-    // bruta sobre 6 digitos + ventana de 30s.
-    if (hotp(secret, counter + delta) === token) return true;
+    const candidate = Buffer.from(hotp(secret, counter + delta), 'utf8');
+    const expected = Buffer.from(token, 'utf8');
+    if (candidate.length === expected.length && timingSafeEqual(candidate, expected)) return true;
   }
   return false;
 }

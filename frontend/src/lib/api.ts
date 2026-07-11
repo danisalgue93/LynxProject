@@ -9,6 +9,10 @@ if (typeof window !== 'undefined' && import.meta.env.PROD && !API_BASE_URL) {
   );
 }
 
+// Singleton access token for the current authenticated session.
+// When multiple concurrent requests trigger a 401 + refresh, they all share
+// the same refresh promise (see tryRefreshToken) so only one refresh is
+// sent. After refresh, the new token is immediately available to all callers.
 let accessToken: string | null = null;
 
 export function setAccessToken(token: string | null) {

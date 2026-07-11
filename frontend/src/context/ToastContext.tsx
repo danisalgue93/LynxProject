@@ -1,4 +1,4 @@
-import React, { createContext, useState, useCallback } from 'react';
+import React, { createContext, useState, useCallback, useRef } from 'react';
 
 export interface Toast {
   id: string;
@@ -18,6 +18,15 @@ export const ToastContext = createContext<ToastContextType | undefined>(undefine
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  // Use a ref so addToast can reference a stable removeToast without depending on it
+  // in the useCallback deps, avoiding the "used before defined" issue.
+  const removeToastRef = useRef<(id: string) => void>(() => {});
+
+  const removeToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  removeToastRef.current = removeToast;
 
   const addToast = useCallback((toast: Omit<Toast, 'id'>) => {
     const id = `toast-${Date.now()}-${crypto.randomUUID()}`;
@@ -27,15 +36,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     // Auto-remove after duration (default 6s, but pending stays)
     if (toast.type !== 'pending' && toast.duration !== 0) {
       setTimeout(() => {
-        removeToast(id);
+        removeToastRef.current(id);
       }, toast.duration || 6000);
     }
 
     return id;
-  }, []);
-
-  const removeToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
   return (

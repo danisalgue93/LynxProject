@@ -43,6 +43,6 @@ EXPOSE 4000
 
 # Healthcheck so Docker / k8s knows when the container is ready
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -qO- http://localhost:4000/api/health || exit 1
+  CMD nc -z localhost 4000 || exit 1
 
 CMD ["node", "dist/src/server.js"]

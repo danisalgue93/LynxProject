@@ -36,6 +36,11 @@ export function DuelCard({ duel }: DuelCardProps) {
     loadMarket();
   }, [duel.parentMarketId]);
 
+  const isOpen = duel.status === DuelStatus.OPEN;
+  const isLynx = duel.currency === 'LYNX';
+  const currentWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || '';
+  const isCreator = Boolean(currentWallet && duel.creator === currentWallet);
+
   const handleAccept = async (position?: Position) => {
     if (duel.status !== DuelStatus.OPEN || isCreator) return;
     setIsAccepting(true);
@@ -81,10 +86,6 @@ export function DuelCard({ duel }: DuelCardProps) {
     }
   };
 
-  const isOpen = duel.status === DuelStatus.OPEN;
-  const isLynx = duel.currency === 'LYNX';
-  const currentWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || '';
-  const isCreator = Boolean(currentWallet && duel.creator === currentWallet);
   const cannotAcceptOwnDuelLabel = t('duels.cannotAcceptOwn', 'You created this duel');
   const ownDuelButtonLabel = t('duels.ownDuel', 'Own Duel');
   const acceptableTernaryPositions = [Position.YES, Position.NO, Position.DRAW].filter(

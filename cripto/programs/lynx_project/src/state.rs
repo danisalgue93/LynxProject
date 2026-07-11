@@ -12,7 +12,6 @@ pub struct ProtocolConfig {
     pub total_lynx_burned: u64,
     pub total_staked: u64,
     pub reward_per_token_scaled: u128,
-    pub emergency_delay: i64,
     pub bump: u8,
     pub rewards_vault_bump: u8,
     // Interruptor de emergencia. Cuando esta en `true` se bloquean nuevas
@@ -37,7 +36,7 @@ pub struct ProtocolConfig {
 }
 
 impl ProtocolConfig {
-    pub const LEN: usize = 8 + 32 * 5 + 8 * 4 + 16 + 1 * 2 + 1 + 1 + 8 * 2 + 15;
+    pub const LEN: usize = 8 + 32 * 5 + 8 * 3 + 16 + 1 * 4 + 8 * 2;
 }
 
 #[account]
@@ -53,7 +52,7 @@ pub struct Multisig {
 }
 
 impl Multisig {
-    pub const LEN: usize = 8 + 32 + 32 * MAX_MULTISIG_SIGNERS + 1 + 1 + 8 + 1 + 16;
+    pub const LEN: usize = 8 + 32 + 32 * MAX_MULTISIG_SIGNERS + 1 + 1 + 8 + 1;
 }
 
 // Accion concreta que una GovernanceProposal ejecuta una vez alcanzado el
@@ -113,8 +112,7 @@ impl GovernanceProposal {
         + 1
         + 8
         + 8
-        + 1
-        + 24;
+        + 1;
 }
 
 #[account]
@@ -123,7 +121,7 @@ pub struct RewardsVault {
 }
 
 impl RewardsVault {
-    pub const LEN: usize = 8 + 1 + 16;
+    pub const LEN: usize = 8 + 1;
 }
 
 #[account]
@@ -176,6 +174,15 @@ pub struct Market {
     // solo puede ejecutarse cuando now >= proposed_ts + DISPUTE_WINDOW_SECONDS
     // y nadie la ha disputado con dispute_resolution() antes de ese momento.
     pub proposed_ts: i64,
+    // Snapshot of the LYNX mint ratio (bps) taken at the time the market
+    // enters PendingResolution (propose_resolution). Used by
+    // finalize_market_and_fees instead of calling current_mint_ratio_bps()
+    // which is manipulable during the dispute window.
+    pub mint_ratio_snapshot_bps: u64,
+    // Tracks total lamports paid out to winners via claim_market_sol.
+    // Used by sweep_unclaimed_market_sol to detect when all claims are
+    // complete and only division-remainder dust remains in the vault.
+    pub total_claimed: u64,
     // --- Trazabilidad (M3 del informe de auditoria) ---
     // Quien firmo la instruccion que efectivamente movio los fondos y marco
     // el mercado como Resolved: el oracle_authority si vino de
@@ -189,7 +196,7 @@ impl Market {
     pub const TITLE_MAX: usize = 128;
     pub const LEN: usize = 8
         + 8
-        + 32 * 3
+        + 32 * 4
         + (4 + Self::TITLE_MAX)
         + 1
         + 1
@@ -204,8 +211,9 @@ impl Market {
         + 1    // swept
         + 1    // proposed_result
         + 8    // proposed_ts
-        + 32   // resolved_by
-        + 14;  // reserva restante
+        + 8    // mint_ratio_snapshot_bps
+        + 8    // total_claimed
+        + 32;  // resolved_by
 }
 
 #[account]
@@ -215,7 +223,7 @@ pub struct MarketVault {
 }
 
 impl MarketVault {
-    pub const LEN: usize = 8 + 32 + 1 + 16;
+    pub const LEN: usize = 8 + 32 + 1;
 }
 
 #[account]
@@ -230,7 +238,7 @@ pub struct UserPosition {
 }
 
 impl UserPosition {
-    pub const LEN: usize = 8 + 32 + 32 + 1 + 8 + 1 + 1 + 1 + 16;
+    pub const LEN: usize = 8 + 32 + 32 + 1 + 8 + 1 + 1 + 1;
 }
 
 #[account]
@@ -243,7 +251,7 @@ pub struct StakePosition {
 }
 
 impl StakePosition {
-    pub const LEN: usize = 8 + 32 + 8 + 16 + 8 + 1 + 16;
+    pub const LEN: usize = 8 + 32 + 8 + 16 + 8 + 1;
 }
 
 #[account]
@@ -263,7 +271,7 @@ pub struct Duel {
 }
 
 impl Duel {
-    pub const LEN: usize = 8 + 32 + 32 + 32 + 8 + 8 + 1 + 1 + 1 + 1 + 8 + 1 + 1 + 16;
+    pub const LEN: usize = 8 + 32 + 32 + 32 + 8 + 8 + 1 + 1 + 1 + 1 + 8 + 1 + 1;
 }
 
 #[account]
@@ -273,7 +281,7 @@ pub struct DuelVault {
 }
 
 impl DuelVault {
-    pub const LEN: usize = 8 + 32 + 1 + 16;
+    pub const LEN: usize = 8 + 32 + 1;
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
@@ -374,7 +382,7 @@ pub struct PredictionOrder {
 }
 
 impl PredictionOrder {
-    pub const LEN: usize = 8 + 8 + 32 + 32 + 1 + 8 + 8 + 1 + 8 + 8 + 1 + 1 + 16;
+    pub const LEN: usize = 8 + 8 + 32 + 32 + 1 + 8 + 8 + 1 + 8 + 8 + 1 + 1;
 }
 
 // Escrow en lamports para ordenes limite de mercados en SOL. Simple cuenta
@@ -387,7 +395,7 @@ pub struct PredictionOrderEscrowSol {
 }
 
 impl PredictionOrderEscrowSol {
-    pub const LEN: usize = 8 + 32 + 1 + 16;
+    pub const LEN: usize = 8 + 32 + 1;
 }
 
 // --- Libro de ordenes LYNX/SOL on-chain (spot, contraparte real) ---
@@ -432,7 +440,7 @@ pub struct SpotOrder {
 }
 
 impl SpotOrder {
-    pub const LEN: usize = 8 + 8 + 32 + 1 + 16 + 8 + 8 + 1 + 8 + 8 + 1 + 1 + 16;
+    pub const LEN: usize = 8 + 8 + 32 + 1 + 16 + 8 + 8 + 1 + 8 + 8 + 1 + 1;
 }
 
 // Escrow en lamports para ordenes SpotOrder::Buy (guarda el SOL con el que se
@@ -444,6 +452,6 @@ pub struct SpotOrderEscrowSol {
 }
 
 impl SpotOrderEscrowSol {
-    pub const LEN: usize = 8 + 32 + 1 + 16;
+    pub const LEN: usize = 8 + 32 + 1;
 }
 

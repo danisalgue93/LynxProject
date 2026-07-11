@@ -29,7 +29,6 @@ enum Position {
 enum Currency {
   SOL
   LYNX
-  USD
 }
 
 enum OrderSide {
@@ -78,8 +77,6 @@ enum LedgerType {
   STAKE
   UNSTAKE
   APPROVE
-  TRADE
-  SETTLEMENT
   EMISSION
   BURN
   REFUND
@@ -87,14 +84,24 @@ enum LedgerType {
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
+enum Role {
+  USER
+  ADMIN
+}
+
+enum AuthMethod {
+  EMAIL
+  WALLET
+}
+
 // One row per user — replaces the old AuthState JSON blob.
 model User {
   id                     String    @id
   email                  String    @unique
   passwordHash           String    @default("")
   displayName            String?
-  role                   String    @default("user")   // 'user' | 'admin'
-  authMethod             String    @default("email")  // 'email' | 'wallet'
+  role                   Role @default(USER)
+  authMethod             AuthMethod @default(EMAIL)
   emailVerified          Boolean   @default(false)
   walletAddress          String?   @unique
   walletLinkedAt         DateTime?

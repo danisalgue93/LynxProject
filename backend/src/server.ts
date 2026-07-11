@@ -23,7 +23,7 @@ import { generateToken, generateRefreshToken, verifyToken, verifyRefreshToken, h
 import { sendVerificationEmail, sendPasswordResetEmail, isEmailConfigured } from './email.js';
 import { onchainRouter } from './onchainRoutes.js';
 import { startChainIndexer, getIndexedMarket, listOpenOrdersForMarket, listPositionsForOwner, listOpenSpotOrders, fromOnChainOutcomeName, verifyOnChainMarketCreation, getIndexerStatus } from './chain.js';
-import { proposeCredit, approveCredit, getCreditRequest, markExecuted, isReadyToExecute, listPendingCredits, proposeMarketResolution, approveMarketResolution, getMarketResolutionRequest, markResolutionExecuted, isResolutionReadyToExecute, listPendingMarketResolutions } from './creditApprovals.js';
+import { proposeCredit, approveCredit, getCreditRequest, markExecuted, isReadyToExecute, listPendingCredits, proposeMarketResolution, approveMarketResolution, getMarketResolutionRequest, markResolutionExecuted, isResolutionReadyToExecute, listPendingMarketResolutions, loadPendingCreditApprovalsFromRedis, loadPendingMarketResolutionsFromRedis } from './creditApprovals.js';
 
 // ── Distributed locking (BE-17) ───────────────────────────────────────────────
 // Redis-based distributed lock using SET NX EX. Falls back to an in-memory map
@@ -53,7 +53,7 @@ async function acquireLock(key: string, ttlMs: number): Promise<boolean> {
 async function releaseLock(key: string): Promise<void> {
   if (redis) {
     try {
-      await redis.del(`lock:${key}`);
+      await (redis as any).del(`lock:${key}`);
     } catch (err) {
       console.error('[distributed-lock] redis error on release:', err instanceof Error ? err.message : err);
       // Fall through to in-memory cleanup
@@ -389,7 +389,13 @@ function walletFromQuery(req: express.Request, res: express.Response): string | 
     res.status(400).json({ error: 'wallet query parameter is required' });
     return null;
   }
-  return val.trim();
+  const wallet = val.trim();
+  // BE-M-12: Validate as base58 address (32-44 chars, base58 charset only)
+  if (wallet.length < 32 || wallet.length > 44 || !/^[1-9A-HJ-NP-Za-km-z]+$/.test(wallet)) {
+    res.status(400).json({ error: 'Invalid wallet address format' });
+    return null;
+  }
+  return wallet;
 }
 
 function createSimpleRateLimit({ windowMs, max }: { windowMs: number; max: number }) {
@@ -490,7 +496,7 @@ const tradingRateLimit = createSimpleRateLimit({ windowMs: 60 * 1000, max: 60 })
 // Per-wallet rate limiter: 120 wallet-level trading actions per minute.
 // Applied AFTER the per-IP limiter in trading routes to prevent a single
 // compromised wallet from flooding the system even if distributed across IPs.
-// Uses a key prefix "wallet:" that is separate from the IP-based keys.
+// BE-H-04: Uses Redis when available for distributed enforcement.
 const walletTradingRateLimit = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const wallet = req.body?.wallet || req.query?.wallet;
   if (typeof wallet !== 'string' || !wallet.trim()) {
@@ -501,8 +507,38 @@ const walletTradingRateLimit = (req: express.Request, res: express.Response, nex
   const now = Date.now();
   const windowMs = 60 * 1000;
   const max = 120;
-  // Reuse the same in-memory/Redis pattern from createSimpleRateLimit
-  // but keyed by wallet instead of IP
+
+  // BE-H-04: Use Redis for distributed wallet rate limiting
+  if (redis) {
+    const redisKey = `ratelimit:${windowMs}:${max}:${key}`;
+    redis
+      .multi()
+      .incr(redisKey)
+      .pttl(redisKey)
+      .exec()
+      .then((results: [Error | null, unknown][] | null) => {
+        if (!results) { res.status(500).json({ error: 'Rate limit check failed' }); return; }
+        const [[incrErr, count], [ttlErr, ttl]] = results as [
+          [Error | null, number],
+          [Error | null, number]
+        ];
+        if (incrErr || ttlErr) { res.status(500).json({ error: 'Rate limit check failed' }); return; }
+        if (ttl === -1) {
+          redis!.pexpire(redisKey, windowMs).catch(() => {});
+        }
+        if (count > max) {
+          res.status(429).json({ error: 'Wallet trade rate limit exceeded. Please slow down.' });
+          return;
+        }
+        next();
+      })
+      .catch(() => {
+        res.status(503).json({ error: 'Service temporarily unavailable' });
+      });
+    return;
+  }
+
+  // In-memory fallback
   const attempts = (req.app.locals as any)._walletTradeAttempts ||
     ((req.app.locals as any)._walletTradeAttempts = new Map<string, { count: number; resetAt: number }>());
   const current = attempts.get(key);
@@ -560,14 +596,21 @@ const adminWallets = (process.env.ADMIN_WALLETS || '')
   .filter(Boolean);
 const adminWalletSet = new Set(adminWallets);
 const requireEmailVerification = process.env.NODE_ENV !== 'test' && process.env.REQUIRE_EMAIL_VERIFICATION !== 'false';
+// BE-C-01: DEV_ADMIN_PASSWORD only effective in test mode — never in dev or production.
 const configuredAdminPassword = process.env.ADMIN_PASSWORD
-  ?? (process.env.NODE_ENV === 'production' ? undefined : process.env.DEV_ADMIN_PASSWORD);
-const adminPassword = configuredAdminPassword ?? (process.env.NODE_ENV === 'test' ? 'admin123' : undefined);
+  ?? (process.env.NODE_ENV === 'test' ? process.env.DEV_ADMIN_PASSWORD : undefined);
+if (configuredAdminPassword && process.env.NODE_ENV === 'test') {
+  console.warn(
+    '[security] DEV_ADMIN_PASSWORD or ADMIN_PASSWORD is set in test mode. ' +
+    'This should NEVER be used with real funds. ' +
+    'Use ADMIN_WALLETS (on-chain wallet auth) for admin operations instead.'
+  );
+}
 
 if (process.env.NODE_ENV === 'production' && adminWallets.length < 2) {
   throw new Error('ADMIN_WALLETS must contain at least two admin wallets in production');
 }
-if (process.env.NODE_ENV === 'production' && adminPassword && !/^(?=.*[A-Z])(?=.*\d).{8,}$/.test(adminPassword)) {
+if (process.env.NODE_ENV === 'production' && configuredAdminPassword && !/^(?=.*[A-Z])(?=.*\d).{8,}$/.test(configuredAdminPassword)) {
   throw new Error('ADMIN_PASSWORD must be at least 8 characters and include one uppercase letter and one number');
 }
 
@@ -606,21 +649,9 @@ function publicUser(user: AuthUser) {
   };
 }
 
-if (adminPassword) {
-  const adminUser: AuthUser = {
-    id: 'admin-1',
-    email: 'admin@lynx.local',
-    passwordHash: hashPasswordSync(adminPassword),
-    displayName: 'Admin',
-    role: 'admin',
-    authMethod: 'email',
-    emailVerified: true,
-    managedWalletAddress: managedWalletForUser('admin-1', 'admin@lynx.local'),
-    createdAt: Date.now()
-  };
-  users.set(adminUser.id, adminUser);
-  usersByEmail.set(adminUser.email.toLowerCase(), adminUser.id);
-}
+// Admin accounts are created via ADMIN_WALLETS env var (on-chain wallet auth)
+// or through the /auth/register + DB promotion path.
+// No hardcoded admin credentials are ever created.
 
 function ensureConfiguredAdminWalletUsers() {
   for (const wallet of adminWallets) {
@@ -650,8 +681,8 @@ function ensureConfiguredAdminWalletUsers() {
   }
 }
 
-async function persistAuthUsers() {
-  await persistence.saveAuthUsers([...users.entries()]);
+async function persistAuthUser(user: AuthUser) {
+  await persistence.saveAuthUser(user.id, user);
 }
 
 async function loadPersistedAuthUsers() {
@@ -698,7 +729,7 @@ function requireAuth(req: any, res: express.Response) {
 
 /** Ensures the authenticated user owns (or is admin of) the requested wallet address */
 function requireAuthMatchesWallet(req: any, res: express.Response, wallet: string): boolean {
-  if (req.app?.locals?.testBypassAuth === true) return true;
+  if (process.env.NODE_ENV === 'test' && req.headers['x-test-bypass-auth'] === 'true') return true;
   if (!requireAuth(req, res)) return false;
   const user = currentUser(req);
   if (!user) {
@@ -888,10 +919,19 @@ async function verifyOnChainSolDeposit(params: {
     return { ok: false, error: 'On-chain transaction failed' };
   }
 
-  const accountKeys = tx.transaction.message.getAccountKeys
-    ? tx.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses }).staticAccountKeys
-    : (tx.transaction.message as any).accountKeys;
-  const keys = accountKeys.map((k: PublicKey) => k.toBase58());
+  const accountKeys = (() => {
+    try {
+      return tx.transaction.message.getAccountKeys
+        ? tx.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses }).staticAccountKeys
+        : tx.transaction.message.staticAccountKeys;
+    } catch (err) {
+      return { ok: false, error: `Failed to parse transaction account keys: ${err instanceof Error ? err.message : 'unknown error'}` };
+    }
+  })();
+  if (!accountKeys) {
+    return { ok: false, error: 'Failed to parse transaction account keys' };
+  }
+  const keys = (accountKeys as PublicKey[]).map((k: PublicKey) => k.toBase58());
 
   const fromIndex = keys.indexOf(senderPubkey.toBase58());
   const toIndex = keys.indexOf(treasuryPubkey.toBase58());
@@ -1096,7 +1136,7 @@ app.post('/auth/register', maybeAuthRateLimit, asyncRoute(async (req, res) => {
     store.approveWallet(user.managedWalletAddress);
     await persist();
   }
-  await persistAuthUsers();
+  await persistAuthUser(user);
 
   if (requireEmailVerification) {
     (req as any).log.info({ email: user.email }, 'auth:email-verification-required');
@@ -1110,14 +1150,12 @@ app.post('/auth/register', maybeAuthRateLimit, asyncRoute(async (req, res) => {
         logger.error({ email: user.email, err: err?.message }, 'email:verification-send-failed');
       });
     } else {
-      // Dev mode: no Resend configured — expose token in response so the flow can be tested
-      logger.info({ email: user.email, verificationToken: user.emailVerificationToken }, 'email:no-resend-dev-token');
+      // Dev mode: no Resend configured — log token to console for testing
+      console.log(`[dev-email] Verification token for ${user.email}: ${user.emailVerificationToken}`);
     }
     return res.status(201).json({
       requiresEmailVerification: true,
       email: user.email,
-      // Only expose the token in development when Resend is not configured
-      devVerificationToken: isEmailConfigured() ? undefined : user.emailVerificationToken,
     });
   }
 
@@ -1182,7 +1220,7 @@ app.post('/auth/verify-email', maybeAuthRateLimit, asyncRoute(async (req, res) =
   }
   store.approveWallet(user.managedWalletAddress);
   await persist();
-  await persistAuthUsers();
+  await persistAuthUser(user);
 
   setRefreshCookie(res, generateRefreshToken(user.id));
   res.json({
@@ -1197,21 +1235,19 @@ app.post('/auth/request-password-reset', maybeAuthRateLimit, asyncRoute(async (r
   if (user && user.authMethod === 'email') {
     user.passwordResetToken = token('reset');
     user.passwordResetExpiresAt = Date.now() + 1000 * 60 * 30;
-    await persistAuthUsers();
+    await persistAuthUser(user);
     (req as any).log.info({ email: user.email }, 'auth:password-reset-requested');
     if (isEmailConfigured()) {
       sendPasswordResetEmail({ to: user.email, token: user.passwordResetToken }).catch((err) => {
         logger.error({ email: user.email, err: err?.message }, 'email:reset-send-failed');
       });
     } else {
-      logger.info({ email: user.email, resetToken: user.passwordResetToken }, 'email:no-resend-dev-token');
+      console.log(`[dev-email] Password reset token for ${user.email}: ${user.passwordResetToken}`);
     }
   }
   // Always return 200 to avoid user enumeration (don't reveal whether email exists)
   res.json({
     ok: true,
-    // Only expose the token in development when Resend is not configured
-    devResetToken: isEmailConfigured() ? undefined : user?.passwordResetToken,
   });
 }));
 
@@ -1232,11 +1268,11 @@ app.post('/auth/reset-password', maybeAuthRateLimit, asyncRoute(async (req, res)
   user.passwordHash = await hashPassword(body.password);
   user.passwordResetToken = undefined;
   user.passwordResetExpiresAt = undefined;
-  await persistAuthUsers();
+  await persistAuthUser(user);
   res.json({ ok: true });
 }));
 
-app.post('/auth/change-password', asyncRoute(async (req: any, res) => {
+app.post('/auth/change-password', maybeAuthRateLimit, asyncRoute(async (req: any, res) => {
   if (!requireAuth(req, res)) return;
   const body = z.object({
     currentPassword: z.string().min(1),
@@ -1252,7 +1288,7 @@ app.post('/auth/change-password', asyncRoute(async (req: any, res) => {
     return res.status(401).json({ error: 'Current password is incorrect' });
   }
   user.passwordHash = await hashPassword(body.newPassword);
-  await persistAuthUsers();
+  await persistAuthUser(user);
   res.json({ ok: true });
 }));
 
@@ -1326,7 +1362,7 @@ app.post('/auth/wallet-login', maybeAuthRateLimit, asyncRoute(async (req, res) =
   } else if (isAdminWallet(body.wallet)) {
     user.role = 'admin';
   }
-  await persistAuthUsers();
+  await persistAuthUser(user);
 
   const token = generateToken({ userId: user.id, email: user.email, role: user.role });
   setRefreshCookie(res, generateRefreshToken(user.id));
@@ -1364,20 +1400,20 @@ app.post('/auth/refresh', maybeAuthRateLimit, asyncRoute(async (req, res) => {
   });
 }));
 
-app.post('/auth/logout', asyncRoute(async (req, res) => {
+app.post('/auth/logout', maybeAuthRateLimit, asyncRoute(async (req, res) => {
   // BE-14: Blacklist the refresh token so it cannot be reused
   const refreshToken = getCookie(req, REFRESH_COOKIE_NAME);
   if (refreshToken) {
     const payload = verifyRefreshToken(refreshToken);
     if (payload) {
       // Use the configured refresh expiry as the blacklist TTL
-      const expiresAt = Date.now() + refreshCookieOptions.maxAge;
+      const expiresAt = Date.now() + (refreshCookieOptions.maxAge ?? 0);
       refreshBlacklist.set(refreshToken, expiresAt);
     }
   }
   clearRefreshCookie(res);
   res.json({ ok: true });
-});
+}));
 
 app.get('/auth/me', (req: any, res) => {
   if (!requireAuth(req, res)) return;
@@ -1390,7 +1426,7 @@ app.get('/auth/me', (req: any, res) => {
   res.json(publicUser(user));
 });
 
-app.post('/auth/link-wallet', asyncRoute(async (req: any, res) => {
+app.post('/auth/link-wallet', maybeAuthRateLimit, asyncRoute(async (req: any, res) => {
   if (!requireAuth(req, res)) return;
 
   const body = z.object({
@@ -1432,7 +1468,7 @@ app.post('/auth/link-wallet', asyncRoute(async (req: any, res) => {
   if (isAdminWallet(body.wallet)) currentUser.role = 'admin';
   store.approveWallet(body.wallet);
   await persist();
-  await persistAuthUsers();
+  await persistAuthUser(currentUser);
 
   res.json(publicUser(currentUser));
 }));
@@ -2254,10 +2290,16 @@ app.get('/api/positions', (req: any, res) => {
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   const offChainPositions = store.listPositions(wallet);
 
+  // BE-H-02: Build index of markets by onChainMarket for O(1) lookups
+  const marketByOnChain = new Map<string, any>();
+  for (const m of store.listMarkets(true)) {
+    if (m.onChainMarket) marketByOnChain.set(m.onChainMarket, m);
+  }
+
   const onChainPositions = listPositionsForOwner(wallet)
     .filter((p) => !p.claimed)
     .map((p) => {
-      const market = store.listMarkets(true).find((m: any) => m.onChainMarket === p.market);
+      const market = marketByOnChain.get(p.market);
       const onChainMarket = getIndexedMarket(p.market);
       const currency = market?.currency ?? onChainMarket?.currency ?? 'SOL';
       const factor = currency === 'LYNX' ? 1_000_000 : 1_000_000_000;
@@ -2469,7 +2511,7 @@ app.get('/api/transactions', (req: any, res) => {
   if (!wallet) return;
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   try {
-    const list = store.listTransactions().filter((tx) => tx.wallet === wallet);
+    const list = store.listTransactionsForWallet(wallet);
     res.json(list);
   } catch (e) {
     res.status(500).json({ error: 'Failed to list transactions' });
@@ -2525,6 +2567,9 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 });
 
 async function start() {
+  if (process.env.NODE_ENV === 'production' && !process.env.RESEND_API_KEY) {
+    throw new Error('RESEND_API_KEY is required in production. Email verification and password reset cannot function without it.');
+  }
   if (process.env.NODE_ENV === 'production') {
     const required = ['TREASURY_WALLET', 'TREASURY_SECRET_KEY', 'MANAGED_WALLET_SEED',
                       'JWT_SECRET', 'DATABASE_URL', 'CORS_ORIGIN', 'APP_URL',
@@ -2548,8 +2593,9 @@ async function start() {
   }
   await persistence.load(store);
   await loadPersistedAuthUsers();
+  await loadPendingCreditApprovalsFromRedis();
+  await loadPendingMarketResolutionsFromRedis();
   ensureConfiguredAdminWalletUsers();
-  await persistAuthUsers();
   httpServer.listen(port, '0.0.0.0', () => {
     console.log(`Lynx backend listening on http://0.0.0.0:${port}`);
   });
@@ -2560,7 +2606,6 @@ async function start() {
   const periodicPersist = setInterval(async () => {
     try {
       await persist();
-      await persistAuthUsers();
     } catch (err) {
       console.error('[periodic-persist] failed:', err);
     }
@@ -2573,7 +2618,6 @@ async function start() {
     clearInterval(periodicPersist);
     try {
       await persist();
-      await persistAuthUsers();
       console.log('[shutdown] State persisted.');
     } catch (err) {
       console.error('[shutdown] Failed to persist state:', err);

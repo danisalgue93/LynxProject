@@ -12,7 +12,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Too many attempts' }, { status: 429 });
   }
 
-  const { otp } = await req.json();
+  let body;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  const { otp } = body;
   if (typeof otp !== 'string') {
     return NextResponse.json({ error: 'Invalid OTP' }, { status: 401 });
   }

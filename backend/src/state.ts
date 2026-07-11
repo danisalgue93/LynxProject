@@ -85,6 +85,9 @@ export class LynxState {
   proposals = new Map<string, Proposal>();
   notifications = new Map<string, Notification[]>();
   transactions = new Map<string, { signature: string; wallet?: string; intent?: any; timestamp: number }>();
+  transactionsByWallet = new Map<string, string[]>(); // wallet → transaction IDs (BE-H-01)
+  positionsByWallet = new Map<string, string[]>(); // wallet → position IDs (BE-M-06)
+  tradesByWallet = new Map<string, string[]>(); // wallet → trade IDs (BE-M-06)
   ledger = new Map<string, LedgerEntry>();
   treasury = {
     sol: 0,
@@ -109,6 +112,8 @@ export class LynxState {
     this.proposals.clear();
     this.notifications.clear();
     this.transactions.clear();
+    this.transactionsByWallet.clear();
+    this.positionsByWallet.clear();
     this.ledger.clear();
     this.treasury = { sol: 0, lynx: 0, lynxForInitialSale: 0, lynxBurned: 0, lynxTotalMinted: 0, protocolDuelSol: 0 };
 
@@ -184,7 +189,7 @@ export class LynxState {
       id: 'LDAO-1',
       title: 'Use 20% of treasury fees for first liquidity campaign',
       description: 'Bootstrap the LYNX/SOL book after the first event closes and LYNX is minted.',
-      status: 'active',
+      status: 'ACTIVE',
       votesYes: 0,
       votesNo: 0,
       endTime: new Date(now + 1000 * 60 * 60 * 24 * 7).toISOString(),
@@ -317,8 +322,8 @@ export class LynxState {
       this.reconcileMarketStatus(market);
     }
     for (const proposal of this.proposals.values()) {
-      if (proposal.status === 'active' && new Date(proposal.endTime).getTime() <= now) {
-        proposal.status = proposal.votesYes > proposal.votesNo ? 'passed' : 'rejected';
+      if (proposal.status === 'ACTIVE' && new Date(proposal.endTime).getTime() <= now) {
+        proposal.status = proposal.votesYes > proposal.votesNo ? 'PASSED' : 'REJECTED';
       }
     }
   }
@@ -382,8 +387,8 @@ export class LynxState {
     const now = nowMs();
     return [...this.proposals.values()].map(p => {
       // Auto-close proposals whose endTime has passed
-      if (p.status === 'active' && new Date(p.endTime).getTime() <= now) {
-        p.status = p.votesYes > p.votesNo ? 'passed' : 'rejected';
+      if (p.status === 'ACTIVE' && new Date(p.endTime).getTime() <= now) {
+        p.status = p.votesYes > p.votesNo ? 'PASSED' : 'REJECTED';
       }
       return p;
     });
@@ -394,14 +399,28 @@ export class LynxState {
     return {
       activeVoters: wallets.filter((wallet) => wallet.stakedLynx > 0).length,
       totalLynxStaked: roundAmount(wallets.reduce((sum, wallet) => sum + wallet.stakedLynx, 0)),
-      activeDiscussions: this.listProposals().filter((proposal) => proposal.status === 'active').length
+      activeDiscussions: this.listProposals().filter((proposal) => proposal.status === 'ACTIVE').length
     };
+  }
+
+  // BE-M-06: Index a trade by both taker and maker for O(1) portfolio lookups.
+  private indexTrade(trade: Trade) {
+    const indexFor = (wallet: string) => {
+      const ids = this.tradesByWallet.get(wallet) || [];
+      ids.push(trade.id);
+      this.tradesByWallet.set(wallet, ids);
+    };
+    indexFor(trade.taker);
+    if (trade.maker) indexFor(trade.maker);
   }
 
   getPortfolio(walletAddress: string) {
     const wallet = this.getWallet(walletAddress);
-    const holdings = [...this.positions.values()]
-      .filter((position) => position.wallet === wallet.wallet && !position.claimed)
+    const positionIds = this.positionsByWallet.get(walletAddress);
+    const holdings = (positionIds
+      ? positionIds.map((id) => this.positions.get(id)).filter((p): p is UserPosition => !!p && !p.claimed)
+      : [...this.positions.values()].filter((position) => position.wallet === wallet.wallet && !position.claimed)
+    )
       .map((position) => {
         const market = this.markets.get(position.marketId);
         return {
@@ -447,7 +466,12 @@ export class LynxState {
       feeShare: (() => { const s = this.getDaoStats(); return s.totalLynxStaked > 0 ? roundAmount((wallet.stakedLynx / s.totalLynxStaked) * 100) : 0; })(),
       payments,
       holdings,
-      history: [...this.trades.values()].filter((trade) => trade.taker === wallet.wallet || trade.maker === wallet.wallet)
+      history: (() => {
+        const tradeIds = this.tradesByWallet.get(wallet.wallet);
+        return tradeIds
+          ? tradeIds.map((id) => this.trades.get(id)).filter((t): t is Trade => !!t)
+          : [...this.trades.values()].filter((trade) => trade.taker === wallet.wallet || trade.maker === wallet.wallet);
+      })()
     };
   }
 
@@ -508,6 +532,10 @@ export class LynxState {
       ...(market.currency === 'SOL' ? { solPrincipal: creditedToPool, lynxBoostSolEquivalent: 0 } : {})
     };
     this.positions.set(userPosition.id, userPosition);
+    // Update positionsByWallet index
+    const posIds = this.positionsByWallet.get(wallet.wallet) || [];
+    posIds.push(userPosition.id);
+    this.positionsByWallet.set(wallet.wallet, posIds);
 
     const trade: Trade = {
       id: id('trade'),
@@ -523,6 +551,7 @@ export class LynxState {
       createdAt: nowMs()
     };
     this.trades.set(trade.id, trade);
+    this.indexTrade(trade);
 
     // This swap/market trade just moved the pool's implied price, which can
     // put any resting prediction limit order on either side into range.
@@ -962,7 +991,7 @@ export class LynxState {
   ) {
     const proposal = this.proposals.get(input.proposalId);
     if (!proposal) throw new Error('Proposal not found');
-    if (proposal.status !== 'active') throw new Error('Proposal is not active');
+    if (proposal.status !== 'ACTIVE') throw new Error('Proposal is not active');
     const wallet = this.getWallet(input.wallet);
     proposal.voters ??= {};
     if (proposal.voters[wallet.wallet]) throw new Error('Wallet already voted on this proposal');
@@ -989,7 +1018,7 @@ export class LynxState {
       id: `LDAO-${Date.now().toString(36)}`,
       title: input.title,
       description: input.description || '',
-      status: 'active' as const,
+      status: 'ACTIVE' as const,
       votesYes: 0,
       votesNo: 0,
       endTime: new Date(now + 1000 * 60 * 60 * 24 * 7).toISOString(),
@@ -1103,6 +1132,17 @@ export class LynxState {
     return [...this.transactions.values()].sort((a, b) => b.timestamp - a.timestamp);
   }
 
+  listTransactionsForWallet(walletAddress: string) {
+    const txIds = this.transactionsByWallet.get(walletAddress);
+    if (txIds) {
+      return txIds
+        .map((id) => this.transactions.get(id))
+        .filter((t): t is NonNullable<typeof t> => !!t)
+        .sort((a, b) => b.timestamp - a.timestamp);
+    }
+    return [];
+  }
+
   listLedger(walletAddress: string) {
     return [...this.ledger.values()]
       .filter((entry) => entry.wallet === walletAddress)
@@ -1113,6 +1153,12 @@ export class LynxState {
     if (this.transactions.has(tx.signature)) return;
     const ts = Date.now();
     this.transactions.set(tx.signature, { signature: tx.signature, wallet: tx.wallet, intent: tx.intent, timestamp: ts });
+    // Update transactionsByWallet index (BE-H-01)
+    if (tx.wallet) {
+      const ids = this.transactionsByWallet.get(tx.wallet) || [];
+      ids.push(tx.signature);
+      this.transactionsByWallet.set(tx.wallet, ids);
+    }
   }
 
   hasTransaction(signature: string) {
@@ -1212,7 +1258,7 @@ export class LynxState {
       if (order.status === 'FILLED') this.releaseUnusedLock(order);
       if (maker.status === 'FILLED') this.releaseUnusedLock(maker);
       const tradeId = id('trade');
-      this.trades.set(tradeId, {
+      const lynxTrade = {
         id: tradeId,
         pair: 'LYNX/SOL',
         maker: maker.owner,
@@ -1221,9 +1267,11 @@ export class LynxState {
         amount,
         price,
         feeAmount: fee,
-        currency: 'SOL',
+        currency: 'SOL' as const,
         createdAt: nowMs()
-      });
+      };
+      this.trades.set(tradeId, lynxTrade);
+      this.indexTrade(lynxTrade);
     }
   }
 
@@ -1309,7 +1357,7 @@ export class LynxState {
         order.spentAmount = order.lockedAmount;
 
         const tradeId = id('trade');
-        this.trades.set(tradeId, {
+        const predTrade = {
           id: tradeId,
           marketId: market.id,
           pair: market.id,
@@ -1321,7 +1369,9 @@ export class LynxState {
           feeAmount: 0,
           currency: market.currency,
           createdAt: nowMs()
-        });
+        };
+        this.trades.set(tradeId, predTrade);
+        this.indexTrade(predTrade);
 
         this.pushNotification(order.owner, {
           type: 'trade',

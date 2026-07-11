@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { CreateDuelParams } from '@/src/hooks/useProgram';
 import { Market, Position } from "@/src/types";
 import { useProgram } from "@/src/hooks/useProgram";
 import { useBlockchainTransaction } from "@/src/hooks/useBlockchainTransaction";
@@ -10,7 +11,7 @@ import { useTranslation } from "react-i18next";
 
 interface CreateDuelModalProps {
   onClose: () => void;
-  onSubmit: (duel: any) => void;
+  onSubmit: (duel: CreateDuelParams) => void;
 }
 
 export function CreateDuelModal({ onClose, onSubmit }: CreateDuelModalProps) {

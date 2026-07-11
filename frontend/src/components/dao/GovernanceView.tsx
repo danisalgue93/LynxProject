@@ -12,6 +12,14 @@ import { getTxExplorerUrl } from '@/src/lib/explorer';
 import { useToast } from '@/src/context/ToastContext';
 import { useAuth } from '@/src/context/AuthContext';
 
+function formatPercent(value: number, total: number): string {
+  return total > 0 ? (value / total * 100).toFixed(1) : '0';
+}
+
+// NOTE: createProposal should ideally require a wallet signature to prove
+// authorization. The current implementation relies on the authenticated
+// session being validated server-side via the API route.
+
 export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
   const { t } = useTranslation();
   const { fetchProposals, fetchDaoStats, castVote, createProposal, stakeLynx, isLoading } = useProgram();
@@ -293,24 +301,24 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
                      <div className="space-y-2">
                         <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest">
                            <span className="text-[#00FFD1]">{t('governance.yes', 'Yes')}</span>
-                           <span className="text-white">{((proposal.votesYes + proposal.votesNo) > 0 ? (proposal.votesYes / (proposal.votesYes + proposal.votesNo) * 100) : 0).toFixed(1)}%</span>
+                           <span className="text-white">{formatPercent(proposal.votesYes, proposal.votesYes + proposal.votesNo)}%</span>
                         </div>
                         <div className="h-1.5 w-full bg-[#1F1F23] rounded-full overflow-hidden">
                            <div 
                               className="h-full bg-[#00FFD1]" 
-                              style={{ width: `${(proposal.votesYes + proposal.votesNo) > 0 ? (proposal.votesYes / (proposal.votesYes + proposal.votesNo) * 100) : 0}%` }}
+                              style={{ width: `${formatPercent(proposal.votesYes, proposal.votesYes + proposal.votesNo)}%` }}
                            />
                         </div>
                      </div>
                      <div className="space-y-2">
                         <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest">
                            <span className="text-[#52525B]">{t('governance.no', 'No')}</span>
-                           <span className="text-white">{((proposal.votesYes + proposal.votesNo) > 0 ? (proposal.votesNo / (proposal.votesYes + proposal.votesNo) * 100) : 0).toFixed(1)}%</span>
+                           <span className="text-white">{formatPercent(proposal.votesNo, proposal.votesYes + proposal.votesNo)}%</span>
                         </div>
                         <div className="h-1.5 w-full bg-[#1F1F23] rounded-full overflow-hidden">
                            <div 
                               className="h-full bg-[#52525B]" 
-                              style={{ width: `${(proposal.votesYes + proposal.votesNo) > 0 ? (proposal.votesNo / (proposal.votesYes + proposal.votesNo) * 100) : 0}%` }}
+                              style={{ width: `${formatPercent(proposal.votesNo, proposal.votesYes + proposal.votesNo)}%` }}
                            />
                         </div>
                      </div>

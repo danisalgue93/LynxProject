@@ -1,6 +1,7 @@
 // In-memory rate limiting — REQUIRES this admin panel to run as a single
 // process/instance (as documented in the project README: local dev or one
 // instance behind a VPN/localhost tunnel, never scaled to multiple replicas).
+// NOTE: In-memory storage - will not work correctly with multiple instances.
 //
 // AP-20: This is acceptable for the single-instance admin panel architecture.
 // If this ever needs to run as more than one instance, back this with a
