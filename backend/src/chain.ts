@@ -589,6 +589,7 @@ async function matchSpotOrdersOnce(keeper: Keypair, conn: Connection) {
           { pubkey: sellOrderPk, isSigner: false, isWritable: true },
           { pubkey: sellEscrow, isSigner: false, isWritable: true },
           { pubkey: sellOwner, isSigner: false, isWritable: true },
+          { pubkey: buyOwner, isSigner: false, isWritable: true },
           { pubkey: buyerLynxAta, isSigner: false, isWritable: true },
           { pubkey: treasury, isSigner: false, isWritable: true },
           { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },

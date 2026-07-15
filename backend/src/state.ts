@@ -114,6 +114,7 @@ export class LynxState {
     this.transactions.clear();
     this.transactionsByWallet.clear();
     this.positionsByWallet.clear();
+    this.tradesByWallet.clear();
     this.ledger.clear();
     this.treasury = { sol: 0, lynx: 0, lynxForInitialSale: 0, lynxBurned: 0, lynxTotalMinted: 0, protocolDuelSol: 0 };
 
@@ -1436,6 +1437,15 @@ export class LynxState {
     const treasuryEmission = roundAmount(totalEmission * LYNX_TREASURY_SHARE);
     const initialSaleEmission = roundAmount(totalEmission * LYNX_INITIAL_SALE_SHARE);
 
+    // NOTA DE DISEÑO: participantPositions incluye TODAS las posiciones del
+    // mercado (ambos lados), no solo las del resultado ganador — esto es
+    // intencional, no un bug. La emisión de LYNX premia a quien sostiene sus
+    // tokens de posición hasta el cierre del mercado, gane o pierda esa
+    // apuesta puntual en SOL; si un usuario compra y vende su posición antes
+    // del cutoff, es quien queda en posesión de esos tokens al resolver
+    // quien cobra la emisión correspondiente, no necesariamente el
+    // comprador original. El pago en SOL (claimPosition) sí sigue siendo
+    // exclusivo del lado ganador; esto es un mecanismo aparte.
     const participantPositions = [...this.positions.values()].filter((position) => position.marketId === market.id);
     const participantTotal = participantPositions.reduce((sum, position) => sum + position.amount, 0);
     for (const position of participantPositions) {

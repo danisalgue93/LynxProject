@@ -602,11 +602,13 @@ export async function buildCancelSpotOrderSellTx(params: {
   const { connection, signer, order, orderOwner } = params;
   const programId = getProgramId();
   const { lynxMint } = await getProtocolConfigInfo(connection);
+  const config = configPda(programId);
   const escrow = spotOrderEscrowLynxPda(order, programId);
   const ownerLynxAccount = await getAssociatedTokenAddress(lynxMint, orderOwner);
   const ix = new TransactionInstruction({
     programId,
     keys: [
+      { pubkey: config, isSigner: false, isWritable: false },
       { pubkey: order, isSigner: false, isWritable: true },
       { pubkey: escrow, isSigner: false, isWritable: true },
       { pubkey: ownerLynxAccount, isSigner: false, isWritable: true },

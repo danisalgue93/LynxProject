@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 export type ManagedAuthSession = {
-  provider: 'email-password' | 'magic-email' | 'magic-google';
+  provider: 'email-password' | 'magic-email';
   email?: string;
   issuer?: string;
   walletAddress?: string;

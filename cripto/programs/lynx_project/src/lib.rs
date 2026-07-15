@@ -817,12 +817,30 @@ pub mod lynx_project {
         let fee = bps(sol_amount, GLOBAL_TRADE_FEE_BPS)?;
         let net_to_seller = sol_amount.checked_sub(fee).ok_or(LynxError::MathOverflow)?;
 
+        // Monto que quedo reservado en buy_escrow para este fill, calculado al
+        // precio LIMITE del comprador (buy_order.price_scaled), no al precio
+        // de ejecucion. Como el escrow se llena en place_spot_order_buy al
+        // precio propio del comprador, esta es la porcion exacta del escrow
+        // que corresponde a este fill. Es >= sol_amount porque exec_price es
+        // el precio del maker y buy.price_scaled >= sell.price_scaled esta
+        // garantizado arriba (require de cruce de precios).
+        let buyer_reserved_for_fill = spot_sol_amount(fill_amount, ctx.accounts.buy_order.price_scaled)?;
+        // "Mejora de precio": si el maker es el vendedor con precio menor al
+        // limite del comprador, esta es la diferencia que le pertenece al
+        // comprador y debe volver a su wallet en la misma transaccion, no
+        // quedarse varada en el escrow (antes no se devolvia nunca).
+        let buyer_surplus = buyer_reserved_for_fill.checked_sub(sol_amount).ok_or(LynxError::MathOverflow)?;
+
         require_keys_eq!(ctx.accounts.seller_wallet.key(), ctx.accounts.sell_order.owner, LynxError::ActionMismatch);
+        require_keys_eq!(ctx.accounts.buyer_wallet.key(), ctx.accounts.buy_order.owner, LynxError::ActionMismatch);
         require_keys_eq!(ctx.accounts.buyer_lynx_account.owner, ctx.accounts.buy_order.owner, LynxError::ActionMismatch);
 
         transfer_lamports(&ctx.accounts.buy_escrow.to_account_info(), &ctx.accounts.seller_wallet.to_account_info(), net_to_seller)?;
         if fee > 0 {
             transfer_lamports(&ctx.accounts.buy_escrow.to_account_info(), &ctx.accounts.treasury.to_account_info(), fee)?;
+        }
+        if buyer_surplus > 0 {
+            transfer_lamports(&ctx.accounts.buy_escrow.to_account_info(), &ctx.accounts.buyer_wallet.to_account_info(), buyer_surplus)?;
         }
 
         let sell_order_id_bytes = ctx.accounts.sell_order.id.to_le_bytes();
@@ -1834,6 +1852,12 @@ pub struct MatchSpotOrders<'info> {
     /// CHECK: validado contra sell_order.owner dentro de la instruccion
     #[account(mut)]
     pub seller_wallet: UncheckedAccount<'info>,
+    // Wallet del comprador (buy_order.owner), destino inmediato de la "mejora
+    // de precio" (surplus) cuando el precio de ejecucion es mejor que su
+    // limite. Validado en la instruccion con require_keys_eq!.
+    /// CHECK: validado contra buy_order.owner dentro de la instruccion
+    #[account(mut)]
+    pub buyer_wallet: UncheckedAccount<'info>,
     // Token account de LYNX del comprador (buy_order.owner), destino del LYNX
     // comprado. Validado en la instruccion con require_keys_eq! sobre .owner.
     #[account(mut, constraint = buyer_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]

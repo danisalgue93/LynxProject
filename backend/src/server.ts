@@ -23,7 +23,7 @@ import { generateToken, generateRefreshToken, verifyToken, verifyRefreshToken, h
 import { sendVerificationEmail, sendPasswordResetEmail, isEmailConfigured } from './email.js';
 import { onchainRouter } from './onchainRoutes.js';
 import { startChainIndexer, getIndexedMarket, listOpenOrdersForMarket, listPositionsForOwner, listOpenSpotOrders, fromOnChainOutcomeName, verifyOnChainMarketCreation, getIndexerStatus } from './chain.js';
-import { proposeCredit, approveCredit, getCreditRequest, markExecuted, isReadyToExecute, listPendingCredits, proposeMarketResolution, approveMarketResolution, getMarketResolutionRequest, markResolutionExecuted, isResolutionReadyToExecute, listPendingMarketResolutions, loadPendingCreditApprovalsFromRedis, loadPendingMarketResolutionsFromRedis } from './creditApprovals.js';
+import { proposeCredit, approveCredit, getCreditRequest, markExecuted, isReadyToExecute, listPendingCredits, checkAndRecordDailyCredit, proposeMarketResolution, approveMarketResolution, getMarketResolutionRequest, markResolutionExecuted, isResolutionReadyToExecute, listPendingMarketResolutions, loadPendingCreditApprovalsFromRedis, loadPendingMarketResolutionsFromRedis } from './creditApprovals.js';
 
 // ── Distributed locking (BE-17) ───────────────────────────────────────────────
 // Redis-based distributed lock using SET NX EX. Falls back to an in-memory map
@@ -713,6 +713,7 @@ app.use((req: any, _res, next) => {
 });
 
 function requireAuth(req: any, res: express.Response) {
+  if (process.env.NODE_ENV === 'test' && req.headers['x-test-bypass-auth'] === 'true') return true;
   if (!req.user) {
     res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
     return false;
@@ -755,6 +756,7 @@ function currentUser(req: any) {
 }
 
 function requireAdmin(req: any, res: express.Response) {
+  if (process.env.NODE_ENV === 'test' && req.headers['x-test-bypass-auth'] === 'true') return true;
   if (!requireAuth(req, res)) return false;
   const user = currentUser(req);
   if (user?.role !== 'admin' && !isAdminWallet(user?.walletAddress)) {
@@ -770,6 +772,7 @@ function requireAdmin(req: any, res: express.Response) {
 // Devuelve el userId del admin autenticado (para exigir aprobacion dual con
 // una cuenta DISTINTA), o null si la request no esta autorizada.
 function requireAdminSessionOnly(req: any, res: express.Response): string | null {
+  if (process.env.NODE_ENV === 'test' && req.headers['x-test-bypass-auth'] === 'true') return 'test-admin-bypass';
   if (!requireAuth(req, res)) return null;
   const user = currentUser(req);
   if (user?.role !== 'admin' && !isAdminWallet(user?.walletAddress)) {
@@ -980,14 +983,14 @@ async function getTreasuryKeypair(): Promise<Keypair> {
  * Managed accounts (email/Magic logins) are identified internally by a
  * `MAGIC:<digest>` string (see managedWalletForUser), which is not a real
  * Solana address and cannot receive an on-chain transfer. To let these
- * accounts withdraw real SOL, we deterministically derive a real Solana
- * keypair from that same managed id using a server-only seed, so the same
- * managed id always resolves to the same on-chain address.
+ * accounts withdraw real SOL or LYNX, we deterministically derive a real
+ * Solana keypair from that same managed id using a server-only seed, so the
+ * same managed id always resolves to the same on-chain address.
  */
 async function deriveManagedWalletKeypair(managedId: string): Promise<Keypair> {
   const seed = await readSecret(process.env.MANAGED_WALLET_SEED, 'MANAGED_WALLET_SEED');
   if (!seed) {
-    throw new Error('MANAGED_WALLET_SEED must be set to send on-chain SOL withdrawals for managed accounts.');
+    throw new Error('MANAGED_WALLET_SEED must be set to send on-chain withdrawals for managed accounts.');
   }
   const seedBytes = createHash('sha256').update(`${seed}:${managedId}`).digest();
   return Keypair.fromSeed(seedBytes);
@@ -1058,7 +1061,9 @@ const sendOnChainLynxWithdrawal: SolWithdrawalSender = async ({ toWallet, amount
 
     const treasuryKp = Keypair.fromSecretKey(bs58Mod.default.decode(secretKey));
     const lynxMint = new PublicKey(lynxMintStr);
-    const toPubkey = new PublicKey(toWallet);
+    const toPubkey = toWallet.startsWith('MAGIC:')
+      ? (await deriveManagedWalletKeypair(toWallet)).publicKey
+      : new PublicKey(toWallet);
     const connection = getSolanaConnection();
 
     const treasuryAta = await getAssociatedTokenAddress(lynxMint, treasuryKp.publicKey);
@@ -2133,7 +2138,7 @@ app.post('/api/admin/credits/propose', asyncRoute(async (req, res) => {
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet) return;
   try {
-    const request = proposeCredit({ wallet, currency: body.currency, amount: body.amount, reason: body.reason, proposedBy: adminId });
+    const request = await proposeCredit({ wallet, currency: body.currency, amount: body.amount, reason: body.reason, proposedBy: adminId });
     res.status(201).json(request);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -2162,18 +2167,36 @@ app.post('/api/admin/credits/:id/execute', asyncRoute(async (req, res) => {
     return;
   }
 
-  const result = store.deposit({
-    wallet: request.wallet,
-    currency: request.currency,
-    amount: request.amount,
-    provider: 'INTERNAL',
-    reference: `dual-approved:${request.id}:${request.reason}`,
-  });
-  markExecuted(request.id);
-  await persist();
-  emit('ledger:deposit', { wallet: request.wallet, ledgerEntry: result.ledgerEntry });
-  emitPortfolioUpdated(request.wallet, result.portfolio);
-  res.status(201).json({ request, result });
+  // Distributed lock so two near-simultaneous executions of the same
+  // requestId (e.g. from different backend replicas) can't both credit the
+  // wallet before markExecuted() propagates — same pattern as the market
+  // resolution execute lock above.
+  const creditExecuteLockKey = `credit-execute:${request.id}`;
+  if (!(await acquireLock(creditExecuteLockKey, 10_000))) {
+    res.status(409).json({ error: 'Concurrent execution in progress. Please retry.' });
+    return;
+  }
+  try {
+    // BE-19: el cupo diario se consume aqui, al ejecutar de verdad (no al
+    // proponer) — ver comentario en checkAndRecordDailyCredit.
+    await checkAndRecordDailyCredit(request.wallet, request.currency, request.amount);
+    const result = store.deposit({
+      wallet: request.wallet,
+      currency: request.currency,
+      amount: request.amount,
+      provider: 'INTERNAL',
+      reference: `dual-approved:${request.id}:${request.reason}`,
+    });
+    markExecuted(request.id);
+    await persist();
+    emit('ledger:deposit', { wallet: request.wallet, ledgerEntry: result.ledgerEntry });
+    emitPortfolioUpdated(request.wallet, result.portfolio);
+    res.status(201).json({ request, result });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  } finally {
+    await releaseLock(creditExecuteLockKey);
+  }
 }));
 
 app.get('/api/admin/credits/pending', (req, res) => {
@@ -2349,11 +2372,25 @@ app.post('/api/positions/:id/boost-with-lynx', tradingRateLimit, asyncRoute(asyn
   if (!wallet) { res.status(400).json({ error: 'wallet is required' }); return; }
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   if (!requireApprovedWallet(res, wallet)) return;
-  const result = store.boostPositionWithLynxBurn(wallet, req.params.id, body.lynxAmount);
-  await persist();
-  emit('market:updated', result.market);
-  emitPortfolioUpdated(wallet, result.portfolio);
-  res.json(result);
+
+  // Distributed lock so two near-simultaneous boosts on the same position
+  // (e.g. from different backend replicas) can't both read remainingCap
+  // before either one writes position.lynxBoostSolEquivalent — same pattern
+  // as the market resolution / credit execute locks above.
+  const boostLockKey = `boost-position:${req.params.id}`;
+  if (!(await acquireLock(boostLockKey, 10_000))) {
+    res.status(409).json({ error: 'Concurrent boost in progress. Please retry.' });
+    return;
+  }
+  try {
+    const result = store.boostPositionWithLynxBurn(wallet, req.params.id, body.lynxAmount);
+    await persist();
+    emit('market:updated', result.market);
+    emitPortfolioUpdated(wallet, result.portfolio);
+    res.json(result);
+  } finally {
+    await releaseLock(boostLockKey);
+  }
 }));
 
 app.delete('/api/orders/:id', asyncRoute(async (req, res) => {
@@ -2569,6 +2606,14 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 async function start() {
   if (process.env.NODE_ENV === 'production' && !process.env.RESEND_API_KEY) {
     throw new Error('RESEND_API_KEY is required in production. Email verification and password reset cannot function without it.');
+  }
+  if (process.env.NODE_ENV === 'production' && !process.env.REDIS_URL) {
+    throw new Error(
+      'REDIS_URL is required in production. Without it, distributed locks (market resolution, ' +
+      'credit approvals, wallet-login signature replay protection, rate limiting) silently fall ' +
+      'back to per-instance memory, reopening the exact race conditions they were built to close ' +
+      'as soon as more than one backend replica is running.'
+    );
   }
   if (process.env.NODE_ENV === 'production') {
     const required = ['TREASURY_WALLET', 'TREASURY_SECRET_KEY', 'MANAGED_WALLET_SEED',

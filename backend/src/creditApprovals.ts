@@ -57,32 +57,89 @@ function getDailyCreditKey(wallet: string, currency: string): string {
 }
 
 function purgeDailyCreditTracker() {
-  const todayPrefix = getTodayDateKey();
+  const todaySuffix = `:${getTodayDateKey()}`;
   for (const key of dailyCreditTracker.keys()) {
-    // Remove entries from previous days (they won't contain today's date prefix at the end)
-    const datePart = key.split(':').slice(-2).join(':');
-    if (datePart !== getTodayDateKey()) {
+    // Remove entries from previous days. Key format is "wallet:currency:YYYY-MM-DD",
+    // so checking the suffix avoids rebuilding a "currency:YYYY-MM-DD" string that
+    // can never match the plain "YYYY-MM-DD" from getTodayDateKey() (BUG: previous
+    // slice(-2).join(':') comparison always failed, purging every entry on every
+    // call and silently resetting the daily credit limit — BE-19 was never enforced).
+    if (!key.endsWith(todaySuffix)) {
       dailyCreditTracker.delete(key);
     }
   }
 }
 
-export function checkAndRecordDailyCredit(wallet: string, currency: 'SOL' | 'LYNX', amount: number): void {
-  purgeDailyCreditTracker();
-  const key = getDailyCreditKey(wallet, currency);
-  const currentTotal = dailyCreditTracker.get(key) || 0;
-  const newTotal = currentTotal + amount;
+function getNextMidnightEpochMs(): number {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0).getTime();
+}
+
+function buildDailyLimitError(wallet: string, currency: 'SOL' | 'LYNX', currentTotal: number, dailyLimit: number): Error {
+  const remaining = dailyLimit - currentTotal;
+  return new Error(
+    `Daily credit limit for ${currency} exceeded. ` +
+    `Wallet ${wallet.slice(0, 4)}...${wallet.slice(-4)} has received ${currentTotal.toFixed(2)}/${dailyLimit} ${currency} today. ` +
+    `${remaining > 0 ? `Only ${remaining.toFixed(2)} ${currency} remaining.` : 'No more credits can be issued today.'}`
+  );
+}
+
+const DAILY_CREDIT_REDIS_PREFIX = 'daily_credit:';
+
+// dryRun=true solo valida el limite (usado en proposeCredit, para dar
+// feedback temprano) sin consumir cupo; el consumo real se registra al
+// ejecutar de verdad (ver /api/admin/credits/:id/execute en server.ts) para
+// que propuestas nunca aprobadas o expiradas (TTL 24h) no bloqueen cupo
+// legitimo (hallazgo #8 de la auditoria).
+//
+// BE-19 fix: el contador vivia solo en un Map en memoria del proceso, por lo
+// que no se compartia entre instancias ni sobrevivia a un reinicio/redeploy
+// (en produccion con auto-scaling o rolling deploys el tope diario dejaba de
+// cumplirse de forma consistente). Cuando hay Redis configurado, el contador
+// pasa a vivir ahi (INCRBYFLOAT + TTL a medianoche), igual que el resto de
+// este flujo; sin Redis (dev local / una sola instancia) se mantiene el
+// fallback en memoria de siempre.
+export async function checkAndRecordDailyCredit(wallet: string, currency: 'SOL' | 'LYNX', amount: number, dryRun = false): Promise<void> {
   const dailyLimit = MAX_DAILY_CREDIT[currency];
-  if (newTotal > dailyLimit) {
-    const remaining = dailyLimit - currentTotal;
-    throw new Error(
-      `Daily credit limit for ${currency} exceeded. ` +
-      `Wallet ${wallet.slice(0, 4)}...${wallet.slice(-4)} has received ${currentTotal.toFixed(2)}/${dailyLimit} ${currency} today. ` +
-      `${remaining > 0 ? `Only ${remaining.toFixed(2)} ${currency} remaining.` : 'No more credits can be issued today.'}`
-    );
+  const key = getDailyCreditKey(wallet, currency);
+
+  if (!redis) {
+    purgeDailyCreditTracker();
+    const currentTotal = dailyCreditTracker.get(key) || 0;
+    const newTotal = currentTotal + amount;
+    if (newTotal > dailyLimit) throw buildDailyLimitError(wallet, currency, currentTotal, dailyLimit);
+    if (dryRun) return;
+    dailyCreditTracker.set(key, newTotal);
+    console.log(`[creditApprovals] BE-19: Daily credit tracker (memory): ${key} = ${newTotal}/${dailyLimit}`);
+    return;
   }
-  dailyCreditTracker.set(key, newTotal);
-  console.log(`[creditApprovals] BE-19: Daily credit tracker: ${key} = ${newTotal}/${dailyLimit}`);
+
+  const redisKey = `${DAILY_CREDIT_REDIS_PREFIX}${key}`;
+  const compatibleRedis = redis as unknown as {
+    get(key: string): Promise<string | null>;
+    incrbyfloat(key: string, increment: number): Promise<string>;
+    pexpireat(key: string, millisecondsTimestamp: number): Promise<number>;
+  };
+
+  if (dryRun) {
+    // Solo lee el total actual sin consumir cupo (feedback temprano en propose).
+    const raw = await compatibleRedis.get(redisKey);
+    const currentTotal = raw ? parseFloat(raw) : 0;
+    if (currentTotal + amount > dailyLimit) throw buildDailyLimitError(wallet, currency, currentTotal, dailyLimit);
+    return;
+  }
+
+  // Incrementa atomicamente y valida despues; si se paso del limite, revierte
+  // el incremento y rechaza. Esto evita la ventana de carrera de un GET+SET
+  // separado entre instancias (que es el mismo problema que tenia el Map en
+  // memoria, solo que entre procesos en vez de entre requests).
+  const newTotal = parseFloat(await compatibleRedis.incrbyfloat(redisKey, amount));
+  if (newTotal > dailyLimit) {
+    await compatibleRedis.incrbyfloat(redisKey, -amount);
+    throw buildDailyLimitError(wallet, currency, newTotal - amount, dailyLimit);
+  }
+  await compatibleRedis.pexpireat(redisKey, getNextMidnightEpochMs());
+  console.log(`[creditApprovals] BE-19: Daily credit tracker (redis): ${key} = ${newTotal}/${dailyLimit}`);
 }
 
 // ── Redis-backed credit request storage ────────────────────────────────────────
@@ -112,7 +169,7 @@ async function saveCreditRequestToRedis(req: CreditRequest): Promise<void> {
 async function removeCreditRequestFromRedis(id: string): Promise<void> {
   if (!redis) return;
   try {
-    await redis.set(`${CREDIT_REDIS_PREFIX}${id}`, '', 'PX', 1); // effectively delete
+    await redis.del(`${CREDIT_REDIS_PREFIX}${id}`);
   } catch (err) {
     console.error('[creditApprovals] redis remove error:', err instanceof Error ? err.message : err);
   }
@@ -157,7 +214,7 @@ export async function loadPendingCreditApprovalsFromRedis(): Promise<void> {
   }
 }
 
-export function proposeCredit(input: { wallet: string; currency: 'SOL' | 'LYNX'; amount: number; reason: string; proposedBy: string }): CreditRequest {
+export async function proposeCredit(input: { wallet: string; currency: 'SOL' | 'LYNX'; amount: number; reason: string; proposedBy: string }): Promise<CreditRequest> {
   purgeExpired();
   if (input.amount <= 0) throw new Error('amount must be positive');
   const cap = MAX_MANUAL_CREDIT_AMOUNT[input.currency];
@@ -167,8 +224,9 @@ export function proposeCredit(input: { wallet: string; currency: 'SOL' | 'LYNX';
   if (!input.reason || !input.reason.trim()) {
     throw new Error('A reason is required for every manual credit (audit trail).');
   }
-  // BE-19: Enforce per-wallet daily credit limit
-  checkAndRecordDailyCredit(input.wallet, input.currency, input.amount);
+  // BE-19: Validacion temprana del limite diario (dry run, no consume cupo).
+  // El consumo real se registra en /execute (ver comentario en la funcion).
+  await checkAndRecordDailyCredit(input.wallet, input.currency, input.amount, true);
 
   const id = `credit_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   const now = Date.now();
@@ -271,7 +329,7 @@ async function saveResolutionToRedis(req: MarketResolutionRequest): Promise<void
 async function removeResolutionFromRedis(id: string): Promise<void> {
   if (!redis) return;
   try {
-    await redis.set(`${RESOLUTION_REDIS_PREFIX}${id}`, '', 'PX', 1);
+    await redis.del(`${RESOLUTION_REDIS_PREFIX}${id}`);
   } catch (err) {
     console.error('[creditApprovals] redis remove resolution error:', err instanceof Error ? err.message : err);
   }

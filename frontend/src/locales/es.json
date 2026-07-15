@@ -276,7 +276,7 @@
     "step6Title": "Staking y Recompensas",
     "step6Content": "Bloquea tu LYNX para capturar valor del protocolo en SOL. Los stakers ganan comisiones del 5% del volumen de los eventos.",
     "step7Title": "Modo 1v1vP",
-    "step7Content": "En los Duelos 1v1vP, el protocolo participa emitiendo una cantidad de LYNX igual a los SOL apostados por los usuarios. Si el protocolo gana, los SOL van a la Tesorería. Si pierde, los LYNX emitidos se otorgan a los jugadores.",
+    "step7Content": "En los Duelos 1v1vP, el protocolo participa emitiendo LYNX por su contraparte en SOL. La cantidad emitida sigue el mismo ratio decreciente por tramos de oferta circulante que las emisiones de mercados SOL, no una proporción fija 1:1 respecto al SOL apostado. Si el protocolo gana, los SOL van a la Tesorería. Si pierde, los LYNX emitidos se otorgan a los jugadores.",
     "step8Title": "Mecánicas Deflacionarias",
     "step8Content": "Participar en torneos especiales denominados en LYNX quema permanentemente el 15% del total apostado. En estos eventos no hay emisión de nuevos tokens.",
     "systemEntities": "Entidades del Sistema",

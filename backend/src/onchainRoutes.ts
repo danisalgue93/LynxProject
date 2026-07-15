@@ -58,6 +58,19 @@ onchainRouter.get('/api/onchain/spot-orders', (_req, res) => {
 // BE-H-05: Use Redis SET NX EX for distributed sync throttle.
 const SYNC_MIN_INTERVAL_MS = 3_000; // max 1 forced refresh per 3 seconds
 const SYNC_LOCK_KEY = 'onchain:sync:lock';
+
+// In-memory fallback throttle — only effective within a single process, so it
+// does NOT protect a multi-replica deployment (that needs REDIS_URL, see the
+// BE-H-05 comment above). Used when Redis isn't configured, or when a Redis
+// error prevents us from acquiring the distributed lock.
+let lastSyncAt = 0;
+function tryAcquireInMemorySyncLock(): boolean {
+  const now = Date.now();
+  if (now - lastSyncAt < SYNC_MIN_INTERVAL_MS) return false;
+  lastSyncAt = now;
+  return true;
+}
+
 onchainRouter.post('/api/onchain/sync', async (_req, res) => {
   // Try to acquire a distributed lock via Redis
   if (redis) {
@@ -69,11 +82,16 @@ onchainRouter.post('/api/onchain/sync', async (_req, res) => {
       }
     } catch {
       // Fall through to in-memory check below
+      if (!tryAcquireInMemorySyncLock()) {
+        res.status(429).json({ error: 'Sync too frequent, try again later' });
+        return;
+      }
     }
   } else {
-    const now = Date.now();
-    // In-memory fallback: track via module-level variable
-    // (lastSyncAt is checked below via the legacy path only when redis is absent)
+    if (!tryAcquireInMemorySyncLock()) {
+      res.status(429).json({ error: 'Sync too frequent, try again later' });
+      return;
+    }
   }
   await forceRefresh();
   res.json({ ok: true });

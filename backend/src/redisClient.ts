@@ -16,6 +16,7 @@ export interface RedisLike {
   multi(): RedisMultiLike;
   pexpire(key: string, ms: number): Promise<unknown>;
   set(key: string, value: string, ...args: unknown[]): Promise<unknown>;
+  del(key: string): Promise<number>;
 }
 
 const RedisClient = Redis as unknown as new (

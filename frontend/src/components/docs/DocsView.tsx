@@ -93,7 +93,7 @@ export function DocsView() {
       id: "07",
       title: t('docs.step7Title', "1v1vP Mode"),
       icon: <Zap className="w-5 h-5" />,
-      content: t('docs.step7Content', "In 1v1vP Duels, the protocol participates by emitting LYNX equal to the SOL wagered by users. If the protocol wins, the SOL goes to the Treasury. If it loses, the emitted LYNX is awarded to the players."),
+      content: t('docs.step7Content', "In 1v1vP Duels, the protocol participates by emitting LYNX for its SOL counterpart. The amount minted follows the same decreasing supply-tiered ratio as SOL-market emissions, not a fixed 1:1 to the SOL wagered. If the protocol wins, the SOL goes to the Treasury. If it loses, the emitted LYNX is awarded to the players."),
       color: "#9945FF",
       details: [
         { label: "Protocol Matches", value: "Dynamic (see emission schedule)", highlight: true },

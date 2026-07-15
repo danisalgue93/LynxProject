@@ -22,7 +22,20 @@ function escapeHtml(str: string): string {
     .replace(/'/g, '&#x27;');
 }
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+let resend: Resend | undefined;
+
+/**
+ * Lazily instantiate the Resend client on first use, so that importing this
+ * module (e.g. at server startup) never throws when RESEND_API_KEY is unset.
+ * Callers are expected to guard with isEmailConfigured() before sending.
+ */
+function getResendClient(): Resend {
+  if (!resend) {
+    resend = new Resend(process.env.RESEND_API_KEY);
+  }
+  return resend;
+}
+
 const FROM = process.env.EMAIL_FROM || 'Lynx Market <noreply@lynxmarket.io>';
 const APP_URL = (process.env.APP_URL || 'https://lynxmarket.io').replace(/\/$/, '');
 
@@ -81,7 +94,7 @@ async function sendWithRetry(
   let lastError: unknown;
   for (let i = 0; i < attempts; i++) {
     try {
-      const result = await resend.emails.send({ from: FROM, to, subject, html });
+      const result = await getResendClient().emails.send({ from: FROM, to, subject, html });
       if (result.error) {
         throw new Error(`Resend error: ${result.error.message}`);
       }

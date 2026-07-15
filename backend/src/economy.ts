@@ -6,6 +6,12 @@
 export const EVENT_PROTOCOL_FEE = 0.1;
 export const STAKER_REWARD_FEE = 0.05;
 export const TREASURY_EVENT_FEE = 0.05;
+// GLOBAL_TRADE_FEE is charged exactly once per fill, on the SOL/buyer leg
+// only (matchLynxOrder, placeOrder/placeLynxMarketOrder locking, and 1v1
+// duel payouts). This asymmetry is intentional, not a missing deduction on
+// the seller/LYNX leg — do not "fix" this by also charging the seller, that
+// would double-charge the same trade and break the treasury accounting the
+// rest of this module documents.
 export const GLOBAL_TRADE_FEE = 0.001;
 export const LYNX_EVENT_BURN = 0.15;
 
