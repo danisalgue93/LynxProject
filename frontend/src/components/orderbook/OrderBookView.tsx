@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { BarChart3, TrendingUp, ArrowUpDown, History, Loader2, Coins, Maximize2, Minimize2, ChevronUp, ChevronDown, X as XIcon } from 'lucide-react';
+import { BarChart3, TrendingUp, ArrowUpDown, Loader2, Coins, Maximize2, Minimize2, ChevronUp, ChevronDown, X as XIcon } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { useTranslation } from 'react-i18next';
 import { useProgram } from '@/src/hooks/useProgram';
@@ -218,7 +218,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
   const { publicKey } = useWallet();
   const managedSession = useManagedAuthSession();
   const myWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || '';
-  const { fetchMarkets, executeTrade, executeLynxOrder, fetchOrderBook, cancelOrder, isLoading, error } = useProgram();
+  const { fetchMarkets, executeTrade, executeLynxOrder, fetchOrderBook, cancelOrder, isLoading } = useProgram();
   const getOrderbookErrorMessage = (err: any, fallback: string) => {
     const message = typeof err === 'string' ? err : err?.message || fallback;
     if (typeof message !== 'string') return fallback;

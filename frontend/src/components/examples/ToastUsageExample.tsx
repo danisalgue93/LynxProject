@@ -73,7 +73,7 @@ export function ExampleComponentOption2() {
         url: getTxExplorerUrl(data.txHash),
         duration: 8000,
       });
-    } catch (error) {
+    } catch {
       removeToast(toastId);
       addToast({
         type: 'error',

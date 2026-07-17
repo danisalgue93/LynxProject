@@ -8,23 +8,16 @@ import {
   YAxis,
   Tooltip as RechartsTooltip,
   CartesianGrid,
-  Line,
-  LineChart,
 } from "recharts";
 import {
-  X,
-  TrendingUp,
-  ShieldCheck,
   Zap,
-  Info,
   BarChart3,
-  Clock,
   ArrowRight,
   Sword,
   Wallet,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { formatSOL, cn } from "@/src/lib/utils";
+import { cn } from "@/src/lib/utils";
 import { useProgram } from "@/src/hooks/useProgram";
 import { useBlockchainTransaction } from "@/src/hooks/useBlockchainTransaction";
 import { useToast } from "@/src/context/ToastContext";
@@ -41,10 +34,8 @@ interface MarketDetailProps {
 }
 
 function MiniMarketChart({
-  isLynx,
   market,
 }: {
-  isLynx: boolean;
   market: Market;
 }) {
   const { t } = useTranslation();
@@ -336,7 +327,6 @@ export function MarketDetail({
   const parsedAmount = parseFloat(betAmount) || 0;
   const isYes = selectedSide === Position.YES;
   const isNo = selectedSide === Position.NO;
-  const isDraw = selectedSide === Position.DRAW;
 
   const currentSidePool = isYes
     ? currentYesAmount
@@ -405,7 +395,7 @@ export function MarketDetail({
             </h1>
 
             <div className="w-full h-32 md:h-48 rounded-xl overflow-hidden mb-6 relative border border-[#27272A] bg-[#0A0A0B] p-2">
-              <MiniMarketChart isLynx={isLynx} market={market} />
+              <MiniMarketChart market={market} />
               <div className="absolute inset-0 bg-gradient-to-t from-[#0D0D0E]/50 via-transparent to-transparent pointer-events-none" />
             </div>
           </div>

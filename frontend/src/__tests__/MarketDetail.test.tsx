@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import type { RenderResult } from '@testing-library/react';
+import { createElement } from 'react';
 import { MarketDetail } from '@/src/components/markets/MarketDetail';
 import { MarketStatus, Position } from '@/src/types';
 import type { Market } from '@/src/types';
@@ -48,7 +48,6 @@ vi.mock('@/src/lib/api', () => ({
 vi.mock('motion/react', () => ({
   motion: new Proxy({}, {
     get: (_target, tag: string) => {
-      const { createElement } = require('react');
       return ({ children, ...props }: any) => createElement(tag, props, children);
     },
   }),

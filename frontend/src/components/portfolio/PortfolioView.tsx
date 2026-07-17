@@ -34,7 +34,7 @@ export function PortfolioView() {
   const { t } = useTranslation();
   const { publicKey } = useWallet();
   const walletAddress = publicKey?.toBase58();
-  const { fetchMarkets, fetchPortfolio, claimRewards, stakeLynx, unstakeLynx, depositSol, withdrawSol, isLoading, error } = useProgram();
+  const { fetchMarkets, fetchPortfolio, claimRewards, stakeLynx, unstakeLynx, depositSol, withdrawSol, error } = useProgram();
   const { executeTransaction } = useBlockchainTransaction();
   const { addToast } = useToast();
   const { user } = useAuth();

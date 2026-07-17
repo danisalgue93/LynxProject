@@ -235,7 +235,7 @@ export async function getProtocolConfigInfo(connection: Connection): Promise<{ l
   const admin = new PublicKey(info.data.subarray(offset, offset + 32)); offset += 32;
   const treasury = new PublicKey(info.data.subarray(offset, offset + 32)); offset += 32;
   const lynxMint = new PublicKey(info.data.subarray(offset, offset + 32)); offset += 32;
-  const stakeVault = new PublicKey(info.data.subarray(offset, offset + 32)); offset += 32;
+  const stakeVault = new PublicKey(info.data.subarray(offset, offset + 32));
   void admin;
   cachedConfig = { lynxMint, treasury, stakeVault };
   cachedConfigTimestamp = Date.now();

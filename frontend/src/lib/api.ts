@@ -111,7 +111,7 @@ export async function apiFetch<T>(
     return data as T;
   } catch (err: any) {
     if (err?.name === 'AbortError') {
-      throw new Error('Request timed out. Please check your connection and try again.');
+      throw new Error('Request timed out. Please check your connection and try again.', { cause: err });
     }
     throw err;
   } finally {

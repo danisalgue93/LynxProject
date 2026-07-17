@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import type { RenderResult } from '@testing-library/react';
 import { OrderBookView } from '@/src/components/orderbook/OrderBookView';
 import { MarketStatus } from '@/src/types';
 

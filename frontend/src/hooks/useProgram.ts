@@ -282,8 +282,6 @@ export function useProgram() {
         method: 'POST',
         body: JSON.stringify({ wallet: currentWallet, amount, position, tradeType, limitPrice }),
       });
-    } catch (err: any) {
-      throw err;
     } finally {
       endOp(opId);
     }
@@ -312,8 +310,6 @@ export function useProgram() {
       const { tx } = await buildPlaceSpotOrderSellTx({ connection, owner: publicKey, amountLynx: amount, priceSolPerLynx: price, expiresTs });
       const signature = await signAndSendOnChain(tx);
       return { signature, onChain: true };
-    } catch (err: any) {
-      throw err;
     } finally {
       endOp(opId);
     }
@@ -349,8 +345,6 @@ export function useProgram() {
         method: 'POST',
         body: JSON.stringify({ wallet: currentWallet, ...duelParams }),
       });
-    } catch (err: any) {
-      throw err;
     } finally {
       endOp(opId);
     }
@@ -365,8 +359,6 @@ export function useProgram() {
         method: 'POST',
         body: JSON.stringify({ ...marketParams, ...signed }),
       });
-    } catch (err: any) {
-      throw err;
     } finally {
       endOp(opId);
     }
@@ -448,8 +440,6 @@ export function useProgram() {
         method: 'POST',
         body: JSON.stringify({ wallet: currentWallet, voteType }),
       });
-    } catch (err: any) {
-      throw err;
     } finally {
       endOp(opId);
     }
@@ -464,8 +454,6 @@ export function useProgram() {
         method: 'POST',
         body: JSON.stringify({ wallet: currentWallet, amount }),
       });
-    } catch (err: any) {
-      throw err;
     } finally {
       endOp(opId);
     }
@@ -480,8 +468,6 @@ export function useProgram() {
         method: 'POST',
         body: JSON.stringify({ wallet: currentWallet, amount }),
       });
-    } catch (err: any) {
-      throw err;
     } finally {
       endOp(opId);
     }
@@ -496,8 +482,6 @@ export function useProgram() {
         method: 'POST',
         body: JSON.stringify({ wallet: currentWallet }),
       });
-    } catch (err: any) {
-      throw err;
     } finally {
       endOp(opId);
     }
@@ -512,8 +496,6 @@ export function useProgram() {
         method: 'POST',
         body: JSON.stringify({ wallet: currentWallet, side: position }),
       });
-    } catch (err: any) {
-      throw err;
     } finally {
       endOp(opId);
     }
@@ -528,8 +510,6 @@ export function useProgram() {
         method: 'DELETE',
         body: JSON.stringify({ wallet: currentWallet }),
       });
-    } catch (err: any) {
-      throw err;
     } finally {
       endOp(opId);
     }
@@ -558,8 +538,6 @@ export function useProgram() {
         }),
       });
       return result.portfolio;
-    } catch (err: any) {
-      throw err;
     } finally {
       endOp(opId);
     }
@@ -575,8 +553,6 @@ export function useProgram() {
         body: JSON.stringify({ wallet: currentWallet, currency: 'SOL', amount }),
       });
       return result.portfolio;
-    } catch (err: any) {
-      throw err;
     } finally {
       endOp(opId);
     }
@@ -611,8 +587,6 @@ export function useProgram() {
         `/api/positions/${positionId}/claim`,
         { method: 'POST', body: JSON.stringify({ wallet: currentWallet }) }
       );
-    } catch (err: any) {
-      throw err;
     } finally {
       endOp(opId);
     }
@@ -657,8 +631,6 @@ export function useProgram() {
         `/api/orders/${orderId}`,
         { method: 'DELETE', body: JSON.stringify({ wallet: currentWallet }) }
       );
-    } catch (err: any) {
-      throw err;
     } finally {
       endOp(opId);
     }

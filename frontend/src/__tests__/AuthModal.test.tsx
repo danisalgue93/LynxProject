@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import type { RenderResult } from '@testing-library/react';
 import { AuthModal } from '@/src/components/auth/AuthModal';
 
 // ── external dependency mocks ────────────────────────────────────────────────
