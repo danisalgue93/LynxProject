@@ -60,6 +60,9 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
+      - name: Lint
+        run: npm run lint
+
       - name: Type check
         run: npx tsc --noEmit
 
@@ -89,8 +92,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Type check
+      - name: Lint
         run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
 
       - name: Build
         run: npm run build
@@ -122,6 +128,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Lint
+        run: npm run lint
 
       - name: Type check
         run: npx tsc --noEmit
@@ -168,6 +177,9 @@ jobs:
 
       - name: Check program compiles
         run: cargo check --workspace --locked
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       # The unit tests (overflow/fee maths) need no toolchain beyond cargo, but
       # the integration tests execute the real compiled program through
