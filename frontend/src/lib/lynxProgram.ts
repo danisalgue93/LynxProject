@@ -82,7 +82,17 @@ const IX = {
   stakeLynx: Buffer.from([171, 43, 75, 147, 83, 188, 211, 242]),
   unstakeLynx: Buffer.from([196, 208, 22, 83, 84, 204, 179, 239]),
   claimStakingRewards: Buffer.from([229, 141, 170, 69, 111, 94, 6, 72]),
+  createDuel: Buffer.from([49, 28, 93, 11, 75, 242, 69, 165]),
+  acceptDuel: Buffer.from([80, 52, 90, 135, 172, 221, 175, 102]),
+  cancelDuel: Buffer.from([83, 124, 224, 237, 235, 44, 38, 57]),
 };
+
+export type DuelType = 'OneVOne' | 'OneVOneVProtocol';
+// Matches the DuelType enum order in state.rs (OneVOne = 0, OneVOneVProtocol = 1),
+// which is how Anchor serializes a fieldless enum.
+function duelTypeByte(duelType: DuelType): number {
+  return duelType === 'OneVOne' ? 0 : 1;
+}
 
 const ACCOUNT_DISCRIMINATORS = {
   protocolConfig: Buffer.from([207, 91, 250, 28, 152, 179, 215, 209]),
@@ -178,6 +188,19 @@ export function stakePositionPda(owner: PublicKey, programId = getProgramId()) {
 // RewardsVault PDA: seeds = [b"rewards_vault"] (ver ClaimStakingRewards en lib.rs).
 export function rewardsVaultPda(programId = getProgramId()) {
   return PublicKey.findProgramAddressSync([Buffer.from('rewards_vault')], programId)[0];
+}
+
+// Duel PDA: seeds = [b"duel", parent_market, creator, duel_id] (ver CreateDuel en lib.rs).
+export function duelPda(parentMarket: PublicKey, creator: PublicKey, duelId: bigint, programId = getProgramId()) {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('duel'), parentMarket.toBuffer(), creator.toBuffer(), u64LE(duelId)],
+    programId
+  )[0];
+}
+
+// DuelVault PDA: seeds = [b"duel_vault", duel] (ver CreateDuel en lib.rs).
+export function duelVaultPda(duel: PublicKey, programId = getProgramId()) {
+  return PublicKey.findProgramAddressSync([Buffer.from('duel_vault'), duel.toBuffer()], programId)[0];
 }
 
 // Genera un order_id "unico con alta probabilidad" para este owner+mercado.
@@ -732,4 +755,101 @@ export function buildClaimStakingRewardsTx(params: {
     data: IX.claimStakingRewards,
   });
   return buildTx([ix], owner);
+}
+
+// --- Duelos on-chain -----------------------------------------------------------
+//
+// NOT wired into the UI yet. Duels still run through the off-chain engine
+// (backend/src/state.ts); these builders are the client half of migrating them
+// on-chain (phase 5, see LAUNCH_DECISIONS.md). Account order and data layout are
+// cross-checked against CreateDuel/AcceptDuel/CancelDuel in lib.rs and
+// unit-tested in lynxProgram.duels.test.ts. Settlement (resolve_duel_sol /
+// resolve_protocol_duel) is intentionally absent: those instructions take no
+// signer — they are permissionless cranks and belong in the keeper
+// (backend/src/chain.ts), not a user-signed client transaction. Like staking,
+// these still need end-to-end verification on devnet before the UI adopts them.
+
+export async function buildCreateDuelTx(params: {
+  creator: PublicKey;
+  parentMarket: PublicKey;
+  creatorOutcome: OnChainOutcome;
+  duelType: DuelType;
+  amountSol: number;
+  expiresTs: number;
+}): Promise<{ tx: Transaction; duelId: bigint; duelPubkey: PublicKey }> {
+  const { creator, parentMarket, creatorOutcome, duelType, amountSol, expiresTs } = params;
+  const programId = getProgramId();
+  const duelId = randomOrderId();
+  const lamports = toBaseUnits(amountSol, 'SOL');
+  const config = configPda(programId);
+  const duel = duelPda(parentMarket, creator, duelId, programId);
+  const duelVault = duelVaultPda(duel, programId);
+
+  const data = Buffer.concat([
+    IX.createDuel,
+    u64LE(duelId),
+    u64LE(lamports),
+    Buffer.from([outcomeByte(creatorOutcome)]),
+    Buffer.from([duelTypeByte(duelType)]),
+    i64LE(expiresTs),
+  ]);
+  const ix = new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: config, isSigner: false, isWritable: true },
+      { pubkey: parentMarket, isSigner: false, isWritable: false },
+      { pubkey: duel, isSigner: false, isWritable: true },
+      { pubkey: duelVault, isSigner: false, isWritable: true },
+      { pubkey: creator, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data,
+  });
+  return { tx: buildTx([ix], creator), duelId, duelPubkey: duel };
+}
+
+export function buildAcceptDuelTx(params: {
+  rival: PublicKey;
+  duel: PublicKey;
+  parentMarket: PublicKey;
+  rivalOutcome: OnChainOutcome;
+}): Transaction {
+  const { rival, duel, parentMarket, rivalOutcome } = params;
+  const programId = getProgramId();
+  const config = configPda(programId);
+  const duelVault = duelVaultPda(duel, programId);
+
+  const data = Buffer.concat([IX.acceptDuel, Buffer.from([outcomeByte(rivalOutcome)])]);
+  const ix = new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: config, isSigner: false, isWritable: false },
+      { pubkey: duel, isSigner: false, isWritable: true },
+      { pubkey: parentMarket, isSigner: false, isWritable: false },
+      { pubkey: duelVault, isSigner: false, isWritable: true },
+      { pubkey: rival, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data,
+  });
+  return buildTx([ix], rival);
+}
+
+export function buildCancelDuelTx(params: {
+  creator: PublicKey;
+  duel: PublicKey;
+}): Transaction {
+  const { creator, duel } = params;
+  const programId = getProgramId();
+  const duelVault = duelVaultPda(duel, programId);
+  const ix = new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: creator, isSigner: true, isWritable: true },
+      { pubkey: duel, isSigner: false, isWritable: true },
+      { pubkey: duelVault, isSigner: false, isWritable: true },
+    ],
+    data: IX.cancelDuel,
+  });
+  return buildTx([ix], creator);
 }
