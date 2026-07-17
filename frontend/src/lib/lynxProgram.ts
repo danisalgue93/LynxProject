@@ -79,6 +79,9 @@ const IX = {
   placeSpotOrderSell: Buffer.from([218, 179, 180, 17, 32, 164, 248, 242]),
   cancelSpotOrderBuy: Buffer.from([67, 101, 162, 38, 89, 23, 134, 253]),
   cancelSpotOrderSell: Buffer.from([178, 183, 109, 92, 217, 196, 230, 86]),
+  stakeLynx: Buffer.from([171, 43, 75, 147, 83, 188, 211, 242]),
+  unstakeLynx: Buffer.from([196, 208, 22, 83, 84, 204, 179, 239]),
+  claimStakingRewards: Buffer.from([229, 141, 170, 69, 111, 94, 6, 72]),
 };
 
 const ACCOUNT_DISCRIMINATORS = {
@@ -167,6 +170,16 @@ export function spotOrderEscrowLynxPda(order: PublicKey, programId = getProgramI
   return PublicKey.findProgramAddressSync([Buffer.from('spot_order_escrow_lynx'), order.toBuffer()], programId)[0];
 }
 
+// StakePosition PDA: seeds = [b"stake", owner] (ver StakeLynx en lib.rs).
+export function stakePositionPda(owner: PublicKey, programId = getProgramId()) {
+  return PublicKey.findProgramAddressSync([Buffer.from('stake'), owner.toBuffer()], programId)[0];
+}
+
+// RewardsVault PDA: seeds = [b"rewards_vault"] (ver ClaimStakingRewards en lib.rs).
+export function rewardsVaultPda(programId = getProgramId()) {
+  return PublicKey.findProgramAddressSync([Buffer.from('rewards_vault')], programId)[0];
+}
+
 // Genera un order_id "unico con alta probabilidad" para este owner+mercado.
 // Colisionar solo fallaria la creacion de la orden (la cuenta ya existiria),
 // nunca corrompe estado; en ese caso, reintenta con otro id.
@@ -178,11 +191,16 @@ export function randomOrderId(): bigint {
 
 // --- Lectura de ProtocolConfig (para obtener el mint de LYNX y la tesoreria) ---
 
-let cachedConfig: { lynxMint: PublicKey; treasury: PublicKey } | null = null;
+// stakeVault is read from the config account, not derived: it is an externally
+// created token account whose address the program stores in config.stake_vault
+// (it has no PDA seed — see InitializeProtocol in lib.rs). Field order in
+// ProtocolConfig is admin, treasury, lynx_mint, stake_vault, rewards_vault, so
+// after the 8-byte discriminator the offsets are 8, 40, 72, 104, 136.
+let cachedConfig: { lynxMint: PublicKey; treasury: PublicKey; stakeVault: PublicKey } | null = null;
 let cachedConfigTimestamp = 0;
 const CONFIG_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-export async function getProtocolConfigInfo(connection: Connection): Promise<{ lynxMint: PublicKey; treasury: PublicKey }> {
+export async function getProtocolConfigInfo(connection: Connection): Promise<{ lynxMint: PublicKey; treasury: PublicKey; stakeVault: PublicKey }> {
   if (cachedConfig && Date.now() - cachedConfigTimestamp < CONFIG_CACHE_TTL_MS) return cachedConfig;
   const config = configPda();
   const info = await connection.getAccountInfo(config);
@@ -194,8 +212,9 @@ export async function getProtocolConfigInfo(connection: Connection): Promise<{ l
   const admin = new PublicKey(info.data.subarray(offset, offset + 32)); offset += 32;
   const treasury = new PublicKey(info.data.subarray(offset, offset + 32)); offset += 32;
   const lynxMint = new PublicKey(info.data.subarray(offset, offset + 32)); offset += 32;
+  const stakeVault = new PublicKey(info.data.subarray(offset, offset + 32)); offset += 32;
   void admin;
-  cachedConfig = { lynxMint, treasury };
+  cachedConfig = { lynxMint, treasury, stakeVault };
   cachedConfigTimestamp = Date.now();
   return cachedConfig;
 }
@@ -618,4 +637,99 @@ export async function buildCancelSpotOrderSellTx(params: {
     data: IX.cancelSpotOrderSell,
   });
   return buildTx([ix], signer);
+}
+
+// --- Staking LYNX on-chain -----------------------------------------------------
+//
+// NOT wired into the UI yet. Staking still runs through the off-chain engine
+// (backend/src/state.ts); these builders are the client half of migrating it
+// on-chain (phase 5, see LAUNCH_DECISIONS.md). Account order and data layout are
+// cross-checked against StakeLynx/UnstakeLynx/ClaimStakingRewards in lib.rs and
+// unit-tested in lynxProgram.staking.test.ts. They still need end-to-end
+// verification against a deployed program on devnet before the UI switches to
+// them and the off-chain path is retired — a valid byte layout is not proof the
+// program accepts the transaction.
+
+export async function buildStakeLynxTx(params: {
+  connection: Connection;
+  owner: PublicKey;
+  amountLynx: number;
+}): Promise<Transaction> {
+  const { connection, owner, amountLynx } = params;
+  const programId = getProgramId();
+  const { lynxMint, stakeVault } = await getProtocolConfigInfo(connection);
+  const amount = toBaseUnits(amountLynx, 'LYNX');
+  const config = configPda(programId);
+  const stakePosition = stakePositionPda(owner, programId);
+  const userLynxAccount = await getAssociatedTokenAddress(lynxMint, owner);
+
+  const data = Buffer.concat([IX.stakeLynx, u64LE(amount)]);
+  const ix = new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: config, isSigner: false, isWritable: true },
+      { pubkey: stakeVault, isSigner: false, isWritable: true },
+      { pubkey: stakePosition, isSigner: false, isWritable: true },
+      { pubkey: userLynxAccount, isSigner: false, isWritable: true },
+      { pubkey: lynxMint, isSigner: false, isWritable: false },
+      { pubkey: owner, isSigner: true, isWritable: true },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data,
+  });
+  return buildTx([ix], owner);
+}
+
+export async function buildUnstakeLynxTx(params: {
+  connection: Connection;
+  owner: PublicKey;
+  amountLynx: number;
+}): Promise<Transaction> {
+  const { connection, owner, amountLynx } = params;
+  const programId = getProgramId();
+  const { lynxMint, stakeVault } = await getProtocolConfigInfo(connection);
+  const amount = toBaseUnits(amountLynx, 'LYNX');
+  const config = configPda(programId);
+  const stakePosition = stakePositionPda(owner, programId);
+  const userLynxAccount = await getAssociatedTokenAddress(lynxMint, owner);
+
+  const data = Buffer.concat([IX.unstakeLynx, u64LE(amount)]);
+  const ix = new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: config, isSigner: false, isWritable: true },
+      { pubkey: stakeVault, isSigner: false, isWritable: true },
+      { pubkey: stakePosition, isSigner: false, isWritable: true },
+      { pubkey: userLynxAccount, isSigner: false, isWritable: true },
+      { pubkey: lynxMint, isSigner: false, isWritable: false },
+      { pubkey: owner, isSigner: true, isWritable: true },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    ],
+    data,
+  });
+  return buildTx([ix], owner);
+}
+
+// Rewards are paid in SOL (lamports) from the rewards_vault, so no token account
+// or mint is involved here — see claim_staking_rewards in lib.rs.
+export function buildClaimStakingRewardsTx(params: {
+  owner: PublicKey;
+}): Transaction {
+  const { owner } = params;
+  const programId = getProgramId();
+  const config = configPda(programId);
+  const rewardsVault = rewardsVaultPda(programId);
+  const stakePosition = stakePositionPda(owner, programId);
+  const ix = new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: config, isSigner: false, isWritable: false },
+      { pubkey: rewardsVault, isSigner: false, isWritable: true },
+      { pubkey: stakePosition, isSigner: false, isWritable: true },
+      { pubkey: owner, isSigner: true, isWritable: true },
+    ],
+    data: IX.claimStakingRewards,
+  });
+  return buildTx([ix], owner);
 }
