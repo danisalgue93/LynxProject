@@ -4,6 +4,27 @@ members = [
 ]
 resolver = "2"
 
+# ── KNOWN ISSUE: `anchor build` cannot emit the IDL ──────────────────────────
+# anchor-syn 0.30.1 (the IDL generator) calls proc_macro2's `Span::source_file()`,
+# removed in proc-macro2 1.0.85. With anything newer, `anchor build` fails during
+# IDL emission. The deployable program is unaffected — `cargo build-sbf` produces
+# a working .so, which is what CI builds and what the tests execute.
+#
+# Pinning proc-macro2 <= 1.0.84 does NOT work: parts of the tree hard-require
+# ^1.0.91, so cargo cannot satisfy both. Attempted and reverted rather than left
+# as a no-op `[workspace.dependencies]` entry that looks like a fix.
+#
+# The real options, in order of preference:
+#   1. Upgrade Anchor to >= 0.31, where anchor-syn no longer uses source_file().
+#      Biggest change, but it also improves the account codegen that forced the
+#      Box<Account<..>> workarounds elsewhere in this program.
+#   2. Generate the IDL with a toolchain pinned to an older proc-macro2 in an
+#      isolated build (e.g. a container just for IDL emission).
+#   3. Hand-maintain the IDL — not recommended: it silently drifts from the
+#      program and every client then talks to an interface that no longer exists.
+#
+# Tracked as a launch blocker: TypeScript clients need the IDL.
+
 [profile.release]
 overflow-checks = true
 lto = "fat"
@@ -12,6 +33,3 @@ codegen-units = 1
 opt-level = 3
 incremental = false
 codegen-units = 1
-
-[patch.crates-io]
-solana-program = { path = "vendor/solana-program-1.18.26" }

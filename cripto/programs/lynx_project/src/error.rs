@@ -104,4 +104,10 @@ pub enum LynxError {
     // --- Protocol duel exposure (SC-03) ---
     #[msg("Protocol duel exposure limit reached, cannot create more 1v1vProtocol duels")]
     ProtocolDuelExposureExceeded,
+
+    // --- TWAP del supply circulante (SC-01) ---
+    #[msg("Not enough time has passed since the last circulating-supply snapshot")]
+    SnapshotTooSoon,
+    #[msg("This market has no mint-ratio snapshot; it cannot be finalized")]
+    MissingMintRatioSnapshot,
 }

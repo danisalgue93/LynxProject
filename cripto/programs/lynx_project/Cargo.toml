@@ -17,5 +17,15 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 default = []
 
 [dependencies]
-anchor-lang = { version = "0.30.1", features = ["init-if-needed"] }
-anchor-spl = { version = "0.30.1", default-features = false, features = ["mint", "token", "token_2022", "associated_token"] }
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
+anchor-spl = { version = "0.31.1", default-features = false, features = ["mint", "token", "token_2022", "associated_token"] }
+
+# Integration tests only. Kept on the same solana line as the solana-program
+# that anchor-lang 0.31.1 resolves (2.1.x), so the test crate and the program
+# share a single solana-program version (a mismatch produces two incompatible
+# Pubkey types, the same class of error the removed vendored patch caused).
+[dev-dependencies]
+solana-program-test = "~2.1"
+solana-sdk = "~2.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+spl-token = { version = "~7.0", features = ["no-entrypoint"] }

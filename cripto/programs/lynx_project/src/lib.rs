@@ -202,17 +202,23 @@ pub mod lynx_project {
     // ORACLE_TIMEOUT_SECONDS (ver require de mas abajo).
     pub fn execute_resolve_market_admin(ctx: Context<ExecuteResolveMarketAdmin>) -> Result<()> {
         let now = Clock::get()?.unix_timestamp;
-        let proposal = &mut ctx.accounts.proposal;
-        require!(!proposal.executed, LynxError::ProposalAlreadyExecuted);
-        require!(!proposal.cancelled, LynxError::ProposalCancelled);
-        require!(now < proposal.expires_ts, LynxError::ProposalExpired);
-        require!(proposal.threshold_reached_ts != 0, LynxError::ThresholdNotMet);
-        require!(
-            now >= proposal.threshold_reached_ts.checked_add(GOVERNANCE_EXECUTION_DELAY_SECONDS).ok_or(LynxError::MathOverflow)?,
-            LynxError::TimelockNotElapsed
-        );
+        // `action` is Copy: read every field we need out of `proposal` under a
+        // short-lived shared borrow, so the mutable borrow needed to mark it
+        // executed below never overlaps with reading proposal.key().
+        let action = {
+            let proposal = &ctx.accounts.proposal;
+            require!(!proposal.executed, LynxError::ProposalAlreadyExecuted);
+            require!(!proposal.cancelled, LynxError::ProposalCancelled);
+            require!(now < proposal.expires_ts, LynxError::ProposalExpired);
+            require!(proposal.threshold_reached_ts != 0, LynxError::ThresholdNotMet);
+            require!(
+                now >= proposal.threshold_reached_ts.checked_add(GOVERNANCE_EXECUTION_DELAY_SECONDS).ok_or(LynxError::MathOverflow)?,
+                LynxError::TimelockNotElapsed
+            );
+            proposal.action
+        };
 
-        let result = match proposal.action {
+        let result = match action {
             GovernanceAction::ResolveMarketAdmin { market, result } => {
                 require_keys_eq!(market, ctx.accounts.market.key(), LynxError::ActionMismatch);
                 result
@@ -229,10 +235,14 @@ pub mod lynx_project {
             LynxError::InvalidStatus
         );
 
-        // CR-01: snapshot the mint ratio for the admin fallback path
-        // (which skips propose_resolution).
+        // CR-01: congela el ratio para la via de fallback admin, que se salta
+        // propose_resolution. Igual que alli, el valor sale del TWAP y no del
+        // supply instantaneo (SC-01): esta instruccion se ejecuta en un momento
+        // conocido de antemano (tras el timelock), asi que un ratio instantaneo
+        // seria trivialmente manipulable quemando LYNX en el mismo bloque.
         if ctx.accounts.market.currency == Currency::SOL && ctx.accounts.market.mint_ratio_snapshot_bps == 0 {
-            ctx.accounts.market.mint_ratio_snapshot_bps = current_mint_ratio_bps(&ctx.accounts.config)?;
+            ctx.accounts.market.mint_ratio_snapshot_bps =
+                mint_ratio_bps_twap(&ctx.accounts.supply_twap, &ctx.accounts.config)?;
         }
 
         let proposal_key = ctx.accounts.proposal.key();
@@ -246,7 +256,7 @@ pub mod lynx_project {
             proposal_key,
         )?;
 
-        proposal.executed = true;
+        ctx.accounts.proposal.executed = true;
         Ok(())
     }
 
@@ -355,6 +365,72 @@ pub mod lynx_project {
         Ok(())
     }
 
+    // Bootstrap del ring buffer del TWAP de supply circulante (SC-01).
+    // Una sola vez por deployment; PDA fija, sin parametros y sin discrecion
+    // para el llamante, asi que es permissionless a proposito.
+    pub fn init_supply_twap(ctx: Context<InitSupplyTwap>) -> Result<()> {
+        let twap = &mut ctx.accounts.supply_twap;
+        twap.config = ctx.accounts.config.key();
+        twap.snapshots = [0u64; SUPPLY_SNAPSHOT_COUNT];
+        twap.count = 0;
+        twap.next_index = 0;
+        twap.last_snapshot_ts = 0;
+        twap.bump = ctx.bumps.supply_twap;
+        Ok(())
+    }
+
+    // Crank permissionless que registra una muestra del supply circulante.
+    //
+    // Cualquiera puede llamarlo (nuestro keeper, o un bot de terceros): el valor
+    // que escribe se lee integramente de ProtocolConfig on-chain, asi que quien
+    // firma no puede influir en el dato. Lo unico que controla es CUANDO, y por
+    // eso se exige SUPPLY_SNAPSHOT_INTERVAL_SECONDS entre muestras: sin ese
+    // limite, un atacante podria llenar el buffer entero (24 muestras) con el
+    // supply manipulado dentro de una sola transaccion y anular el TWAP —
+    // reintroduciendo exactamente el ataque atomico que esto viene a cerrar.
+    pub fn record_supply_snapshot(ctx: Context<RecordSupplySnapshot>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let twap = &mut ctx.accounts.supply_twap;
+        require!(
+            now >= twap
+                .last_snapshot_ts
+                .checked_add(SUPPLY_SNAPSHOT_INTERVAL_SECONDS)
+                .ok_or(LynxError::MathOverflow)?,
+            LynxError::SnapshotTooSoon
+        );
+
+        let circulating = instantaneous_circulating_supply(&ctx.accounts.config);
+        let index = twap.next_index as usize;
+        require!(index < SUPPLY_SNAPSHOT_COUNT, LynxError::MathOverflow);
+        twap.snapshots[index] = circulating;
+        twap.next_index = ((index + 1) % SUPPLY_SNAPSHOT_COUNT) as u8;
+        if (twap.count as usize) < SUPPLY_SNAPSHOT_COUNT {
+            twap.count = twap.count.checked_add(1).ok_or(LynxError::MathOverflow)?;
+        }
+        twap.last_snapshot_ts = now;
+        Ok(())
+    }
+
+    // One-time creation of a LYNX market's token vault.
+    //
+    // This used to be an inline `init_if_needed` inside buy_position_lynx_with_burn
+    // and execute_prediction_limit_order_lynx. Anchor's generated token-account
+    // init code pushed those instructions' `try_accounts` frames past the
+    // 4096-byte BPF stack limit, and they did not merely risk undefined
+    // behaviour — they hard-faulted at runtime with "Access violation", so LYNX
+    // markets could not be entered at all. Splitting vault creation out keeps the
+    // hot paths inside the stack budget (see tests/lynx_buy_integration.rs).
+    //
+    // Permissionless by design: the vault address, its mint and its authority are
+    // all derived from on-chain state, so the caller has no discretion over the
+    // result — exactly like the SOL vault that create_market already initialises.
+    // Must be called once per LYNX market before the first purchase.
+    pub fn init_market_lynx_vault(ctx: Context<InitMarketLynxVault>) -> Result<()> {
+        require!(ctx.accounts.market.currency == Currency::LYNX, LynxError::InvalidCurrency);
+        ctx.accounts.market.lynx_vault_bump = ctx.bumps.market_lynx_vault;
+        Ok(())
+    }
+
     pub fn buy_position_lynx_with_burn(ctx: Context<BuyPositionLynxWithBurn>, outcome: Outcome, amount: u64) -> Result<()> {
         require!(amount > 0, LynxError::InvalidAmount);
         require!(amount >= MIN_ORDER_LAMPORTS, LynxError::InvalidAmount);
@@ -382,10 +458,9 @@ pub mod lynx_project {
                 burn_amount,
             )?;
         }
-        // market_lynx_vault is a PDA seeded on this specific market (see BuyPositionLynxWithBurn),
-        // so it can never be aliased across LYNX markets. Persist its canonical bump the first
-        // time it's initialized; on later calls this just rewrites the same value.
-        market.lynx_vault_bump = ctx.bumps.market_lynx_vault;
+        // lynx_vault_bump is persisted once by init_market_lynx_vault; the vault is
+        // pinned here via `bump = market.lynx_vault_bump` instead of being created
+        // inline, which is what kept this instruction inside the BPF stack budget.
 
         let net_amount = amount.checked_sub(burn_amount).ok_or(LynxError::MathOverflow)?;
         if net_amount > 0 {
@@ -603,9 +678,12 @@ pub mod lynx_project {
 
         let order_id_bytes = ctx.accounts.order.id.to_le_bytes();
         let order_owner = ctx.accounts.order.owner;
+        // Bind the Pubkey to a local: `market.key()` returns a temporary that is
+        // dropped at the end of the statement, leaving the seed slice dangling.
+        let market_key = market.key();
         let order_seeds: &[&[u8]] = &[
             b"pred_order",
-            market.key().as_ref(),
+            market_key.as_ref(),
             order_owner.as_ref(),
             order_id_bytes.as_ref(),
             &[ctx.accounts.order.bump],
@@ -627,7 +705,8 @@ pub mod lynx_project {
                 burn_amount,
             )?;
         }
-        market.lynx_vault_bump = ctx.bumps.market_lynx_vault;
+        // Vault is created once by init_market_lynx_vault and pinned via the stored
+        // bump; creating it inline here overflowed the BPF stack frame.
         let net_amount = gross_amount.checked_sub(burn_amount).ok_or(LynxError::MathOverflow)?;
         if net_amount > 0 {
             token::transfer(
@@ -678,9 +757,11 @@ pub mod lynx_project {
         let order_id_bytes = ctx.accounts.order.id.to_le_bytes();
         let order_owner = ctx.accounts.order.owner;
         let order_bump = ctx.accounts.order.bump;
+        // Same temporary-lifetime issue as in execute_prediction_limit_order_lynx.
+        let market_key = ctx.accounts.market.key();
         let order_seeds: &[&[u8]] = &[
             b"pred_order",
-            ctx.accounts.market.key().as_ref(),
+            market_key.as_ref(),
             order_owner.as_ref(),
             order_id_bytes.as_ref(),
             &[order_bump],
@@ -953,10 +1034,13 @@ pub mod lynx_project {
         market.status = MarketStatus::PendingResolution;
         market.proposed_result = result;
         market.proposed_ts = now;
-        // Snapshot the LYNX mint ratio now (at proposal time) so that it
-        // cannot be manipulated during the dispute window by burning LYNX.
+        // Congela el ratio de minteo aqui (al proponer) para que no se pueda
+        // manipular durante la ventana de disputa. El valor sale del TWAP, no
+        // del supply instantaneo: de lo contrario bastaba con quemar LYNX en
+        // esta misma transaccion para inflar el ratio congelado (SC-01).
         if market.currency == Currency::SOL {
-            market.mint_ratio_snapshot_bps = current_mint_ratio_bps(&ctx.accounts.config)?;
+            market.mint_ratio_snapshot_bps =
+                mint_ratio_bps_twap(&ctx.accounts.supply_twap, &ctx.accounts.config)?;
         }
         Ok(())
     }
@@ -1023,9 +1107,7 @@ pub mod lynx_project {
         let denominator = market.winning_total;
         require!(denominator > 0, LynxError::NoWinningPool);
         let payout_pool = bps(market.pool_total, BPS_DENOMINATOR - EVENT_PROTOCOL_FEE_BPS)?;
-        let payout = payout_pool
-            .checked_mul(position.amount).ok_or(LynxError::MathOverflow)?
-            .checked_div(denominator).ok_or(LynxError::MathOverflow)?;
+        let payout = mul_div(payout_pool, position.amount, denominator)?;
 
         // MD-06: track total claimed so dust-sweep can detect completion.
         market.total_claimed = market.total_claimed.checked_add(payout).ok_or(LynxError::MathOverflow)?;
@@ -1055,13 +1137,9 @@ pub mod lynx_project {
         require!(denominator > 0, LynxError::NoWinningPool);
 
         let payout_pool = bps(market.pool_total, BPS_DENOMINATOR - EVENT_PROTOCOL_FEE_BPS)?;
-        let payout = payout_pool
-            .checked_mul(position.amount).ok_or(LynxError::MathOverflow)?
-            .checked_div(denominator).ok_or(LynxError::MathOverflow)?;
+        let payout = mul_div(payout_pool, position.amount, denominator)?;
         let fee_pool = market.pool_total.checked_sub(payout_pool).ok_or(LynxError::MathOverflow)?;
-        let fee_share = fee_pool
-            .checked_mul(position.amount).ok_or(LynxError::MathOverflow)?
-            .checked_div(denominator).ok_or(LynxError::MathOverflow)?;
+        let fee_share = mul_div(fee_pool, position.amount, denominator)?;
 
         let signer: &[&[&[u8]]] = &[&[b"config", &[ctx.accounts.config.bump]]];
         if payout > 0 {
@@ -1131,7 +1209,7 @@ pub mod lynx_project {
             // reaches the payout pool, only rent-exempt dust remains.
             let payout_pool = bps(market.pool_total, BPS_DENOMINATOR - EVENT_PROTOCOL_FEE_BPS)?;
             require!(market.total_claimed >= payout_pool, LynxError::NothingToSweep);
-            let rent_minimum = Rent::get()?.minimum_balance(ctx.accounts.vault.data_len());
+            let rent_minimum = Rent::get()?.minimum_balance(ctx.accounts.vault.to_account_info().data_len());
             let excess = ctx.accounts.vault.to_account_info().lamports().saturating_sub(rent_minimum);
             require!(excess > 0, LynxError::NothingToSweep);
             transfer_lamports(&ctx.accounts.vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), excess)?;
@@ -1577,11 +1655,66 @@ pub struct BuyPositionLynxWithBurn<'info> {
     pub lynx_mint: Box<Account<'info, Mint>>,
     #[account(mut, constraint = user_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub user_lynx_account: Box<Account<'info, TokenAccount>>,
-    // PDA'd to this specific market so custody can never be mixed across LYNX markets,
-    // unlike the old arbitrary-account-validated-by-mint+owner design.
+    // PDA'd to this specific market so custody can never be mixed across LYNX markets.
+    // Created up-front by init_market_lynx_vault rather than `init_if_needed` here:
+    // the inline init codegen overflowed this instruction's BPF stack frame and made
+    // it fault at runtime. Pinned by the bump stored on the market, which also means
+    // a market whose vault was never initialised (lynx_vault_bump == 0) cannot be
+    // bought into by accident.
     #[account(
-        init_if_needed,
-        payer = buyer,
+        mut,
+        seeds = [b"lynx_vault", market.key().as_ref()],
+        bump = market.lynx_vault_bump,
+        constraint = market_lynx_vault.mint == config.lynx_mint @ LynxError::InvalidCurrency,
+    )]
+    pub market_lynx_vault: Box<Account<'info, TokenAccount>>,
+    #[account(mut)]
+    pub buyer: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct InitSupplyTwap<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Box<Account<'info, ProtocolConfig>>,
+    #[account(
+        init,
+        payer = payer,
+        space = CirculatingSupplyTwap::LEN,
+        seeds = [b"supply_twap", config.key().as_ref()],
+        bump
+    )]
+    pub supply_twap: Box<Account<'info, CirculatingSupplyTwap>>,
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct RecordSupplySnapshot<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Box<Account<'info, ProtocolConfig>>,
+    #[account(
+        mut,
+        seeds = [b"supply_twap", config.key().as_ref()],
+        bump = supply_twap.bump,
+        has_one = config
+    )]
+    pub supply_twap: Box<Account<'info, CirculatingSupplyTwap>>,
+}
+
+#[derive(Accounts)]
+pub struct InitMarketLynxVault<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Box<Account<'info, ProtocolConfig>>,
+    #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
+    pub market: Box<Account<'info, Market>>,
+    #[account(address = config.lynx_mint)]
+    pub lynx_mint: Box<Account<'info, Mint>>,
+    #[account(
+        init,
+        payer = payer,
         seeds = [b"lynx_vault", market.key().as_ref()],
         bump,
         token::mint = lynx_mint,
@@ -1589,7 +1722,7 @@ pub struct BuyPositionLynxWithBurn<'info> {
     )]
     pub market_lynx_vault: Box<Account<'info, TokenAccount>>,
     #[account(mut)]
-    pub buyer: Signer<'info>,
+    pub payer: Signer<'info>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
@@ -1623,19 +1756,24 @@ pub struct CreatePredictionLimitOrderSol<'info> {
 }
 
 #[derive(Accounts)]
+// Boxed to keep try_accounts within the 4096-byte BPF stack limit (see
+// MintLynxDistribution). Adding the `config` account pushed this frame 16 bytes
+// over; heap-allocating the accounts brings it back under.
 pub struct ExecutePredictionLimitOrderSol<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Box<Account<'info, ProtocolConfig>>,
     #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
-    pub market: Account<'info, Market>,
+    pub market: Box<Account<'info, Market>>,
     #[account(mut, seeds = [b"vault", market.key().as_ref()], bump = vault.bump)]
-    pub vault: Account<'info, MarketVault>,
+    pub vault: Box<Account<'info, MarketVault>>,
     #[account(
         mut,
         seeds = [b"pred_order", market.key().as_ref(), order.owner.as_ref(), order.id.to_le_bytes().as_ref()],
         bump = order.bump
     )]
-    pub order: Account<'info, PredictionOrder>,
+    pub order: Box<Account<'info, PredictionOrder>>,
     #[account(mut, seeds = [b"pred_order_escrow_sol", order.key().as_ref()], bump = order.escrow_bump)]
-    pub escrow: Account<'info, PredictionOrderEscrowSol>,
+    pub escrow: Box<Account<'info, PredictionOrderEscrowSol>>,
     #[account(
         init_if_needed,
         payer = payer,
@@ -1643,7 +1781,7 @@ pub struct ExecutePredictionLimitOrderSol<'info> {
         seeds = [b"position", market.key().as_ref(), order.owner.as_ref(), &[order.outcome.as_seed()]],
         bump
     )]
-    pub position: Account<'info, UserPosition>,
+    pub position: Box<Account<'info, UserPosition>>,
     // Cualquiera puede pagar por la ejecucion (un keeper); el fill en si le
     // pertenece siempre a order.owner, nunca a quien paga esta transaccion.
     #[account(mut)]
@@ -1724,13 +1862,12 @@ pub struct ExecutePredictionLimitOrderLynx<'info> {
     pub escrow: Box<Account<'info, TokenAccount>>,
     #[account(mut, address = config.lynx_mint)]
     pub lynx_mint: Box<Account<'info, Mint>>,
+    // Created once by init_market_lynx_vault, not inline — see BuyPositionLynxWithBurn.
     #[account(
-        init_if_needed,
-        payer = payer,
+        mut,
         seeds = [b"lynx_vault", market.key().as_ref()],
-        bump,
-        token::mint = lynx_mint,
-        token::authority = config,
+        bump = market.lynx_vault_bump,
+        constraint = market_lynx_vault.mint == config.lynx_mint @ LynxError::InvalidCurrency,
     )]
     pub market_lynx_vault: Box<Account<'info, TokenAccount>>,
     #[account(
@@ -1911,9 +2048,13 @@ pub struct CutOffMarket<'info> {
 #[derive(Accounts)]
 pub struct ProposeResolution<'info> {
     #[account(seeds = [b"config"], bump = config.bump)]
-    pub config: Account<'info, ProtocolConfig>,
+    pub config: Box<Account<'info, ProtocolConfig>>,
     #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
-    pub market: Account<'info, Market>,
+    pub market: Box<Account<'info, Market>>,
+    // Fuente del ratio de minteo congelado en el mercado (SC-01). Anclada al
+    // PDA y a este config, asi que el oraculo no puede pasar un TWAP falso.
+    #[account(seeds = [b"supply_twap", config.key().as_ref()], bump = supply_twap.bump, has_one = config)]
+    pub supply_twap: Box<Account<'info, CirculatingSupplyTwap>>,
     pub oracle_authority: Signer<'info>,
 }
 
@@ -2008,11 +2149,14 @@ pub struct ExecuteAction<'info> {
 #[derive(Accounts)]
 pub struct ExecuteResolveMarketAdmin<'info> {
     #[account(mut, seeds = [b"config"], bump = config.bump)]
-    pub config: Account<'info, ProtocolConfig>,
+    pub config: Box<Account<'info, ProtocolConfig>>,
     #[account(seeds = [b"multisig", config.key().as_ref()], bump = multisig.bump)]
-    pub multisig: Account<'info, Multisig>,
+    pub multisig: Box<Account<'info, Multisig>>,
     #[account(mut, has_one = multisig)]
-    pub proposal: Account<'info, GovernanceProposal>,
+    pub proposal: Box<Account<'info, GovernanceProposal>>,
+    // Fuente del ratio de minteo para la via de fallback admin (SC-01).
+    #[account(seeds = [b"supply_twap", config.key().as_ref()], bump = supply_twap.bump, has_one = config)]
+    pub supply_twap: Box<Account<'info, CirculatingSupplyTwap>>,
     #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
     pub market: Account<'info, Market>,
     #[account(mut, seeds = [b"vault", market.key().as_ref()], bump = vault.bump)]
@@ -2037,13 +2181,18 @@ pub struct ClaimMarketSol<'info> {
 }
 
 #[derive(Accounts)]
+// Boxed to keep try_accounts inside the 4096-byte BPF stack frame. Unboxed, this
+// struct's frame was 4168 bytes and the program did not merely risk undefined
+// behaviour — it hard-faulted at runtime with "Access violation in unknown
+// section at address 0x8", meaning NO winner of a LYNX-denominated market could
+// ever claim their payout. See tests/lynx_paths_integration.rs.
 pub struct ClaimMarketLynx<'info> {
     #[account(seeds = [b"config"], bump = config.bump)]
-    pub config: Account<'info, ProtocolConfig>,
+    pub config: Box<Account<'info, ProtocolConfig>>,
     #[account(seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
-    pub market: Account<'info, Market>,
+    pub market: Box<Account<'info, Market>>,
     #[account(mut, has_one = market, constraint = position.owner == claimant.key() @ LynxError::Unauthorized)]
-    pub position: Account<'info, UserPosition>,
+    pub position: Box<Account<'info, UserPosition>>,
     // Same PDA derivation as in BuyPositionLynxWithBurn, pinned to this market via seeds
     // instead of being validated only by mint+owner.
     #[account(
@@ -2052,15 +2201,15 @@ pub struct ClaimMarketLynx<'info> {
         bump = market.lynx_vault_bump,
         constraint = market_lynx_vault.mint == config.lynx_mint @ LynxError::InvalidCurrency,
     )]
-    pub market_lynx_vault: Account<'info, TokenAccount>,
+    pub market_lynx_vault: Box<Account<'info, TokenAccount>>,
     #[account(mut, constraint = claimant_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
-    pub claimant_lynx_account: Account<'info, TokenAccount>,
+    pub claimant_lynx_account: Box<Account<'info, TokenAccount>>,
     #[account(
         mut,
         constraint = treasury_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency,
         constraint = treasury_lynx_account.owner == config.treasury @ LynxError::Unauthorized
     )]
-    pub treasury_lynx_account: Account<'info, TokenAccount>,
+    pub treasury_lynx_account: Box<Account<'info, TokenAccount>>,
     pub claimant: Signer<'info>,
     pub token_program: Program<'info, Token>,
 }
@@ -2103,29 +2252,34 @@ pub struct SweepUnclaimedMarketLynx<'info> {
 }
 
 #[derive(Accounts)]
+// Accounts are Boxed to keep the generated `try_accounts` off the BPF stack.
+// With bare `Account<'info, _>` fields this struct's deserialization frame was
+// 4736 bytes — 336 over Solana's 4096-byte stack limit — which the SBF linker
+// flagged as "may cause undefined behavior during execution". Box moves each
+// account onto the heap so the frame stays within bounds.
 pub struct MintLynxDistribution<'info> {
     #[account(mut, seeds = [b"config"], bump = config.bump)]
-    pub config: Account<'info, ProtocolConfig>,
+    pub config: Box<Account<'info, ProtocolConfig>>,
     #[account(seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump)]
-    pub market: Account<'info, Market>,
+    pub market: Box<Account<'info, Market>>,
     #[account(mut, has_one = market, constraint = position.owner == payer.key() @ LynxError::Unauthorized)]
-    pub position: Account<'info, UserPosition>,
+    pub position: Box<Account<'info, UserPosition>>,
     #[account(mut, address = config.lynx_mint)]
-    pub lynx_mint: Account<'info, Mint>,
+    pub lynx_mint: Box<Account<'info, Mint>>,
     #[account(mut, constraint = holder_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
-    pub holder_lynx_account: Account<'info, TokenAccount>,
+    pub holder_lynx_account: Box<Account<'info, TokenAccount>>,
     #[account(
         mut,
         constraint = treasury_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency,
         constraint = treasury_lynx_account.owner == config.treasury @ LynxError::Unauthorized
     )]
-    pub treasury_lynx_account: Account<'info, TokenAccount>,
+    pub treasury_lynx_account: Box<Account<'info, TokenAccount>>,
     #[account(
         mut,
         constraint = initial_sale_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency,
         constraint = initial_sale_lynx_account.owner == config.treasury @ LynxError::Unauthorized
     )]
-    pub initial_sale_lynx_account: Account<'info, TokenAccount>,
+    pub initial_sale_lynx_account: Box<Account<'info, TokenAccount>>,
     #[account(mut)]
     pub payer: Signer<'info>,
     pub token_program: Program<'info, Token>,
@@ -2248,7 +2402,16 @@ pub struct ResolveProtocolDuel<'info> {
     pub recipient: UncheckedAccount<'info>,
     #[account(mut, address = config.lynx_mint)]
     pub lynx_mint: Account<'info, Mint>,
-    #[account(mut, constraint = recipient_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
+    // The LYNX prize is minted here. This instruction is permissionless (anyone
+    // may crank a settled duel), so without an owner constraint the caller could
+    // pass their own token account and steal the winner's minted LYNX while the
+    // SOL leg still went to duel.creator. Pin it to the creator, mirroring the
+    // `position.owner == claimant.key()` check ClaimMarketLynx already enforces.
+    #[account(
+        mut,
+        constraint = recipient_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency,
+        constraint = recipient_lynx_account.owner == duel.creator @ LynxError::Unauthorized
+    )]
     pub recipient_lynx_account: Account<'info, TokenAccount>,
     /// CHECK: checked against config.treasury
     #[account(mut, address = config.treasury)]
@@ -2340,18 +2503,21 @@ fn finalize_market_and_fees<'info>(
         Outcome::Unresolved => 0,
     };
 
-    // CR-01: Use the mint ratio snapshot taken at propose_resolution time
-    // instead of calling current_mint_ratio_bps() which reads the
-    // instantaneous circulating supply and is manipulable during the
-    // dispute window. If no snapshot exists (e.g. admin fallback path via
-    // execute_resolve_market_admin that skipped propose_resolution),
-    // fall back to computing it now.
+    // CR-01/SC-01: el ratio SIEMPRE viene del snapshot congelado por
+    // propose_resolution o execute_resolve_market_admin, ambos derivados del
+    // TWAP. Antes habia un fallback silencioso a current_mint_ratio_bps() para
+    // el caso "sin snapshot", que reintroducia justo la lectura instantanea
+    // manipulable que el TWAP viene a eliminar — y ademas se ejecutaba en el
+    // momento mas predecible posible (finalize es permissionless y cranqueable
+    // por cualquiera en cuanto pasa la ventana de disputa).
+    //
+    // Ambos caminos hacia Resolved fijan el snapshot para mercados en SOL, asi
+    // que su ausencia significa que el estado es incoherente: fallar es la
+    // unica respuesta segura, y nunca puede atrapar fondos porque el mercado no
+    // llega a marcarse Resolved (la tx entera revierte).
     if market.currency == Currency::SOL {
-        if market.mint_ratio_snapshot_bps > 0 {
-            market.mint_ratio_bps = market.mint_ratio_snapshot_bps;
-        } else {
-            market.mint_ratio_bps = current_mint_ratio_bps(&*config)?;
-        }
+        require!(market.mint_ratio_snapshot_bps > 0, LynxError::MissingMintRatioSnapshot);
+        market.mint_ratio_bps = market.mint_ratio_snapshot_bps;
     }
 
     if market.currency == Currency::SOL && market.pool_total > 0 {
@@ -2494,32 +2660,32 @@ fn mint_to_lynx<'info>(
     )
 }
 
-// ⚠️  SECURITY NOTE (SC-01 — CRITICAL): Mint-ratio manipulation risk
-// ─────────────────────────────────────────────────────────────────
-// This function computes the mint ratio from the *instantaneous*
-// circulating supply (`total_lynx_supply - total_lynx_burned`).  An
-// attacker can temporarily burn a large LYNX position right before a
-// high-value SOL market resolves, pushing the ratio into a more
-// generous tier and receiving disproportionately more LYNX on claim.
+// SC-01 (resuelto): el ratio de minteo ya NO se deriva del supply circulante
+// instantaneo, sino del promedio de la ventana TWAP (ver mint_ratio_bps_twap).
 //
-// **Planned fix — TWAP of circulating supply:**
-// 1. Introduce a CirculatingSupplySnapshot account that is updated by
-//    a permissionless crank every N slots (e.g. ≈1 hour).
-// 2. Store the last 24 hourly snapshots on-chain (ring buffer).
-// 3. Replace the instantaneous read below with the *average* of those
-//    snapshots, so a last-minute burn has negligible impact.
-// 4. Until that mechanism is deployed, callers that need a stable
-//    ratio (e.g. resolve_protocol_duel) MUST use the `mint_ratio_bps`
-//    frozen on the Market account at resolve-time, *not* this function.
-fn current_mint_ratio_bps(config: &ProtocolConfig) -> Result<u64> {
-    // MD-03: Use saturating_sub to prevent underflow if total_lynx_burned ever
-    // exceeds total_lynx_supply (e.g. due to a bug elsewhere). Floor the
-    // circulating supply at 1 to avoid division-by-zero in callers.
-    let circulating = config
+// El riesgo era una manipulacion ATOMICA: como `total_lynx_burned` se movia en
+// la misma transaccion que la quema, un atacante podia quemar una posicion
+// grande e inmediatamente resolver/reclamar un mercado de valor alto en ese
+// mismo instante, saltando de RATIO_FLOOR_BPS (250) a RATIO_TIER_1_BPS (10_000)
+// — hasta 40x mas LYNX — sin exposicion temporal ni riesgo de precio.
+//
+// Esta funcion queda como la lectura instantanea "cruda". Solo debe usarse para
+// alimentar el crank de snapshots; ninguna ruta que decida cuanto LYNX se
+// acuña puede llamarla directamente.
+fn instantaneous_circulating_supply(config: &ProtocolConfig) -> u64 {
+    // MD-03: saturating_sub evita underflow si total_lynx_burned superara a
+    // total_lynx_supply por un bug en otro sitio. Suelo en 1 para no dividir
+    // por cero mas abajo.
+    config
         .total_lynx_supply
         .saturating_sub(config.total_lynx_burned)
-        .max(1);
-    let circulating_lynx = circulating / MICRO_LYNX_PER_LYNX;
+        .max(1)
+}
+
+/// Ratio de minteo (bps) para un supply circulante dado, en micro-LYNX.
+/// Funcion pura: la busqueda de tramo, aislada de DONDE sale el supply.
+fn ratio_for_circulating(circulating: u64) -> u64 {
+    let circulating_lynx = circulating.max(1) / MICRO_LYNX_PER_LYNX;
 
     let ratio_bps = if circulating_lynx < TIER_1_MAX_LYNX {
         RATIO_TIER_1_BPS
@@ -2545,20 +2711,138 @@ fn current_mint_ratio_bps(config: &ProtocolConfig) -> Result<u64> {
         RATIO_FLOOR_BPS
     };
 
-    Ok(ratio_bps)
+    ratio_bps
+}
+
+/// Ratio de minteo derivado del TWAP del supply circulante — la unica via
+/// permitida para fijar cuanto LYNX se acuña (SC-01).
+///
+/// Una quema de ultimo minuto solo altera 1 de las `count` muestras, asi que su
+/// efecto sobre el promedio es ~1/24: insuficiente para saltar de tramo. Mover
+/// el TWAP de verdad exige sostener la reduccion de supply durante horas, de
+/// forma publica y afectando a todas las resoluciones de la ventana.
+///
+/// Bootstrap: mientras el crank no haya tomado ninguna muestra (`count == 0`),
+/// cae al valor instantaneo. Es una ventana conocida y acotada — los operadores
+/// deben cranquear record_supply_snapshot antes de que resuelva ningun mercado
+/// con valor real.
+fn mint_ratio_bps_twap(twap: &CirculatingSupplyTwap, config: &ProtocolConfig) -> Result<u64> {
+    let circulating = match twap.average() {
+        Some(avg) => avg,
+        None => instantaneous_circulating_supply(config),
+    };
+    Ok(ratio_for_circulating(circulating))
 }
 
 fn prorated_bps(total: u64, basis_points: u64, numerator: u64, denominator: u64) -> Result<u64> {
     require!(denominator > 0, LynxError::InvalidAmount);
-    bps(total, basis_points)?
-        .checked_mul(numerator).ok_or(LynxError::MathOverflow)?
-        .checked_div(denominator).ok_or_else(|| error!(LynxError::MathOverflow))
+    // Same u64-overflow hazard as claim_market_sol: bps(total, ..) can be ~1e9
+    // micro-LYNX and `numerator` a position of ~1e11 lamports, whose product
+    // exceeds u64::MAX and previously reverted mint_lynx_distribution outright.
+    mul_div(bps(total, basis_points)?, numerator, denominator)
 }
 
 fn bps(amount: u64, basis_points: u64) -> Result<u64> {
-    amount
-        .checked_mul(basis_points).ok_or(LynxError::MathOverflow)?
-        .checked_div(BPS_DENOMINATOR).ok_or_else(|| error!(LynxError::MathOverflow))
+    // basis_points <= BPS_DENOMINATOR at every call site, so the result always
+    // fits back into u64; u128 is only needed to survive the intermediate product.
+    mul_div(amount, basis_points, BPS_DENOMINATOR)
+}
+
+/// Computes `a * b / c` with a u128 intermediate, then narrows back to u64.
+///
+/// Doing this in u64 overflows for realistic lamport values: two amounts of
+/// ~1e10 lamports (10 SOL) multiply to ~1e20, well past u64::MAX (~1.8e19).
+/// Before this helper, `claim_market_sol` computed `payout_pool * position.amount`
+/// directly in u64, so `checked_mul` returned None and every claim on a market
+/// with a pool above ~4.5 SOL reverted with MathOverflow — permanently locking
+/// the vault, since no other instruction can release winner funds.
+///
+/// The product cannot overflow u128: u64::MAX^2 < u128::MAX. The final
+/// `try_from` is what legitimately fails if a caller passes a ratio > 1.
+fn mul_div(a: u64, b: u64, c: u64) -> Result<u64> {
+    require!(c > 0, LynxError::MathOverflow);
+    let product = (a as u128).checked_mul(b as u128).ok_or(LynxError::MathOverflow)?;
+    let quotient = product.checked_div(c as u128).ok_or(LynxError::MathOverflow)?;
+    u64::try_from(quotient).map_err(|_| error!(LynxError::MathOverflow))
+}
+
+#[cfg(test)]
+mod math_tests {
+    use super::*;
+
+    const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
+
+    /// Reproduces the exact computation claim_market_sol performs, to pin the
+    /// bug that made every non-trivial market unpayable.
+    fn claim_payout(pool_sol: u64, position_sol: u64, winning_sol: u64) -> Result<u64> {
+        let pool_total = pool_sol * LAMPORTS_PER_SOL;
+        let payout_pool = bps(pool_total, BPS_DENOMINATOR - EVENT_PROTOCOL_FEE_BPS).unwrap();
+        mul_div(payout_pool, position_sol * LAMPORTS_PER_SOL, winning_sol * LAMPORTS_PER_SOL)
+    }
+
+    /// The regression that matters: the old code computed `payout_pool *
+    /// position.amount` in u64. For a 20 SOL pool that product is ~1.8e20,
+    /// past u64::MAX (~1.8e19), so checked_mul returned None and the claim
+    /// reverted forever. Anything above ~4.5 SOL was affected.
+    #[test]
+    fn claim_does_not_overflow_on_realistic_pools() {
+        // Sole winner takes the whole 90% payout pool.
+        assert_eq!(claim_payout(20, 10, 10).unwrap(), 18 * LAMPORTS_PER_SOL);
+        assert_eq!(claim_payout(1_000, 100, 100).unwrap(), 900 * LAMPORTS_PER_SOL);
+        // Confirms the old u64 product really would have overflowed.
+        let payout_pool = bps(20 * LAMPORTS_PER_SOL, 9_000).unwrap();
+        assert!(payout_pool.checked_mul(10 * LAMPORTS_PER_SOL).is_none());
+    }
+
+    /// Winners split the 90% pool in proportion to their stake; losers' SOL
+    /// funds the winners, and the sum never exceeds the payout pool.
+    #[test]
+    fn claim_splits_pool_pro_rata_without_overpaying() {
+        // 100 SOL pool, winning side staked 40 total: two winners of 30 and 10.
+        let big = claim_payout(100, 30, 40).unwrap();
+        let small = claim_payout(100, 10, 40).unwrap();
+        assert_eq!(big, 675 * LAMPORTS_PER_SOL / 10); // 67.5 SOL
+        assert_eq!(small, 225 * LAMPORTS_PER_SOL / 10); // 22.5 SOL
+        let payout_pool = bps(100 * LAMPORTS_PER_SOL, 9_000).unwrap();
+        assert!(big + small <= payout_pool, "winners must never drain more than the payout pool");
+    }
+
+    #[test]
+    fn mul_div_rejects_zero_denominator_instead_of_panicking() {
+        assert!(mul_div(1, 1, 0).is_err());
+    }
+
+    #[test]
+    fn mul_div_errors_when_result_exceeds_u64() {
+        // a*b/c genuinely larger than u64::MAX must error, not wrap.
+        assert!(mul_div(u64::MAX, u64::MAX, 1).is_err());
+    }
+
+    #[test]
+    fn bps_is_exact_at_boundaries() {
+        assert_eq!(bps(1_000, 0).unwrap(), 0);
+        assert_eq!(bps(1_000, BPS_DENOMINATOR).unwrap(), 1_000);
+        // The 10% protocol fee split must leave exactly 90%.
+        assert_eq!(bps(1_000, BPS_DENOMINATOR - EVENT_PROTOCOL_FEE_BPS).unwrap(), 900);
+    }
+
+    /// prorated_bps feeds mint_lynx_distribution; a 1000 SOL market previously
+    /// overflowed here too.
+    #[test]
+    fn prorated_bps_survives_large_markets() {
+        let pool_total = 1_000 * LAMPORTS_PER_SOL;
+        let base_micro_lynx = pool_total / LAMPORTS_TO_MICRO_LYNX_DENOMINATOR;
+        let position = 100 * LAMPORTS_PER_SOL;
+        let got = prorated_bps(base_micro_lynx, LYNX_PARTICIPANT_BPS, position, pool_total).unwrap();
+        // 10% of the pool, 85% participant share of 1e9 micro-LYNX.
+        assert_eq!(got, 85_000_000);
+    }
+
+    /// The three-way LYNX split must never mint more than the computed total.
+    #[test]
+    fn lynx_distribution_split_never_exceeds_total() {
+        assert_eq!(LYNX_PARTICIPANT_BPS + LYNX_TREASURY_BPS + LYNX_INITIAL_SALE_BPS, BPS_DENOMINATOR);
+    }
 }
 
 fn transfer_lamports<'info>(from: &AccountInfo<'info>, to: &AccountInfo<'info>, amount: u64) -> Result<()> {
