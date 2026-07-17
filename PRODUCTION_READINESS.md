@@ -1,6 +1,8 @@
 # Lynx Production Readiness
 
-> **Last updated:** This document reflects the current codebase state.
+> **Last verified against the code:** 2026-07-17. Every claim below was checked
+> against the source on that date, not carried over from a previous revision. If
+> you are reading this long after that date, re-check rather than trust it.
 
 ---
 
@@ -64,6 +66,7 @@
 | `EMAIL_FROM` | ✅ prod | Verified sender address |
 | `TREASURY_WALLET` | ✅ prod | On-chain deposit target |
 | `TREASURY_SECRET_KEY` | ✅ prod | For on-chain SOL withdrawals |
+| `LYNX_MINT` | ✅ prod | SPL mint address. LYNX withdrawals return 501 while unset — the code path is implemented, it just has no mint to transfer |
 | `SENTRY_DSN` | Recommended | Backend error tracking |
 | `ADMIN_WALLETS` | ✅ prod | Comma-separated admin pubkeys |
 
@@ -82,8 +85,7 @@
 
 | Item | Impact | Notes |
 |------|--------|-------|
-| **LYNX withdrawal** | Medium | Returns 501 — SPL transfer not yet implemented |
-| **Anchor integration tests** | High | No automated tests for the smart contract — must be added before mainnet |
+| **Magic-managed wallets** | Medium | `MAGIC:<hash>` identities are minted by the backend and are application-managed, not real wallets. Mapping them to custodial or non-custodial accounts is a custody/compliance decision that has not been made |
 | **In-memory store at scale** | Med | Full `findMany()` loads are fine to ~10k records per type; use Prisma queries directly for larger datasets |
 
 ---
@@ -96,6 +98,6 @@
 - [ ] `APP_URL` set to production domain (required for HTTPS redirect + email links)
 - [ ] TLS certificate obtained (`nginx/init-certs.sh`)
 - [ ] Anchor program deployed to mainnet and `PROGRAM_ID` / `LYNX_MINT` updated
-- [ ] Anchor integration tests written and passing
+- [x] Anchor integration tests written and passing — 48 tests (`cargo test --workspace`, needs `SBF_OUT_DIR=cripto/target/deploy`), gated in CI
 - [ ] Admin panel deployed to private network or behind VPN
 - [ ] `ADMIN_KEYPAIR_BS58` rotated and stored in secrets manager

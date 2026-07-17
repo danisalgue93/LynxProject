@@ -104,20 +104,32 @@ Backend API tests now cover:
 
 ## Remaining risks before production/mainnet
 
+> **Re-checked against the source on 2026-07-17.** Four of the five risks below no
+> longer describe this codebase — they are kept with their original wording so the
+> record stays honest, each annotated with what was actually found. Note the
+> "Verification performed" section above: that session had no working `npm`,
+> `cargo`, `rustc` or `anchor`, so these risks were written from reading the source
+> and were never executed against it. Only risk 3 still stands.
+
 1. Anchor LYNX claim flow still needs a full implementation pass.
    - LYNX buys now transfer the unburned amount into a token vault, but the reviewed program still does not include a matching LYNX claim instruction for resolved LYNX-denominated markets.
+   - **RESOLVED (2026-07-17).** `claim_market_lynx` exists at `programs/lynx_project/src/lib.rs:1128`, with `sweep_unclaimed_market_lynx` at :1227 for the unclaimed remainder.
 
 2. Anchor account/client compatibility needs rebuilding.
    - The `buy_position_lynx_with_burn` and `accept_duel` account contexts were strengthened, so any Anchor IDL/client code must be regenerated and adjusted.
+   - **RESOLVED (2026-07-17).** Understated at the time: the IDL was not merely stale, it could not be generated at all — anchor 0.30.1's generator calls proc_macro2's `Span::source_file()`, removed in current rustc. On anchor 0.31.1 it emits cleanly (42 instructions, address matching `declare_id!`).
 
 3. Managed Magic wallets are now separated from the demo wallet, but they are still application-managed identities.
    - For production, Magic users should eventually be mapped to real custodial/non-custodial wallet accounts depending on the intended compliance and custody model.
+   - **STILL OPEN (2026-07-17).** `MAGIC:<hash>` ids are now backend-minted only (the frontend fabrication in `getManagedWalletAddress` is gone), but they remain application-managed identities. This is a custody/compliance decision, not a defect.
 
 4. Full CI is currently not reproducible from the ZIP alone.
    - `node_modules` are absent and no package manager/runtime for Rust was available in this session.
+   - **RESOLVED (2026-07-17).** An artifact of that session's environment, not of the repo. CI runs all four modules; note it had been configured to trigger on `[main, develop]` while this repo ships from `master`, so it had never actually run.
 
 5. Anchor `1v1vP` protocol-side stake is not escrowed on-chain yet.
    - The backend simulation now locks the protocol side, but the Anchor program still needs a treasury signer or PDA funding design before it can truly escrow the protocol-funded side on-chain.
+   - **OBSOLETE BY DESIGN (2026-07-17).** The program does not escrow the protocol side because it no longer pays from a balance: on a creator win, `resolve_protocol_duel` returns the creator's own stake from `duel_vault` and mints the winnings as LYNX at the ratio frozen at resolve-time (`lib.rs:1500-1543`). Liability is bounded by `config.protocol_duel_exposure`, checked on creation and released on settlement (fix SC-03). A treasury signer would fund a design that was dropped.
 
 ## Final desktop audit
 

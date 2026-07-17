@@ -32,7 +32,7 @@ import {
  *
  * El trading de LYNX/SOL (par spot), duelos, staking y DAO siguen usando el
  * flujo off-chain existente por ahora; esa migracion queda para una fase
- * posterior (ver auditoria_lynx_project.md).
+ * posterior (ver LAUNCH_DECISIONS.md, "phase 5").
  */
 
 function toOnChainOutcome(position: string): OnChainOutcome {

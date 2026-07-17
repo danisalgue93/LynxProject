@@ -13,7 +13,8 @@
  *
  * Es intencionalmente independiente de backend/src/state.ts (el motor
  * off-chain legacy para LYNX/SOL, duelos, staking y DAO, que sigue existiendo
- * por ahora — ver auditoria_lynx_project.md, fase 5 pendiente).
+ * por ahora — ver LAUNCH_DECISIONS.md, "phase 5", la migracion pendiente de
+ * ese motor al modelo on-chain-is-truth que los mercados ya usan).
  */
 
 import { Connection, PublicKey, Transaction, TransactionInstruction, Keypair, sendAndConfirmTransaction } from '@solana/web3.js';

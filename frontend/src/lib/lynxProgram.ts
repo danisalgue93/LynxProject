@@ -16,7 +16,7 @@
  *
  * NOTA IMPORTANTE: el trading de LYNX/SOL (par spot) y el staking/DAO siguen
  * usando el flujo off-chain existente por ahora — esa migracion queda para
- * una fase posterior (ver auditoria_lynx_project.md).
+ * una fase posterior (ver LAUNCH_DECISIONS.md, "phase 5").
  */
 
 import {
