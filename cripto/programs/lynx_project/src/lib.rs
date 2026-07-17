@@ -1,3 +1,10 @@
+// Anchor's #[program]/#[derive(Accounts)] macros expand to code gated on cfgs
+// (anchor-debug, custom-heap, custom-panic, solana) that this crate never
+// declares, so rustc emits ~40 unexpected_cfgs warnings for generated code we
+// do not own. Silence them here so a real cfg typo in our own code still stands
+// out instead of being lost in the noise.
+#![allow(unexpected_cfgs)]
+
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{program::invoke, system_instruction};
 use anchor_spl::token::{self, Burn, Mint, MintTo, Token, TokenAccount, Transfer};
@@ -271,6 +278,9 @@ pub mod lynx_project {
         Ok(())
     }
 
+    // Instruction handlers take their inputs as flat args; grouping them into a
+    // struct would only obscure the on-chain call interface.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_market(
         ctx: Context<CreateMarket>,
         market_id: u64,
@@ -1097,7 +1107,7 @@ pub mod lynx_project {
         let market = &mut ctx.accounts.market;
         // CR-02: defensive check — binary markets cannot resolve to Draw,
         // but if they somehow did, no claim should be allowed.
-        require!(!(!market.is_ternary && market.result == Outcome::Draw), LynxError::InvalidOutcome);
+        require!(market.is_ternary || market.result != Outcome::Draw, LynxError::InvalidOutcome);
         let position = &mut ctx.accounts.position;
         require!(market.currency == Currency::SOL, LynxError::InvalidCurrency);
         require!(market.status == MarketStatus::Resolved, LynxError::InvalidStatus);
@@ -1195,7 +1205,7 @@ pub mod lynx_project {
         require!(market.currency == Currency::SOL, LynxError::InvalidCurrency);
         require!(market.status == MarketStatus::Resolved, LynxError::InvalidStatus);
         // CR-02: defensive check — binary markets cannot resolve to Draw.
-        require!(!(!market.is_ternary && market.result == Outcome::Draw), LynxError::InvalidOutcome);
+        require!(market.is_ternary || market.result != Outcome::Draw, LynxError::InvalidOutcome);
         require!(!market.swept, LynxError::AlreadySwept);
 
         if market.winning_total == 0 {
@@ -2479,7 +2489,7 @@ fn finalize_market_and_fees<'info>(
     // funds because no position can be a winner (Draw positions don't exist
     // for binary markets).
     require!(
-        !(!market.is_ternary && result == Outcome::Draw),
+        market.is_ternary || result != Outcome::Draw,
         LynxError::InvalidOutcome
     );
 
@@ -2584,7 +2594,7 @@ fn is_multisig_signer(multisig: &Multisig, key: Pubkey) -> bool {
         return false;
     }
     let count = multisig.signer_count as usize;
-    multisig.signers[..count].iter().any(|s| *s == key)
+    multisig.signers[..count].contains(&key)
 }
 
 fn result_is_valid(outcome: Outcome, is_ternary: bool) -> bool {
@@ -2687,7 +2697,7 @@ fn instantaneous_circulating_supply(config: &ProtocolConfig) -> u64 {
 fn ratio_for_circulating(circulating: u64) -> u64 {
     let circulating_lynx = circulating.max(1) / MICRO_LYNX_PER_LYNX;
 
-    let ratio_bps = if circulating_lynx < TIER_1_MAX_LYNX {
+    if circulating_lynx < TIER_1_MAX_LYNX {
         RATIO_TIER_1_BPS
     } else if circulating_lynx < TIER_2_MAX_LYNX {
         RATIO_TIER_2_BPS
@@ -2709,9 +2719,7 @@ fn ratio_for_circulating(circulating: u64) -> u64 {
         RATIO_TIER_10_BPS
     } else {
         RATIO_FLOOR_BPS
-    };
-
-    ratio_bps
+    }
 }
 
 /// Ratio de minteo derivado del TWAP del supply circulante — la unica via
@@ -2764,6 +2772,18 @@ fn mul_div(a: u64, b: u64, c: u64) -> Result<u64> {
     let product = (a as u128).checked_mul(b as u128).ok_or(LynxError::MathOverflow)?;
     let quotient = product.checked_div(c as u128).ok_or(LynxError::MathOverflow)?;
     u64::try_from(quotient).map_err(|_| error!(LynxError::MathOverflow))
+}
+
+fn transfer_lamports<'info>(from: &AccountInfo<'info>, to: &AccountInfo<'info>, amount: u64) -> Result<()> {
+    if amount == 0 {
+        return Ok(());
+    }
+    let rent_minimum = Rent::get()?.minimum_balance(from.data_len());
+    let required = amount.checked_add(rent_minimum).ok_or(LynxError::MathOverflow)?;
+    require!(from.lamports() >= required, LynxError::InsufficientFunds);
+    **from.try_borrow_mut_lamports()? -= amount;
+    **to.try_borrow_mut_lamports()? += amount;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2843,16 +2863,4 @@ mod math_tests {
     fn lynx_distribution_split_never_exceeds_total() {
         assert_eq!(LYNX_PARTICIPANT_BPS + LYNX_TREASURY_BPS + LYNX_INITIAL_SALE_BPS, BPS_DENOMINATOR);
     }
-}
-
-fn transfer_lamports<'info>(from: &AccountInfo<'info>, to: &AccountInfo<'info>, amount: u64) -> Result<()> {
-    if amount == 0 {
-        return Ok(());
-    }
-    let rent_minimum = Rent::get()?.minimum_balance(from.data_len());
-    let required = amount.checked_add(rent_minimum).ok_or(LynxError::MathOverflow)?;
-    require!(from.lamports() >= required, LynxError::InsufficientFunds);
-    **from.try_borrow_mut_lamports()? -= amount;
-    **to.try_borrow_mut_lamports()? += amount;
-    Ok(())
 }

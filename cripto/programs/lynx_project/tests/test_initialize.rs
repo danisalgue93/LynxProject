@@ -1,11 +1,13 @@
-//! Integration tests for the Lynx prediction-market program.
+//! Constant-invariant and pure-logic tests for the Lynx prediction-market
+//! program. Instruction-level coverage that drives the real program through a
+//! Solana runtime lives in the sibling `*_integration.rs` files (they use
+//! solana-program-test); this file covers the invariants that need no runtime.
 //!
-//! NOTE: Full instruction-level tests (e.g. initialize_protocol, create_market,
-//! claim_market_sol) require a Solana runtime (solana-program-test or lite-svm).
-//! Those are not available as a dependency here, so the tests below cover the
-//! pure-logic helpers and constant invariants that can be validated without a
-//! runtime. A separate integration-test crate should be added for
-//! instruction-level coverage before mainnet deployment.
+//! Several assertions here compare compile-time constants, which clippy would
+//! otherwise flag as `assertions_on_constants`. That is exactly the intent: they
+//! pin invariants between constants so a future edit that violates one fails the
+//! test suite.
+#![allow(clippy::assertions_on_constants)]
 
 use lynx_project::constants::*;
 use lynx_project::state::*;

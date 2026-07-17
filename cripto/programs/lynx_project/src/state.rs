@@ -71,7 +71,8 @@ pub struct ProtocolConfig {
 }
 
 impl ProtocolConfig {
-    pub const LEN: usize = 8 + 32 * 5 + 8 * 3 + 16 + 1 * 4 + 8 * 2;
+    // 8 disc + 5 Pubkey + 3 u64 + 1 u128 + 4 u8/bool + 2 u64.
+    pub const LEN: usize = 8 + 32 * 5 + 8 * 3 + 16 + 4 + 8 * 2;
 }
 
 #[account]

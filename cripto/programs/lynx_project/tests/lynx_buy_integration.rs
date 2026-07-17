@@ -175,7 +175,7 @@ async fn buying_into_a_lynx_market_works() {
     // instruction creates them via init_if_needed, which is part of what makes
     // this try_accounts frame large.
 
-    let mut ctx: ProgramTestContext = pt.start_with_context().await;
+    let ctx: ProgramTestContext = pt.start_with_context().await;
     let mut clock: Clock = ctx.banks_client.get_sysvar().await.unwrap();
     clock.unix_timestamp = NOW_TS;
     ctx.set_sysvar(&clock);

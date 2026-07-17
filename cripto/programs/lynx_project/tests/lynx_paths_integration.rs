@@ -189,7 +189,7 @@ async fn lynx_winner_is_paid_and_treasury_takes_its_fee() {
     pt.add_account(claimant_lynx, spl_token_account(lynx_mint, claimant.pubkey(), 0));
     pt.add_account(treasury_lynx, spl_token_account(lynx_mint, treasury_owner.pubkey(), 0));
 
-    let mut ctx = pt.start_with_context().await;
+    let ctx = pt.start_with_context().await;
 
     let ix = Instruction {
         program_id: pid,
@@ -323,7 +323,7 @@ async fn lynx_loser_cannot_claim() {
     pt.add_account(loser_lynx, spl_token_account(lynx_mint, loser.pubkey(), 0));
     pt.add_account(treasury_lynx, spl_token_account(lynx_mint, treasury_owner.pubkey(), 0));
 
-    let mut ctx = pt.start_with_context().await;
+    let ctx = pt.start_with_context().await;
 
     let ix = Instruction {
         program_id: pid,

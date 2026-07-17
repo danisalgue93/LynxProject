@@ -123,7 +123,7 @@ async fn winner_can_claim_a_twenty_sol_market() {
     pt.add_account(position_pubkey, rent_account(account_bytes(&position), program_id, 0));
     pt.add_account(vault_pda, rent_account(account_bytes(&vault), program_id, pool_total));
 
-    let mut ctx = pt.start_with_context().await;
+    let ctx = pt.start_with_context().await;
 
     let ix = Instruction {
         program_id,

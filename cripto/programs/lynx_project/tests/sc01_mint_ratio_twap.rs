@@ -163,7 +163,7 @@ async fn frozen_ratio_after_propose(config: ProtocolConfig, twap: CirculatingSup
     pt.add_account(twap_key, program_account(account_bytes(&twap)));
     pt.add_account(market_pda, program_account(account_bytes(&seed_cutoff_market(oracle.pubkey()))));
 
-    let mut ctx: ProgramTestContext = pt.start_with_context().await;
+    let ctx: ProgramTestContext = pt.start_with_context().await;
     let mut clock: Clock = ctx.banks_client.get_sysvar().await.unwrap();
     clock.unix_timestamp = NOW_TS;
     ctx.set_sysvar(&clock);

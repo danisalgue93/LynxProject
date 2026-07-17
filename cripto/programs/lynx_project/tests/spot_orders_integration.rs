@@ -196,7 +196,6 @@ struct Book {
     buy_order: Pubkey,
     sell_order: Pubkey,
     buyer_lynx: Pubkey,
-    seller_lynx: Pubkey,
 }
 
 async fn crossing_book(f: &mut Fixture, amount: u64, price: u128) -> Book {
@@ -220,7 +219,7 @@ async fn crossing_book(f: &mut Fixture, amount: u64, price: u128) -> Book {
     Book {
         buy_order: spot_order_pda(&buyer.pubkey(), 2).0,
         sell_order: spot_order_pda(&seller.pubkey(), 1).0,
-        buyer, seller, buyer_lynx, seller_lynx,
+        buyer, seller, buyer_lynx,
     }
 }
 

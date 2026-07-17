@@ -314,7 +314,7 @@ async fn protocol_duel_rejects_foreign_lynx_account() {
     let attacker_lynx = Pubkey::new_unique();
     pt.add_account(attacker_lynx, spl_token_account(lynx_mint, attacker.pubkey()));
 
-    let mut ctx = pt.start_with_context().await;
+    let ctx = pt.start_with_context().await;
 
     let ix = Instruction {
         program_id: pid,
