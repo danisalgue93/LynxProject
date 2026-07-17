@@ -116,6 +116,24 @@ corresponding Anchor instructions. It is planned as verifiable slices, each
 proven end-to-end before the next, the same discipline used for the Anchor 0.31
 upgrade.
 
+Progress (2026-07-17):
+- **Staking client half — built.** `buildStakeLynxTx` / `buildUnstakeLynxTx` /
+  `buildClaimStakingRewardsTx` in `frontend/src/lib/lynxProgram.ts`, transcribed
+  from the program's account structs and unit-tested (discriminators, arg bytes,
+  account metas).
+- **Duel client half — built.** `buildCreateDuelTx` / `buildAcceptDuelTx` /
+  `buildCancelDuelTx`, same technique and test coverage. Duel settlement is a
+  permissionless crank and stays in the keeper.
+- Both are **additive**: the UI is not switched over and `state.ts` is untouched.
+- **Devnet-gated, not done:** wiring these into the UI, verifying the deployed
+  program accepts them end-to-end, and only then retiring the off-chain paths.
+  A correct byte layout is not proof of on-chain acceptance. This step needs a
+  devnet deployment and a test wallet — see decision 4.2.
+- **Not started:** DAO governance and deposit/withdraw client halves. DAO is
+  multisig-admin rather than a user trading flow, and deposit/withdraw ride fiat
+  on/off-ramps that are inherently backend-mediated, so neither maps cleanly to a
+  single user-signed instruction the way staking and duels do.
+
 Everything marked YOURS above is not a gap in the code — it is work that requires
 your credentials, hardware, external parties, or elapsed time, and cannot honestly
 be marked done by anyone but you.
