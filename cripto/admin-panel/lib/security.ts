@@ -35,6 +35,61 @@ export async function hashSecret(value: string): Promise<string> {
   return bcrypt.hash(value, salt);
 }
 
+/** A bcrypt digest: $2a$/$2b$/$2y$ + cost + 53 chars of salt+hash. */
+const BCRYPT_HASH_PATTERN = /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/;
+
+/**
+ * Reads ADMIN_PASSWORD and fails loudly if it is not a bcrypt hash.
+ *
+ * bcrypt.compare(password, notAHash) resolves to `false` — it does not throw.
+ * So an ADMIN_PASSWORD stored as plaintext (the intuitive thing to do, and
+ * exactly what the old committed .env.local contained:
+ * `ADMIN_PASSWORD=lynx-local-admin`) makes *every* login return 401, including
+ * the correct password, with nothing in the logs to say why.
+ *
+ * That fails closed, so it is not a security hole — it is worse in a different
+ * way: it locks the operator out of the emergency admin panel at the exact
+ * moment they need it, and the symptom is indistinguishable from "wrong
+ * password". Refuse to start instead of failing silently.
+ */
+export function getAdminPasswordHash(): string {
+  const raw = process.env.ADMIN_PASSWORD;
+
+  // Next.js expands `$VAR` references inside .env files. A bcrypt digest starts
+  // with `$2a$12$...`, so `$2a` and `$12` are treated as (undefined) variable
+  // references and the value silently collapses to an empty string — verified:
+  // `ADMIN_PASSWORD=$2a$12$Adwj...` in .env.local is read back as "".
+  //
+  // The result was that the admin panel could not be logged into at all, by
+  // either route: a bcrypt hash in .env.local was blanked here (500 on every
+  // request-otp), and a plaintext password — the intuitive alternative, and what
+  // the committed .env.local actually contained — made bcrypt.compare() return
+  // false for every attempt (401). Both failures look like "wrong password".
+  //
+  // Escape each `$` as `\$` in the .env file, or supply ADMIN_PASSWORD through a
+  // real environment variable / secret mount, which is not expanded.
+  if (raw === '' || raw === undefined) {
+    throw new Error(
+      'ADMIN_PASSWORD is empty or unset.\n' +
+      'If you put a bcrypt hash in a .env file, Next.js expanded the `$` sequences in it ' +
+      '($2a, $12, ...) and blanked the value. Escape them:\n' +
+      '  ADMIN_PASSWORD=\\$2a\\$12\\$your.hash.here\n' +
+      'or pass ADMIN_PASSWORD as a real environment variable / secret mount instead.'
+    );
+  }
+
+  if (!BCRYPT_HASH_PATTERN.test(raw)) {
+    throw new Error(
+      'ADMIN_PASSWORD must be a bcrypt hash, not a plaintext password. ' +
+      'Every login silently fails with 401 otherwise, because bcrypt.compare() ' +
+      'returns false for a malformed hash rather than raising. Generate one with:\n' +
+      '  node -e "const b=require(\'bcryptjs\'); b.hash(\'your-password\',12).then(h=>console.log(h))"\n' +
+      'Remember to escape every `$` as `\\$` if you store it in a .env file.'
+    );
+  }
+  return raw;
+}
+
 export async function verifySecret(value: string, hash: string): Promise<boolean> {
   return bcrypt.compare(value, hash);
 }
@@ -60,44 +115,56 @@ export function escapeMarkdown(text: string): string {
   return text.replace(/([_*\[\]()~`>#+\-=|{}.!])/g, '\\$1');
 }
 
-export async function sendTelegram(text: string) {
-  if (isDevMode()) {
-    console.log(`[DEV MODE - AUDIT LOG SUPPRESSED] ${text}`);
-    return;
-  }
-
-  const token = assertEnv('TELEGRAM_BOT_TOKEN');
-  const chatId = assertEnv('TELEGRAM_CHAT_ID');
-
-  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      parse_mode: 'Markdown',
-      disable_web_page_preview: true,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error('Telegram notification failed');
-  }
+/**
+ * Structured audit record for anything an admin does that matters.
+ *
+ * Replaces the previous Telegram notifications. Telegram was a poor audit sink:
+ * delivery was best-effort and its failures were swallowed (`.catch(console.error)`),
+ * so the record of a fund-moving action could silently not exist; it put a third
+ * party in the loop; and ADMIN_DEV_MODE suppressed it entirely.
+ *
+ * A single JSON line on stdout is picked up by CloudWatch (this deploys to AWS),
+ * is queryable, cannot fail to "send", and is not suppressible by a dev flag.
+ * Alerting is a CloudWatch metric filter / Sentry rule on top of it — the code's
+ * job is to emit the fact reliably, not to decide who gets paged.
+ */
+export function auditLog(event: string, fields: Record<string, unknown> = {}) {
+  console.log(
+    JSON.stringify({
+      level: 'audit',
+      event,
+      at: new Date().toISOString(),
+      ...fields,
+    })
+  );
 }
 
+// Telegram has been removed entirely.
+//
+// It served two roles, and was the wrong tool for both:
+//   - Second factor: it put a third party's uptime on the critical path of an
+//     *emergency* panel — the one you reach for precisely when things are broken.
+//     TOTP (lib/totp.ts) needs only the operator's phone.
+//   - Audit trail: delivery was best-effort with swallowed failures, so the
+//     record of a fund-moving action could silently fail to exist — and
+//     ADMIN_DEV_MODE suppressed it outright. auditLog() emits a structured line
+//     that cannot fail to send and is not suppressible.
+//
+// TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID are no longer read anywhere.
+
 // De-dupes rate-limit alerts so a sustained attack (many blocked requests)
-// triggers a single Telegram notification per window instead of one per
-// blocked request. In-memory only — consistent with the single-instance
-// requirement already documented in lib/rate-limit.ts / lib/otp-store.ts.
+// records one audit line per window instead of one per blocked request.
+// In-memory only — consistent with the single-instance requirement documented
+// in lib/rate-limit.ts.
 const rateLimitAlertSentAt = new Map<string, number>();
 
 /**
- * Notifies the team via Telegram the first time a given rate limit is hit
- * within `windowMs`. Because clientKey() collapses every direct client into
- * one 'direct' bucket unless ADMIN_TRUST_PROXY_HEADERS=true, a single
- * legitimate admin failing their password/OTP a few times can lock out
- * everyone else until the window expires — this alert lets operators notice
- * that and decide whether to enable trusted-proxy IP separation.
+ * Records the first time a given rate limit is hit within `windowMs`.
+ *
+ * Worth alerting on: because clientKey() collapses every direct client into one
+ * 'direct' bucket unless ADMIN_TRUST_PROXY_HEADERS=true, a single admin failing
+ * their password a few times locks out everyone else until the window expires.
+ * Surfacing that lets operators tell a lockout apart from an attack.
  */
 export function notifyRateLimitHit(context: string, key: string, windowMs: number) {
   const dedupeKey = `${context}:${key}`;
@@ -106,14 +173,12 @@ export function notifyRateLimitHit(context: string, key: string, windowMs: numbe
   if (lastSentAt && now - lastSentAt < windowMs) return;
   rateLimitAlertSentAt.set(dedupeKey, now);
 
-  sendTelegram(
-    `*Lynx admin panel rate limit hit*\n\nContext: \`${context}\`\nKey: \`${key}\`\n\n` +
-      `Requests are being blocked on this bucket. If ADMIN_TRUST_PROXY_HEADERS is not ` +
-      `'true', all direct clients share one bucket — consider enabling it once you've ` +
-      `confirmed the panel is only reachable through a trusted proxy.`
-  ).catch((err) =>
-    console.error('[security] rate-limit alert failed to send:', err instanceof Error ? err.message : err)
-  );
+  auditLog('ratelimit.hit', {
+    context,
+    key,
+    windowMs,
+    note: "If ADMIN_TRUST_PROXY_HEADERS is not 'true', all direct clients share one bucket.",
+  });
 }
 
 // ── Startup warnings (logged once on module load) ──────────────────────────────

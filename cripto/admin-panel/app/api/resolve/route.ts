@@ -9,9 +9,10 @@ import {
   finalizeResolution,
   fetchOpenProposals,
   fetchPendingMarkets,
+  getAdminPubkey,
   type OutcomeName,
 } from '@/lib/solana';
-import { clientKey, escapeMarkdown, notifyRateLimitHit, sendTelegram } from '@/lib/security';
+import { auditLog, clientKey, notifyRateLimitHit } from '@/lib/security';
 
 const OUTCOMES = new Set(['Yes', 'No', 'Draw']);
 const ACTIONS = new Set(['propose', 'approve', 'execute', 'dispute', 'finalize']);
@@ -30,6 +31,18 @@ const ACTIONS = new Set(['propose', 'approve', 'execute', 'dispute', 'finalize']
 // (accion "execute"), o hasta que pasa la ventana de disputa sin objeciones
 // tras una propuesta del oraculo (accion "finalize").
 //
+// ⚠️ MODELO DE DESPLIEGUE (hallazgo C-05) — no es opcional:
+// Cada admin del multisig ejecuta SU PROPIA instancia de este panel, en SU
+// PROPIO host, con SU PROPIA ADMIN_KEYPAIR_BS58. Una sola instancia no puede
+// completar el flujo por si misma: propose_action registra al proponente como
+// aprobacion #0 y approve_action rechaza on-chain una segunda aprobacion de esa
+// misma clave, asi que "approve" SIEMPRE falla sobre una propuesta creada aqui.
+// Eso es correcto, no un bug: un 2-de-2 solo protege si las dos firmas viven en
+// dos sitios distintos. Cargar las dos claves en un mismo panel lo convertiria
+// en un 1-de-1 (un host comprometido = ambas firmas) y anularia toda la defensa.
+// GET /api/resolve anota cada propuesta con `canApproveHere` para que la UI solo
+// ofrezca lo que la clave de ESTA instancia puede hacer de verdad.
+//
 // body esperado segun `action`:
 //   propose:  { action: 'propose', marketPubkey, result, confirmation }
 //   approve:  { action: 'approve', proposalPubkey }
@@ -39,6 +52,16 @@ const ACTIONS = new Set(['propose', 'approve', 'execute', 'dispute', 'finalize']
 export async function POST(req: NextRequest) {
   try {
     await requireAdminSession();
+
+    // Which deployment (i.e. which of the two multisig admins) took the action.
+    // Recorded on every audit line so the trail attributes each step to a signer
+    // rather than to an anonymous "the admin panel".
+    let panelSigner: string | null = null;
+    try {
+      panelSigner = getAdminPubkey();
+    } catch {
+      panelSigner = null;
+    }
 
     const key = clientKey(req);
     if (!rateLimit(`resolve:${key}`, 10, 60 * 60 * 1000)) {
@@ -81,9 +104,7 @@ export async function POST(req: NextRequest) {
       }
 
       const { signature, proposalPubkey } = await proposeResolveMarketAdmin(marketPubkey, result as OutcomeName);
-      sendTelegram(
-        `*Lynx: nueva propuesta de resolucion (fallback admin)*\n\nMercado: \`${escapeMarkdown(marketPubkey)}\`\nResultado propuesto: *${escapeMarkdown(result)}*\nProposal: \`${escapeMarkdown(proposalPubkey)}\`\nTx: \`${escapeMarkdown(signature)}\`\n\nHace falta la aprobacion del OTRO admin antes de poder ejecutarla.`
-      ).catch((err: unknown) => console.error('[resolve/propose] Telegram failed:', err instanceof Error ? err.message : err));
+      auditLog('resolve.propose', { market: marketPubkey, result, proposalPubkey, signature, panelSigner });
       return NextResponse.json({ ok: true, signature, proposalPubkey });
     }
 
@@ -93,9 +114,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
       }
       const signature = await approveProposal(proposalPubkey);
-      sendTelegram(`*Lynx: propuesta aprobada*\n\nProposal: \`${escapeMarkdown(proposalPubkey)}\`\nTx: \`${escapeMarkdown(signature)}\``).catch(
-        (err: unknown) => console.error('[resolve/approve] Telegram failed:', err instanceof Error ? err.message : err)
-      );
+      auditLog('resolve.approve', { proposalPubkey, signature, panelSigner });
       return NextResponse.json({ ok: true, signature });
     }
 
@@ -104,10 +123,9 @@ export async function POST(req: NextRequest) {
       if (typeof proposalPubkey !== 'string' || typeof marketPubkey !== 'string') {
         return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
       }
+      // This is the call that actually moves funds.
       const signature = await executeResolveMarketAdmin(proposalPubkey, marketPubkey);
-      sendTelegram(
-        `*Lynx: resolucion ejecutada (fallback admin)*\n\nMercado: \`${escapeMarkdown(marketPubkey)}\`\nTx: \`${escapeMarkdown(signature)}\``
-      ).catch((err: unknown) => console.error('[resolve/execute] Telegram failed (TX was confirmed):', err instanceof Error ? err.message : err));
+      auditLog('resolve.execute', { market: marketPubkey, proposalPubkey, signature, panelSigner, movesFunds: true });
       return NextResponse.json({ ok: true, signature });
     }
 
@@ -120,9 +138,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Type DISPUTE to confirm' }, { status: 400 });
       }
       const signature = await disputeResolution(marketPubkey);
-      sendTelegram(
-        `*Lynx: resolucion propuesta por el oraculo DISPUTADA*\n\nMercado: \`${escapeMarkdown(marketPubkey)}\`\nTx: \`${escapeMarkdown(signature)}\`\n\nEl mercado vuelve a CutOff. Hara falta una nueva propuesta del oraculo o el fallback admin (multisig) una vez pase oracle_deadline.`
-      ).catch((err: unknown) => console.error('[resolve/dispute] Telegram failed:', err instanceof Error ? err.message : err));
+      auditLog('resolve.dispute', { market: marketPubkey, signature, panelSigner });
       return NextResponse.json({ ok: true, signature });
     }
 
@@ -132,10 +148,9 @@ export async function POST(req: NextRequest) {
       if (typeof marketPubkey !== 'string') {
         return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
       }
+      // Also moves funds (fees to treasury / rewards vault).
       const signature = await finalizeResolution(marketPubkey);
-      sendTelegram(
-        `*Lynx: resolucion finalizada (ventana de disputa pasada sin objeciones)*\n\nMercado: \`${escapeMarkdown(marketPubkey)}\`\nTx: \`${escapeMarkdown(signature)}\``
-      ).catch((err: unknown) => console.error('[resolve/finalize] Telegram failed (TX was confirmed):', err instanceof Error ? err.message : err));
+      auditLog('resolve.finalize', { market: marketPubkey, signature, panelSigner, movesFunds: true });
       return NextResponse.json({ ok: true, signature });
     }
   } catch (err: unknown) {
@@ -148,7 +163,16 @@ export async function GET() {
   try {
     await requireAdminSession();
     const proposals = await fetchOpenProposals();
-    return NextResponse.json({ proposals });
+    // Which signer this deployment is. Each admin runs their own panel with their
+    // own key, so the UI must show whose panel this is — otherwise an operator
+    // cannot tell why a proposal is approvable here but not there.
+    let thisPanelSigner: string | null = null;
+    try {
+      thisPanelSigner = getAdminPubkey();
+    } catch {
+      thisPanelSigner = null;
+    }
+    return NextResponse.json({ proposals, thisPanelSigner });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to list proposals';
     return NextResponse.json({ error: message }, { status: 400 });

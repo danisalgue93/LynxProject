@@ -1,3 +1,10 @@
 .env
 .env.local
 .env.*.local
+
+# Build output — these were previously committed (116 files, including webpack
+# caches), which bloats the repo and lets stale artifacts shadow a fresh build.
+.next/
+out/
+node_modules/
+*.tsbuildinfo
