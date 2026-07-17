@@ -880,8 +880,13 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                    {(isLynxSol ? lynxTradeType : predTradeType) === 'limit' && (
                      <div>
                         <div className="relative">
-                          <input 
+                          {/* The visible "Price (SOL)" hint is a decorative
+                              sibling span, so without this the field had no
+                              accessible name at all: screen readers announced an
+                              unlabelled number box on a form that spends money. */}
+                          <input
                             type="number"
+                            aria-label={isLynxSol ? t('orderbook.priceSolLabel', 'Price (SOL)') : t('orderbook.priceLabel', 'Price')}
                             value={isLynxSol ? lynxPrice : predPrice}
                             onChange={(e) => isLynxSol ? setLynxPrice(e.target.value) : setPredPrice(e.target.value)}
                             className="w-full bg-[#18181B] border border-[#27272A] rounded p-2 lg:p-4 text-xs lg:text-2xl font-mono text-white outline-none focus:border-[#00FFD1] tracking-tighter"
@@ -893,8 +898,10 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
 
                    <div>
                       <div className="relative">
-                        <input 
+                        {/* Same missing accessible name as the price field above. */}
+                        <input
                           type="number"
+                          aria-label={isLynxSol ? t('orderbook.amountLynxLabel', 'Amount (LYNX)') : t('orderbook.amountLabel', 'Amount')}
                           value={isLynxSol ? lynxAmount : predAmount}
                           onChange={(e) => isLynxSol ? setLynxAmount(e.target.value) : setPredAmount(e.target.value)}
                           className="w-full bg-[#18181B] border border-[#27272A] rounded p-2 lg:p-4 text-xs lg:text-2xl font-mono text-white outline-none focus:border-[#00FFD1] tracking-tighter"

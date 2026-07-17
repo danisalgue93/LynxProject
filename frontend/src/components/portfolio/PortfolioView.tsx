@@ -121,11 +121,33 @@ export function PortfolioView() {
   };
 
   const handleStakeAction = async () => {
-    if (!stakeAmount || isNaN(Number(stakeAmount))) return;
+    const amount = Number(stakeAmount);
+
+    // The old guard was `if (!stakeAmount || isNaN(Number(stakeAmount))) return;`,
+    // which let through everything that matters: isNaN(-5) and isNaN(Infinity)
+    // are both false, and the string "0" is truthy. Negative, zero and infinite
+    // stakes all reached the API, which rejected them with a generic error —
+    // and on invalid input this returned silently, giving the user no feedback
+    // at all. handleSolLedgerAction below already validated properly; this now
+    // matches it.
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setStakeError(t('portfolio.invalidStakeAmount', 'Enter a valid LYNX amount greater than zero.'));
+      return;
+    }
+
+    const available = stakeMode === 'stake' ? portfolio?.lynxBalance : portfolio?.stakedLynx;
+    if (available !== undefined && amount > available) {
+      setStakeError(
+        stakeMode === 'stake'
+          ? t('portfolio.stakeAmountTooHigh', 'Amount exceeds your available LYNX balance.')
+          : t('portfolio.unstakeAmountTooHigh', 'Amount exceeds your staked LYNX.')
+      );
+      return;
+    }
+
     setIsStaking(true);
     setStakeError(null);
     try {
-      const amount = Number(stakeAmount);
       await executeTransaction(
         async () => {
           if (stakeMode === 'stake') {

@@ -39,6 +39,27 @@ export default defineConfig(({mode}) => {
     },
     build: {
       sourcemap: false,
+      rollupOptions: {
+        output: {
+          // Without explicit chunking, the Solana SDK ended up inlined into every
+          // lazy chunk that touches it: CreateDuelModal alone shipped 743 kB
+          // because importing useProgram drags in web3.js + the wallet adapters.
+          // Splitting the heavy, rarely-changing vendors into their own chunks
+          // means each is downloaded and cached once, instead of being duplicated
+          // across route bundles and re-downloaded whenever app code changes.
+          manualChunks: {
+            'vendor-solana': ['@solana/web3.js', '@solana/spl-token'],
+            'vendor-wallet': [
+              '@solana/wallet-adapter-base',
+              '@solana/wallet-adapter-react',
+              '@solana/wallet-adapter-react-ui',
+              '@solana/wallet-adapter-wallets',
+            ],
+            'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+            'vendor-charts': ['recharts'],
+          },
+        },
+      },
     },
     test: {
       globals: true,

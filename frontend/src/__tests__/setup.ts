@@ -1,5 +1,10 @@
 import { expect, vi } from 'vitest';
-import matchers from '@testing-library/jest-dom/matchers';
+// @testing-library/jest-dom v6 dropped the default export from /matchers; it now
+// only exposes named exports. `import matchers from …` therefore resolved to
+// undefined and expect.extend(undefined) threw "Cannot convert undefined or null
+// to object" while loading this setup file — which made all three frontend test
+// files fail to load, so the suite reported "no tests" and had never run.
+import * as matchers from '@testing-library/jest-dom/matchers';
 
 expect.extend(matchers);
 

@@ -43,6 +43,9 @@
     "compression": "^1.7.5",
     "@sentry/react": "^8.48.0"
   },
+  "overrides": {
+    "protobufjs": "^7.6.5"
+  },
   "devDependencies": {
     "@testing-library/dom": "^10.0.0",
     "@testing-library/jest-dom": "^6.6.3",
