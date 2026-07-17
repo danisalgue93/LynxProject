@@ -6,6 +6,7 @@ import 'dotenv/config';
 import express from 'express';
 import helmet from 'helmet';
 import http from 'http';
+import { readFileSync } from 'fs';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import morgan from 'morgan';
 import compression from 'compression';
@@ -19,7 +20,7 @@ import { createPersistence } from './persistence.js';
 import { redis } from './redisClient.js';
 import { LynxState } from './state.js';
 import type { Currency, OrderSide, OrderStatus, Position } from './types.js';
-import { generateToken, generateRefreshToken, verifyToken, verifyRefreshToken, hashPassword, hashPasswordSync, verifyPassword, extractToken } from './auth.js';
+import { generateToken, generateRefreshToken, verifyToken, verifyRefreshToken, hashPassword, verifyPassword, extractToken } from './auth.js';
 import { sendVerificationEmail, sendPasswordResetEmail, isEmailConfigured } from './email.js';
 import { onchainRouter } from './onchainRoutes.js';
 import { startChainIndexer, getIndexedMarket, listOpenOrdersForMarket, listPositionsForOwner, listOpenSpotOrders, fromOnChainOutcomeName, verifyOnChainMarketCreation, getIndexerStatus } from './chain.js';
@@ -75,7 +76,7 @@ if (process.env.PROGRAM_ID) {
 if (process.env.KEEPER_KEYPAIR_BS58) {
   try {
     const raw = process.env.KEEPER_KEYPAIR_BS58.startsWith('/')
-      ? require('fs').readFileSync(process.env.KEEPER_KEYPAIR_BS58, 'utf-8').trim()
+      ? readFileSync(process.env.KEEPER_KEYPAIR_BS58, 'utf-8').trim()
       : process.env.KEEPER_KEYPAIR_BS58;
     bs58.decode(raw); // will throw if invalid base58
   } catch {
@@ -326,7 +327,7 @@ app.use((req, _res, next) => {
       (safeQuery as any).wallet = '[REDACTED]';
     }
     (req as any).log.info({ query: safeQuery, body: safeBody }, 'request:received');
-  } catch (e) {
+  } catch {
     // fallback
     logger.info({ requestId: (req as any).id, method: req.method, path: req.path }, 'request:received');
   }
@@ -583,6 +584,18 @@ const walletTradingRateLimit = (req: express.Request, res: express.Response, nex
 };
 
 // ==================== AUTH UTILITIES ====================
+
+// Length-safe constant-time string compare. timingSafeEqual throws on unequal
+// lengths, so guard first (a length mismatch already means "not equal"). Used
+// for single-use email/reset tokens: they are high-entropy, so `===` was not a
+// practical timing oracle, but constant-time comparison is the correct default.
+function constantTimeEqual(a: string | undefined | null, b: string): boolean {
+  if (typeof a !== 'string') return false;
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
 
 interface AuthUser {
   id: string;
@@ -893,7 +906,7 @@ function verifyWalletSignature(wallet: string, signatureMessage: string, signatu
     const messageBytes = new TextEncoder().encode(signatureMessage);
     const signatureBytes = new Uint8Array(Buffer.from(signature, 'base64'));
     return nacl.sign.detached.verify(messageBytes, signatureBytes, pubkey);
-  } catch (err) {
+  } catch {
     return false;
   }
 }
@@ -1151,8 +1164,8 @@ const sendOnChainLynxWithdrawal: SolWithdrawalSender = async ({ toWallet, amount
   if (!lynxMintStr) return { ok: false, error: 'LYNX_MINT not configured' };
 
   try {
-    const { Keypair, PublicKey, Transaction, TransactionInstruction } = await import('@solana/web3.js');
-    const { TOKEN_PROGRAM_ID, getAssociatedTokenAddress, createTransferInstruction } = await import('@solana/spl-token');
+    const { Keypair, PublicKey, Transaction } = await import('@solana/web3.js');
+    const { getAssociatedTokenAddress, createTransferInstruction } = await import('@solana/spl-token');
     const bs58Mod = await import('bs58');
 
     const treasuryKp = Keypair.fromSecretKey(bs58Mod.default.decode(secretKey));
@@ -1307,7 +1320,7 @@ app.post('/auth/verify-email', maybeAuthRateLimit, asyncRoute(async (req, res) =
   const now = Date.now();
   const user = [...users.values()].find(
     (candidate) =>
-      candidate.emailVerificationToken === body.token &&
+      constantTimeEqual(candidate.emailVerificationToken, body.token) &&
       (candidate.emailVerificationExpiresAt === undefined || candidate.emailVerificationExpiresAt > now)
   );
   if (!user) {
@@ -1359,7 +1372,7 @@ app.post('/auth/reset-password', maybeAuthRateLimit, asyncRoute(async (req, res)
   }).parse(req.body);
 
   const user = [...users.values()].find((candidate) =>
-    candidate.passwordResetToken === body.token &&
+    constantTimeEqual(candidate.passwordResetToken, body.token) &&
     (candidate.passwordResetExpiresAt || 0) > Date.now()
   );
   if (!user) {
@@ -1406,7 +1419,7 @@ app.post('/auth/wallet-login', maybeAuthRateLimit, asyncRoute(async (req, res) =
   // signature's mathematical validity was checked, not the message's intent or freshness.
   // BE-15: Reduced to 60 seconds to narrow the replay window.
   const WALLET_LOGIN_WINDOW_MS = 60 * 1000; // 60 seconds
-  let parsedMsg: { app?: string; action?: string; wallet?: string; issuedAt?: string } | null = null;
+  let parsedMsg: { app?: string; action?: string; wallet?: string; issuedAt?: string } | null;
   try {
     parsedMsg = JSON.parse(body.signatureMessage) as {
       app?: string;
@@ -1750,7 +1763,7 @@ function purgeTradeIdempotencyCache() {
   }
 }
 
-app.post('/api/markets/:id/trades', tradingRateLimit, asyncRoute(async (req, res) => {
+app.post('/api/markets/:id/trades', tradingRateLimit, walletTradingRateLimit, asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
   const body = z.object({
     wallet: z.string(),
@@ -1909,7 +1922,7 @@ app.get('/api/duels', (req, res) => {
   });
 });
 
-app.post('/api/duels', tradingRateLimit, asyncRoute(async (req, res) => {
+app.post('/api/duels', tradingRateLimit, walletTradingRateLimit, asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
   const body = z.object({
     wallet: z.string(),
@@ -2051,7 +2064,7 @@ app.get('/api/orderbook', (req, res) => {
   res.json(book);
 });
 
-app.post('/api/orders', tradingRateLimit, asyncRoute(async (req, res) => {
+app.post('/api/orders', tradingRateLimit, walletTradingRateLimit, asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
   const body = z.object({
     wallet: z.string(),
@@ -2154,7 +2167,7 @@ app.post('/api/ledger/approve', asyncRoute(async (req, res) => {
     // The signed message must name the same wallet it is being used to link,
     // so a signature captured for one purpose cannot be replayed to attach a
     // different address.
-    let parsed: { wallet?: string; action?: string } | null = null;
+    let parsed: { wallet?: string; action?: string } | null;
     try {
       parsed = JSON.parse(body.signatureMessage) as { wallet?: string; action?: string };
     } catch {
@@ -2499,7 +2512,7 @@ app.post('/api/positions/:id/claim', asyncRoute(async (req, res) => {
   res.json(result);
 }));
 
-app.post('/api/positions/:id/boost-with-lynx', tradingRateLimit, asyncRoute(async (req, res) => {
+app.post('/api/positions/:id/boost-with-lynx', tradingRateLimit, walletTradingRateLimit, asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
   const body = z.object({ wallet: z.string(), lynxAmount: z.number().positive() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
@@ -2542,7 +2555,7 @@ app.delete('/api/orders/:id', asyncRoute(async (req, res) => {
   res.json(result);
 }));
 
-app.post('/api/staking/stake', tradingRateLimit, asyncRoute(async (req, res) => {
+app.post('/api/staking/stake', tradingRateLimit, walletTradingRateLimit, asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
   const body = z.object({ wallet: z.string(), amount: z.number().positive() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
@@ -2555,7 +2568,7 @@ app.post('/api/staking/stake', tradingRateLimit, asyncRoute(async (req, res) => 
   res.json(portfolio);
 }));
 
-app.post('/api/staking/unstake', tradingRateLimit, asyncRoute(async (req, res) => {
+app.post('/api/staking/unstake', tradingRateLimit, walletTradingRateLimit, asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
   const body = z.object({ wallet: z.string(), amount: z.number().positive() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
@@ -2568,7 +2581,7 @@ app.post('/api/staking/unstake', tradingRateLimit, asyncRoute(async (req, res) =
   res.json(portfolio);
 }));
 
-app.post('/api/staking/claim', tradingRateLimit, asyncRoute(async (req, res) => {
+app.post('/api/staking/claim', tradingRateLimit, walletTradingRateLimit, asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
   const body = z.object({ wallet: z.string() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
@@ -2656,17 +2669,17 @@ app.post('/api/notifications/read', asyncRoute(async (req, res) => {
 app.post('/api/transactions', asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
   const intent = req.body || {};
-  try { (req as any).log && (req as any).log.info({ intent }, 'tx:intent'); } catch (e) { logger.info({ requestId: (req as any).id, intent }, 'tx:intent'); }
+  try { if ((req as any).log) (req as any).log.info({ intent }, 'tx:intent'); } catch { logger.info({ requestId: (req as any).id, intent }, 'tx:intent'); }
   if (intent.signature) {
     const link = `https://explorer.solana.com/tx/${intent.signature}?cluster=${process.env.SOLANA_CLUSTER || 'devnet'}`;
-    try { (req as any).log && (req as any).log.info({ signature: intent.signature, link }, 'tx:signature'); } catch (e) { logger.info({ requestId: (req as any).id, signature: intent.signature, link }, 'tx:signature'); }
+    try { if ((req as any).log) (req as any).log.info({ signature: intent.signature, link }, 'tx:signature'); } catch { logger.info({ requestId: (req as any).id, signature: intent.signature, link }, 'tx:signature'); }
     // persist signature in store and emit socket event
     try {
       store.addTransaction({ signature: intent.signature, wallet: typeof intent.wallet === 'string' ? intent.wallet : undefined, intent });
       emit('crypto:tx', { signature: intent.signature, wallet: intent.wallet, link, timestamp: Date.now() });
       await persist();
     } catch (e) {
-      try { (req as any).log && (req as any).log.error({ err: e }, 'Failed to persist tx'); } catch (err2) { logger.error({ requestId: (req as any).id, err: e }, 'Failed to persist tx'); }
+      try { if ((req as any).log) (req as any).log.error({ err: e }, 'Failed to persist tx'); } catch { logger.error({ requestId: (req as any).id, err: e }, 'Failed to persist tx'); }
     }
   }
   res.json({
@@ -2684,7 +2697,7 @@ app.get('/api/transactions', (req: any, res) => {
   try {
     const list = store.listTransactionsForWallet(wallet);
     res.json(list);
-  } catch (e) {
+  } catch {
     res.status(500).json({ error: 'Failed to list transactions' });
   }
 });

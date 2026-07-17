@@ -32,7 +32,6 @@ export type CreditRequest = {
 };
 
 const REQUEST_TTL_MS = 24 * 60 * 60 * 1000; // 24h para juntar la segunda aprobacion
-const REQUEST_TTL_SECONDS = 24 * 60 * 60; // Redis TTL in seconds
 const REQUIRED_APPROVALS = 2; // incluyendo al proponente => 1 propuesta + 1 aprobacion de OTRO admin
 export const MAX_MANUAL_CREDIT_AMOUNT = {
   SOL: Number(process.env.MAX_MANUAL_CREDIT_SOL || 5),
@@ -185,7 +184,6 @@ function purgeExpired() {
 export async function loadPendingCreditApprovalsFromRedis(): Promise<void> {
   if (!redis) return;
   try {
-    const RedisClient = (await import('ioredis')).default;
     const compatibleRedis = redis as unknown as { keys(pattern: string): Promise<string[]>; get(key: string): Promise<string | null> };
     const keys = await compatibleRedis.keys(`${CREDIT_REDIS_PREFIX}*`);
     let loaded = 0;

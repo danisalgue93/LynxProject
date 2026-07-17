@@ -448,7 +448,7 @@ async function getConfigInfo(conn: Connection): Promise<{ lynxMint: PublicKey; t
   let offset = 8;
   offset += 32; // admin
   const treasury = new PublicKey(info.data.subarray(offset, offset + 32)); offset += 32;
-  const lynxMint = new PublicKey(info.data.subarray(offset, offset + 32)); offset += 32;
+  const lynxMint = new PublicKey(info.data.subarray(offset, offset + 32));
   cachedConfigInfo = { lynxMint, treasury, cachedAt: Date.now() };
   return cachedConfigInfo;
 }
@@ -497,7 +497,7 @@ export async function runKeeperOnce() {
         });
       } else {
         // BE-H-03: Execute LYNX prediction limit orders via execute_prediction_limit_order_lynx
-        const { lynxMint, treasury } = await getConfigInfo(conn);
+        const { lynxMint } = await getConfigInfo(conn);
         const configPk = pda([Buffer.from('config')], PROGRAM_ID);
         const escrow = pda([Buffer.from('pred_order_escrow_lynx'), orderPk.toBuffer()], PROGRAM_ID);
         const marketLynxVault = pda([Buffer.from('market_lynx_vault'), marketPk.toBuffer()], PROGRAM_ID);
@@ -601,7 +601,7 @@ async function matchSpotOrdersOnce(keeper: Keypair, conn: Connection) {
       const tx = new Transaction().add(ix);
       tx.feePayer = keeper.publicKey;
       const signature = await sendAndConfirmTransaction(conn, tx, [keeper], { commitment: 'confirmed' });
-      chainLog.info('keeper matched spot orders', { buy: buy.pubkey, sell: sell.pubkey, fill: fill.toString() });
+      chainLog.info('keeper matched spot orders', { buy: buy.pubkey, sell: sell.pubkey, fill: fill.toString(), signature });
     } catch (err: any) {
       chainLog.warn('keeper failed to match spot orders', { buy: buy.pubkey, sell: sell.pubkey, error: err?.message });
     }
