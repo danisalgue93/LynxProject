@@ -1671,7 +1671,21 @@ export class LynxState {
     position.amount = roundAmount(position.amount + solEquivalent);
     position.lynxBoostSolEquivalent = roundAmount(alreadyBoosted + solEquivalent);
 
-    market.poolAmount = roundAmount(market.poolAmount + solEquivalent);
+    // NOTE: market.poolAmount is deliberately NOT increased here.
+    //
+    // poolAmount is the real SOL deposited into the market; yesAmount/noAmount/
+    // drawAmount are claim *weights*. This used to do
+    // `market.poolAmount += solEquivalent`, which grew the payout pool without
+    // any SOL ever entering the ledger — the burn destroys LYNX, and nothing
+    // converts it to SOL. claimPosition() pays `netPool * (position.amount /
+    // winningPool)` and credits real SOL, so the inflated pool was paid out for
+    // real: with two 1 SOL bets and a 1 SOL-equivalent boost, 2 SOL in produced
+    // 2.7 to the winner + 0.3 in fees = 3 SOL out. One SOL minted from nothing,
+    // every time anyone boosted. See tests/solvency.test.ts.
+    //
+    // Burning LYNX buys a larger share of the existing pot, not a larger pot:
+    // raising only the side's weight redistributes the same real SOL toward the
+    // booster, and the books stay balanced (payouts + fees == deposits).
     const normalizedPosition = normalizePosition(position.position, market.isTernary);
     if (normalizedPosition === 'YES' || normalizedPosition === 'A') {
       market.yesAmount = roundAmount(market.yesAmount + solEquivalent);
