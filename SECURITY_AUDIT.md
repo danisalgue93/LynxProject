@@ -26,6 +26,26 @@ repeatable until empty.
 test (`staking_rejects_a_non_canonical_stake_vault`) proving the attack is blocked
 at its root. Commit `a8ca7d2`.
 
+### C-2 — Prisma Decimal balances string-concatenate → balance inflation → treasury drain — **FIXED**
+
+`dbToWallet`, `dbToMarket` and `dbToLedger` returned Prisma `Decimal` columns
+(`solBalance`, `lynxBalance`, pool amounts, …) **as Decimal objects, not
+numbers** — unlike `dbToPosition` / `dbToOrder` / `dbToTrade`, which coerce with
+`Number()`. `Decimal.valueOf()` is a string, so once a wallet is loaded from the
+DB, `credit()`'s `wallet.solBalance + amount` **string-concatenates**: a 5 SOL
+deposit onto a 10 SOL balance yields `"10" + 5` → `"105"` → `roundAmount` → 105.
+
+In production (`STORE_DRIVER=prisma`, the default) this triggers on the first
+credit — deposit, payout, reward — after **any restart/redeploy**: the balance
+inflates, and `/api/ledger/withdraw` will send that inflated amount as real
+on-chain SOL from the treasury. Verified empirically that `new
+Prisma.Decimal('10') + 5 === "105"`.
+
+**Fix:** coerce every Decimal field with `Number()` in the three mappers, matching
+the ones that were already correct. Regression test added
+(`tests/persistence.test.ts`) asserting the mappers return numbers that add
+(`10 + 5 === 15`), not strings that concatenate.
+
 ---
 
 ## Medium
@@ -147,8 +167,10 @@ best done as its own pass, not folded into a security fix.
 
 ---
 
-## Not yet audited
+## Fully audited
 
-`backend/src/persistence.ts` (the Prisma mapping) was out of scope for this pass.
-The frontend was audited — token/session handling, wallet-signature binding, XSS
-sinks and embedded secrets — and is recorded above with no findings.
+Solana program, backend (`server.ts`, `state.ts`, `creditApprovals.ts`,
+`chain.ts`, `persistence.ts`), admin panel resolve flow, and frontend
+(token/session handling, wallet-signature binding, XSS sinks, embedded secrets).
+`persistence.ts` produced C-2 above; everything else is recorded with its
+disposition.

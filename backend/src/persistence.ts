@@ -225,7 +225,7 @@ function ledgerToDb(e: LedgerEntry) {
 
 // ── DB → In-memory converters ─────────────────────────────────────────────────
 
-function dbToMarket(r: any): Market {
+export function dbToMarket(r: any): Market {
   return {
     id:               r.id,
     title:            r.title,
@@ -233,11 +233,13 @@ function dbToMarket(r: any): Market {
     category:         r.category,
     imageUrl:         r.imageUrl ?? undefined,
     status:           r.status,
-    poolAmount:       r.poolAmount,
-    yesAmount:        r.yesAmount,
-    noAmount:         r.noAmount,
-    drawAmount:       r.drawAmount ?? undefined,
-    burnedAmount:     r.burnedAmount,
+    // Decimal → number (see dbToWallet): raw Decimal objects string-concatenate
+    // under `+`, so pool math would corrupt on the first trade after a DB load.
+    poolAmount:       Number(r.poolAmount),
+    yesAmount:        Number(r.yesAmount),
+    noAmount:         Number(r.noAmount),
+    drawAmount:       r.drawAmount != null ? Number(r.drawAmount) : undefined,
+    burnedAmount:     Number(r.burnedAmount),
     isTernary:        r.isTernary,
     currency:         r.currency,
     oracleId:         r.oracleId,
@@ -270,15 +272,21 @@ function dbToPosition(r: any): UserPosition {
   };
 }
 
-function dbToWallet(r: any): WalletState {
+export function dbToWallet(r: any): WalletState {
+  // Decimal columns come back from Prisma as Decimal objects, NOT numbers, and
+  // Decimal.valueOf() is a string — so `wallet.solBalance + amount` in credit()
+  // would string-concatenate ("10" + 5 -> "105") and inflate the balance on the
+  // first credit after any DB load. Coerce every Decimal field to a real number,
+  // exactly like dbToPosition/dbToOrder/dbToTrade already do. (wins/losses are
+  // Int columns, so Prisma already returns them as numbers.)
   return {
     wallet:           r.wallet,
-    solBalance:       r.solBalance,
-    lynxBalance:      r.lynxBalance,
-    stakedLynx:       r.stakedLynx,
-    rewardsSol:       r.rewardsSol,
-    rewardsLynx:      r.rewardsLynx ?? 0,
-    totalVolume:      r.totalVolume,
+    solBalance:       Number(r.solBalance),
+    lynxBalance:      Number(r.lynxBalance),
+    stakedLynx:       Number(r.stakedLynx),
+    rewardsSol:       Number(r.rewardsSol),
+    rewardsLynx:      r.rewardsLynx != null ? Number(r.rewardsLynx) : 0,
+    totalVolume:      Number(r.totalVolume),
     wins:             r.wins,
     losses:           r.losses,
     approvedAt:       dateToMsOpt(r.approvedAt),
@@ -374,13 +382,13 @@ function dbToNotification(r: any): Notification {
   };
 }
 
-function dbToLedger(r: any): LedgerEntry {
+export function dbToLedger(r: any): LedgerEntry {
   return {
     id:        r.id,
     wallet:    r.wallet,
     type:      r.type,
     currency:  r.currency ?? undefined,
-    amount:    r.amount ?? undefined,
+    amount:    r.amount != null ? Number(r.amount) : undefined,
     provider:  r.provider ?? undefined,
     status:    r.status,
     reference: r.reference ?? undefined,
