@@ -135,10 +135,20 @@ best done as its own pass, not folded into a security fix.
   manual credits require two distinct admin identities with a per-request cap,
   atomic daily limit, and a distributed execute-lock; the test auth bypass needs
   `NODE_ENV=test` + an env flag + a request header (inert in production).
+- **Frontend auth/identity:** the access token lives only in an in-memory module
+  variable (never localStorage) and is sent as an `Authorization: Bearer` header,
+  never in a URL; the refresh token is an httpOnly cookie (`credentials:
+  'include'`). localStorage holds only non-sensitive UI hints (id, displayName,
+  authMethod) — never role or wallet, so it cannot be tampered to escalate:
+  `requireAuthMatchesWallet` binds every money request to the server-side user
+  record and `role` is re-derived server-side. No `dangerouslySetInnerHTML` /
+  `innerHTML` / `eval`, no secrets in the bundle, no unguarded `postMessage`, and
+  the one `window.open` uses a backend-signed URL with `noopener,noreferrer`.
 
 ---
 
 ## Not yet audited
 
-Frontend (session/token handling, client-side wallet-signature flows) and
-`backend/src/persistence.ts` (Prisma mapping) were out of scope for this pass.
+`backend/src/persistence.ts` (the Prisma mapping) was out of scope for this pass.
+The frontend was audited — token/session handling, wallet-signature binding, XSS
+sinks and embedded secrets — and is recorded above with no findings.
