@@ -2364,6 +2364,18 @@ app.post('/api/ledger/withdraw', asyncRoute(async (req, res) => {
   if (!wallet) return; // requireWalletBody already sent the 400
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   if (!requireApprovedWallet(res, wallet)) return;
+
+  // Serialize withdrawals per wallet+currency. store.withdraw() debits
+  // synchronously (atomic within one Node instance), but the trade and
+  // credit-execute paths already take a distributed lock and this one did not —
+  // an inconsistency that becomes a real double-spend the moment the backend
+  // runs more than one instance. Same lock as those paths.
+  const withdrawLockKey = `withdraw:${wallet}:${body.currency}`;
+  if (!(await acquireLock(withdrawLockKey, 20_000))) {
+    res.status(409).json({ error: 'Concurrent withdrawal in progress. Please retry.' });
+    return;
+  }
+  try {
   if (body.currency === 'LYNX') {
     if (!process.env.LYNX_MINT) {
       return res.status(501).json({ error: 'LYNX withdrawals require LYNX_MINT to be configured.' });
@@ -2452,6 +2464,9 @@ app.post('/api/ledger/withdraw', asyncRoute(async (req, res) => {
   // silently falling through to an unintended withdrawal path.
   const _exhaustiveCurrencyCheck: never = body.currency;
   throw new Error(`Unreachable: unhandled withdrawal currency ${_exhaustiveCurrencyCheck}`);
+  } finally {
+    await releaseLock(withdrawLockKey);
+  }
 }));
 
 app.get('/api/positions', (req: any, res) => {

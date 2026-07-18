@@ -479,44 +479,54 @@ export async function runKeeperOnce() {
       const vault = pda([Buffer.from('vault'), marketPk.toBuffer()], PROGRAM_ID);
       const position = pda([Buffer.from('position'), marketPk.toBuffer(), ownerPk.toBuffer(), Buffer.from([outcomeByte])], PROGRAM_ID);
 
+      const SYSTEM_PROGRAM = new PublicKey('11111111111111111111111111111111');
+      const configPk = pda([Buffer.from('config')], PROGRAM_ID);
       let ix: TransactionInstruction;
       if (market.currency === 'SOL') {
+        // Account order MUST match ExecutePredictionLimitOrderSol in
+        // cripto/programs/lynx_project/src/lib.rs: config, market, vault, order,
+        // escrow, position, payer(signer), system_program. config was added to
+        // the on-chain struct after this keeper was first written and was missing
+        // here, so every SOL limit-order execution the keeper built was rejected.
         const escrow = pda([Buffer.from('pred_order_escrow_sol'), orderPk.toBuffer()], PROGRAM_ID);
         ix = new TransactionInstruction({
           programId: PROGRAM_ID,
           keys: [
+            { pubkey: configPk, isSigner: false, isWritable: false },
             { pubkey: marketPk, isSigner: false, isWritable: true },
             { pubkey: vault, isSigner: false, isWritable: true },
             { pubkey: orderPk, isSigner: false, isWritable: true },
             { pubkey: escrow, isSigner: false, isWritable: true },
             { pubkey: position, isSigner: false, isWritable: true },
             { pubkey: keeper.publicKey, isSigner: true, isWritable: true },
-            { pubkey: new PublicKey('11111111111111111111111111111111'), isSigner: false, isWritable: false },
+            { pubkey: SYSTEM_PROGRAM, isSigner: false, isWritable: false },
           ],
           data: IX.executePredictionLimitOrderSol,
         });
       } else {
-        // BE-H-03: Execute LYNX prediction limit orders via execute_prediction_limit_order_lynx
+        // BE-H-03: Execute LYNX prediction limit orders. Account order MUST match
+        // ExecutePredictionLimitOrderLynx in lib.rs: config(mut), market, order,
+        // escrow, lynx_mint, market_lynx_vault, position, payer(signer),
+        // token_program, system_program. The market LYNX vault PDA seed is
+        // "lynx_vault" (not "market_lynx_vault"), and the struct has no SOL vault
+        // or owner-ATA — the previous 12-account list in a different order was
+        // rejected by the program on every execution.
         const { lynxMint } = await getConfigInfo(conn);
-        const configPk = pda([Buffer.from('config')], PROGRAM_ID);
         const escrow = pda([Buffer.from('pred_order_escrow_lynx'), orderPk.toBuffer()], PROGRAM_ID);
-        const marketLynxVault = pda([Buffer.from('market_lynx_vault'), marketPk.toBuffer()], PROGRAM_ID);
-        const ownerLynxAta = await getAssociatedTokenAddress(lynxMint, ownerPk);
+        const marketLynxVault = pda([Buffer.from('lynx_vault'), marketPk.toBuffer()], PROGRAM_ID);
         ix = new TransactionInstruction({
           programId: PROGRAM_ID,
           keys: [
+            { pubkey: configPk, isSigner: false, isWritable: true },
             { pubkey: marketPk, isSigner: false, isWritable: true },
-            { pubkey: vault, isSigner: false, isWritable: true },
             { pubkey: orderPk, isSigner: false, isWritable: true },
             { pubkey: escrow, isSigner: false, isWritable: true },
+            { pubkey: lynxMint, isSigner: false, isWritable: true },
+            { pubkey: marketLynxVault, isSigner: false, isWritable: true },
             { pubkey: position, isSigner: false, isWritable: true },
             { pubkey: keeper.publicKey, isSigner: true, isWritable: true },
-            { pubkey: new PublicKey('11111111111111111111111111111111'), isSigner: false, isWritable: false },
-            { pubkey: configPk, isSigner: false, isWritable: false },
-            { pubkey: lynxMint, isSigner: false, isWritable: false },
-            { pubkey: marketLynxVault, isSigner: false, isWritable: true },
-            { pubkey: ownerLynxAta, isSigner: false, isWritable: true },
             { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+            { pubkey: SYSTEM_PROGRAM, isSigner: false, isWritable: false },
           ],
           data: IX.executePredictionLimitOrderLynx,
         });
