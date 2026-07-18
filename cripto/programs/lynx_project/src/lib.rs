@@ -57,6 +57,16 @@ pub mod lynx_project {
         require!(!signers.is_empty(), LynxError::TooFewSigners);
         require!(signers.len() <= MAX_MULTISIG_SIGNERS, LynxError::TooManySigners);
         require!(threshold >= 1 && (threshold as usize) <= signers.len(), LynxError::InvalidThreshold);
+        // A default pubkey is the empty-slot sentinel that is_multisig_signer
+        // rejects, so it could never actually sign; and a duplicate would count
+        // toward signer_count while only ever approving once, which can make the
+        // threshold unreachable and brick governance. Reject both up front.
+        for (i, s) in signers.iter().enumerate() {
+            require!(*s != Pubkey::default(), LynxError::NotAMultisigSigner);
+            for other in &signers[i + 1..] {
+                require!(*s != *other, LynxError::SignerAlreadyPresent);
+            }
+        }
 
         let mut arr = [Pubkey::default(); MAX_MULTISIG_SIGNERS];
         for (i, s) in signers.iter().enumerate() {
