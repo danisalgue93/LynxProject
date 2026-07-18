@@ -2299,7 +2299,13 @@ pub struct MintLynxDistribution<'info> {
 pub struct StakeLynx<'info> {
     #[account(mut, seeds = [b"config"], bump = config.bump)]
     pub config: Account<'info, ProtocolConfig>,
-    #[account(mut, constraint = stake_vault.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
+    // MUST be the canonical stake vault recorded at init. Without pinning it to
+    // config.stake_vault, a caller could stake into a token account they control
+    // (inflating stake_position/total_staked without funding the real vault) and
+    // then unstake the same amount out of the real shared vault — draining every
+    // staker's LYNX. The mint check alone is not enough.
+    #[account(mut, address = config.stake_vault @ LynxError::Unauthorized,
+        constraint = stake_vault.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub stake_vault: Account<'info, TokenAccount>,
     #[account(
         init_if_needed,
@@ -2323,7 +2329,11 @@ pub struct StakeLynx<'info> {
 pub struct UnstakeLynx<'info> {
     #[account(mut, seeds = [b"config"], bump = config.bump)]
     pub config: Account<'info, ProtocolConfig>,
-    #[account(mut, constraint = stake_vault.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
+    // Pinned to the canonical vault: config signs the withdrawal, so any
+    // config-owned LYNX account passed here (the real stake vault, a market's
+    // LYNX vault, …) would otherwise be drained regardless of what was staked.
+    #[account(mut, address = config.stake_vault @ LynxError::Unauthorized,
+        constraint = stake_vault.mint == config.lynx_mint @ LynxError::InvalidCurrency)]
     pub stake_vault: Account<'info, TokenAccount>,
     #[account(mut, seeds = [b"stake", owner.key().as_ref()], bump = stake_position.bump, has_one = owner)]
     pub stake_position: Account<'info, StakePosition>,

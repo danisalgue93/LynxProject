@@ -386,6 +386,47 @@ async fn rewards_cannot_be_claimed_twice() {
     assert_eq!(after_second, after_first, "a repeated claim must not pay twice");
 }
 
+/// SECURITY REGRESSION: stake_vault must be the canonical config.stake_vault.
+/// Without pinning it, an attacker could stake into a token account they control
+/// (inflating stake_position/total_staked without funding the real vault) and
+/// then unstake the same amount out of the real shared vault, draining every
+/// staker's LYNX. Both stake and unstake must reject any other stake_vault.
+#[tokio::test]
+async fn staking_rejects_a_non_canonical_stake_vault() {
+    let attacker = Keypair::new();
+    // The real vault already holds 100 LYNX of other stakers' funds.
+    let mut f = setup(100 * MICRO, 0, 0).await;
+
+    let attacker_lynx = Pubkey::new_unique();
+    f.ctx.set_account(&attacker_lynx, &spl_token_account(f.keys.lynx_mint, attacker.pubkey(), 50 * MICRO).into());
+    f.ctx.set_account(
+        &attacker.pubkey(),
+        &Account { lamports: LAMPORTS_PER_SOL, data: vec![], owner: system_program::id(), executable: false, rent_epoch: 0 }.into(),
+    );
+
+    // A LYNX account the attacker controls — right mint, but NOT config.stake_vault.
+    let forged_vault = Pubkey::new_unique();
+    f.ctx.set_account(&forged_vault, &spl_token_account(f.keys.lynx_mint, attacker.pubkey(), 0).into());
+    let forged = Keys { stake_vault: forged_vault, ..f.keys };
+
+    // The attack is blocked at its root: staking into a non-canonical vault fails,
+    // so the position can never be inflated without funding the real vault.
+    assert!(
+        send(&mut f.ctx, stake_ix(&forged, &attacker.pubkey(), attacker_lynx, 50 * MICRO), &[&attacker]).await.is_err(),
+        "stake into a non-canonical stake_vault must be rejected"
+    );
+
+    // And the withdraw side carries the same pin: a legitimate position cannot be
+    // unstaked through a substituted vault either.
+    send(&mut f.ctx, stake_ix(&f.keys, &attacker.pubkey(), attacker_lynx, 50 * MICRO), &[&attacker])
+        .await
+        .expect("legitimate stake into the real vault");
+    assert!(
+        send(&mut f.ctx, unstake_ix(&forged, &attacker.pubkey(), attacker_lynx, 50 * MICRO), &[&attacker]).await.is_err(),
+        "unstake through a non-canonical stake_vault must be rejected"
+    );
+}
+
 /// A staker must not be able to claim using someone else's stake position.
 #[tokio::test]
 async fn cannot_claim_rewards_from_another_stakers_position() {
