@@ -131,8 +131,46 @@ best done as its own pass, not folded into a security fix.
 
 ---
 
+## Hardening applied (no live vulnerability)
+
+### H-1 — JWT verification pinned to HS256 — **DONE**
+
+`verifyToken` / `verifyRefreshToken` now pass `algorithms: ['HS256']` to
+`jwt.verify`. jsonwebtoken v9 already rejects `alg:none`, so this closed no live
+hole, but an explicit allowlist is the defensive default against any future
+algorithm-confusion class.
+
+---
+
 ## Reviewed and found correct
 
+- **Off-chain money engine (`state.ts`):** `executePredictionTrade` debits the
+  full amount before crediting the pool and tracks the LYNX burn; `resolveMarket`
+  / `claimPosition` conserve the pool exactly (10% fee + 90% winner payouts, with
+  the no-winner pool swept to treasury); `distributeStakingRewards` routes the fee
+  to treasury when there are no stakers; `mintLynxForSolvedSolMarket` never mints
+  beyond `pool * ratio` and its 85/0/15 split sums to 100%; `castVote` blocks
+  double votes (in-memory + a DB UNIQUE constraint) and stake snapshots block
+  flash-stake voting.
+- **`economy.ts`:** fee/tier/split constants match the on-chain program exactly;
+  `roundAmount` rounds to 9 decimals (lamport precision = `Decimal(28,9)`), so app
+  and DB precision agree; `assertPositiveAmount` rejects NaN/Infinity/≤0.
+- **`auth.ts`:** separate access/refresh secrets (required in production), refresh
+  token carries only `userId` (role re-derived), `verify` never throws, bcrypt
+  `compare` is constant-time, algorithm pinned (H-1).
+- **Admin-panel decoders (`lib/solana.ts`):** every field offset and enum index
+  (`decodeConfig` / `decodeMarket` / `decodeMultisig` / `decodeProposal`,
+  `statusName` / `outcomeName` / `GOVERNANCE_ACTION_VARIANT`) matches the Rust
+  structs; the Borsh compact-enum payload is skipped by exact variant size. Prior
+  offset bugs are fixed and documented.
+- **Admin-panel session/middleware:** iron-session cookie is `httpOnly` +
+  `sameSite:'strict'` + `secure` in prod; middleware enforces a host allowlist, a
+  per-client rate limit, a 30-min inactivity timeout, and a strict CSP
+  (`frame-ancestors 'none'`, `connect-src 'self'`) + HSTS.
+- **Frontend transaction hooks:** deposits transfer to `TREASURY_WALLET`; every
+  on-chain transaction is signed by the user through the wallet adapter
+  (`sendTransaction`, `skipPreflight:false`) — no hidden destinations, no
+  auto-approval.
 - **Claims / resolution:** payouts conserve the pool exactly; the 5% + 5% + 90%
   fee split matches between `finalize_market_and_fees` and the claim paths; all
   arithmetic goes through `mul_div` with a u128 intermediate (no overflow).
