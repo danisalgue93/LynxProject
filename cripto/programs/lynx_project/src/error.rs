@@ -110,4 +110,16 @@ pub enum LynxError {
     SnapshotTooSoon,
     #[msg("This market has no mint-ratio snapshot; it cannot be finalized")]
     MissingMintRatioSnapshot,
+
+    // --- DAO on-chain governance ---
+    #[msg("DAO proposal is not active")]
+    DaoProposalNotActive,
+    #[msg("DAO proposal voting has already ended")]
+    DaoVotingEnded,
+    #[msg("DAO proposal voting is still open")]
+    DaoVotingStillOpen,
+    #[msg("You must have staked LYNX to vote")]
+    NoStakeToVote,
+    #[msg("Invalid DAO proposal duration")]
+    InvalidProposalDuration,
 }

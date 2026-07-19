@@ -1591,6 +1591,81 @@ pub mod lynx_project {
         duel.status = DuelStatus::Cancelled;
         Ok(())
     }
+
+    // --- DAO on-chain (propuestas + voto ponderado por stake) ---
+    // Crear propuestas queda restringido al admin del protocolo, igual que la
+    // ruta off-chain /api/proposals (requireAdminSessionOnly). Votar es abierto
+    // a cualquier staker; el peso es su LYNX apostado.
+    pub fn create_dao_proposal(
+        ctx: Context<CreateDaoProposal>,
+        proposal_id: u64,
+        title: String,
+        duration_seconds: i64,
+    ) -> Result<()> {
+        require!(title.len() <= DaoProposal::TITLE_MAX, LynxError::TextTooLong);
+        require_keys_eq!(ctx.accounts.admin.key(), ctx.accounts.config.admin, LynxError::Unauthorized);
+        require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
+        require!(
+            (DAO_MIN_PROPOSAL_DURATION_SECONDS..=DAO_MAX_PROPOSAL_DURATION_SECONDS).contains(&duration_seconds),
+            LynxError::InvalidProposalDuration
+        );
+
+        let now = Clock::get()?.unix_timestamp;
+        let proposal = &mut ctx.accounts.proposal;
+        proposal.id = proposal_id;
+        proposal.proposer = ctx.accounts.admin.key();
+        proposal.title = title;
+        proposal.created_ts = now;
+        proposal.end_ts = now.checked_add(duration_seconds).ok_or(LynxError::MathOverflow)?;
+        proposal.votes_yes = 0;
+        proposal.votes_no = 0;
+        proposal.status = DaoProposalStatus::Active;
+        proposal.bump = ctx.bumps.proposal;
+        Ok(())
+    }
+
+    pub fn cast_dao_vote(ctx: Context<CastDaoVote>, vote_yes: bool) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        require!(ctx.accounts.proposal.status == DaoProposalStatus::Active, LynxError::DaoProposalNotActive);
+        require!(now < ctx.accounts.proposal.end_ts, LynxError::DaoVotingEnded);
+
+        // Vote weight = the voter's currently staked LYNX, read on-chain. The
+        // `init` on the DaoVote PDA (seeds = [b"dao_vote", proposal, voter]) makes
+        // a second vote by the same wallet fail at account creation.
+        let weight = ctx.accounts.stake_position.amount;
+        require!(weight > 0, LynxError::NoStakeToVote);
+
+        let vote = &mut ctx.accounts.vote;
+        vote.proposal = ctx.accounts.proposal.key();
+        vote.voter = ctx.accounts.voter.key();
+        vote.vote_yes = vote_yes;
+        vote.weight = weight;
+        vote.bump = ctx.bumps.vote;
+
+        let proposal = &mut ctx.accounts.proposal;
+        if vote_yes {
+            proposal.votes_yes = proposal.votes_yes.checked_add(weight).ok_or(LynxError::MathOverflow)?;
+        } else {
+            proposal.votes_no = proposal.votes_no.checked_add(weight).ok_or(LynxError::MathOverflow)?;
+        }
+        Ok(())
+    }
+
+    // Permissionless crank: once the window closes, anyone can finalize the
+    // tally. The result is fully determined by on-chain votes, so the caller has
+    // no discretion.
+    pub fn finalize_dao_proposal(ctx: Context<FinalizeDaoProposal>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let proposal = &mut ctx.accounts.proposal;
+        require!(proposal.status == DaoProposalStatus::Active, LynxError::DaoProposalNotActive);
+        require!(now >= proposal.end_ts, LynxError::DaoVotingStillOpen);
+        proposal.status = if proposal.votes_yes > proposal.votes_no {
+            DaoProposalStatus::Passed
+        } else {
+            DaoProposalStatus::Rejected
+        };
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -2462,6 +2537,58 @@ pub struct CancelDuel<'info> {
     pub duel: Account<'info, Duel>,
     #[account(mut, seeds = [b"duel_vault", duel.key().as_ref()], bump = duel_vault.bump)]
     pub duel_vault: Account<'info, DuelVault>,
+}
+
+#[derive(Accounts)]
+#[instruction(proposal_id: u64)]
+pub struct CreateDaoProposal<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProtocolConfig>,
+    #[account(
+        init,
+        payer = admin,
+        space = DaoProposal::LEN,
+        seeds = [b"dao_proposal", proposal_id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub proposal: Account<'info, DaoProposal>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct CastDaoVote<'info> {
+    #[account(mut, seeds = [b"dao_proposal", proposal.id.to_le_bytes().as_ref()], bump = proposal.bump)]
+    pub proposal: Account<'info, DaoProposal>,
+    // The voter's stake position supplies the vote weight. The seeds pin it to
+    // the signer (the PDA is derived from `voter`), and the constraint re-checks
+    // its stored owner as belt-and-suspenders.
+    #[account(
+        seeds = [b"stake", voter.key().as_ref()],
+        bump = stake_position.bump,
+        constraint = stake_position.owner == voter.key() @ LynxError::Unauthorized
+    )]
+    pub stake_position: Account<'info, StakePosition>,
+    // init: a second vote by the same wallet on the same proposal collides on
+    // this PDA and fails, so one staker can vote at most once.
+    #[account(
+        init,
+        payer = voter,
+        space = DaoVote::LEN,
+        seeds = [b"dao_vote", proposal.key().as_ref(), voter.key().as_ref()],
+        bump
+    )]
+    pub vote: Account<'info, DaoVote>,
+    #[account(mut)]
+    pub voter: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct FinalizeDaoProposal<'info> {
+    #[account(mut, seeds = [b"dao_proposal", proposal.id.to_le_bytes().as_ref()], bump = proposal.bump)]
+    pub proposal: Account<'info, DaoProposal>,
 }
 
 fn add_market_amounts(market: &mut Account<Market>, outcome: Outcome, amount: u64) -> Result<()> {

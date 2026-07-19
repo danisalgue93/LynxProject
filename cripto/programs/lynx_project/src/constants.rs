@@ -102,3 +102,10 @@ pub const MAX_ORDER_LAMPORTS: u64 = 100_000_000_000;
 /// Minimum single order size in lamports (0.001 SOL). Prevents dust orders
 /// that waste on-chain storage rent without meaningful economic activity.
 pub const MIN_ORDER_LAMPORTS: u64 = 1_000_000;
+
+// --- DAO on-chain governance (user proposals + stake-weighted voting) ---
+// Bounds on how long a DAO proposal's voting window may stay open. A minimum
+// gives everyone a fair chance to vote; a maximum stops a proposal from sitting
+// open indefinitely.
+pub const DAO_MIN_PROPOSAL_DURATION_SECONDS: i64 = 3_600; // 1 hour
+pub const DAO_MAX_PROPOSAL_DURATION_SECONDS: i64 = 30 * 86_400; // 30 days

@@ -491,3 +491,58 @@ impl SpotOrderEscrowSol {
     pub const LEN: usize = 8 + 32 + 1;
 }
 
+// --- DAO on-chain (propuestas de usuario + voto ponderado por stake) ---
+// Reemplaza al DAO simulado del backend (proposals/votes en state.ts). El peso
+// de cada voto es el LYNX apostado del votante (StakePosition.amount) leido
+// on-chain en el momento de votar, igual que el stakeSnapshot que usaba el
+// backend, y la cuenta DaoVote (una por proposal+voter, `init`) impide el doble
+// voto a nivel de programa, no solo en memoria.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DaoProposalStatus {
+    Active,
+    Passed,
+    Rejected,
+}
+
+#[account]
+pub struct DaoProposal {
+    pub id: u64,
+    pub proposer: Pubkey,
+    pub title: String,
+    pub created_ts: i64,
+    pub end_ts: i64,
+    // Votos ponderados por stake, en micro-LYNX.
+    pub votes_yes: u64,
+    pub votes_no: u64,
+    pub status: DaoProposalStatus,
+    pub bump: u8,
+}
+
+impl DaoProposal {
+    pub const TITLE_MAX: usize = 128;
+    pub const LEN: usize = 8
+        + 8
+        + 32
+        + (4 + Self::TITLE_MAX)
+        + 8
+        + 8
+        + 8
+        + 8
+        + 1
+        + 1;
+}
+
+#[account]
+pub struct DaoVote {
+    pub proposal: Pubkey,
+    pub voter: Pubkey,
+    pub vote_yes: bool,
+    // Snapshot of the voter's staked LYNX at vote time.
+    pub weight: u64,
+    pub bump: u8,
+}
+
+impl DaoVote {
+    pub const LEN: usize = 8 + 32 + 32 + 1 + 8 + 1;
+}
+
