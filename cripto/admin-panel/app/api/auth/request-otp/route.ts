@@ -1,9 +1,22 @@
-import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { setOtp } from '@/lib/otp-store';
 import { rateLimit } from '@/lib/rate-limit';
-import { assertEnv, clientKey, escapeMarkdown, hashSecret, verifySecret, isDevMode, notifyRateLimitHit, sendTelegram } from '@/lib/security';
+import { auditLog, clientKey, getAdminPasswordHash, notifyRateLimitHit, verifySecret } from '@/lib/security';
+import { isTotpConfigured } from '@/lib/totp';
 
+/**
+ * First factor: the admin password.
+ *
+ * This route used to mint a random OTP, hash it into an in-memory store, and
+ * deliver it over Telegram. That is gone: TOTP from the operator's authenticator
+ * is now the only second factor (see verify-otp), so there is nothing to send —
+ * the code already exists on their phone. The route's remaining job is to check
+ * the password before the UI asks for the code.
+ *
+ * Removing the Telegram hop also removed the failure it caused: the response
+ * header carried an em dash, which is not encodable in an HTTP header
+ * (ByteString/latin-1), so with ADMIN_DEV_MODE=true this route threw and
+ * answered 500 to *every* login attempt.
+ */
 export async function POST(req: NextRequest) {
   const key = clientKey(req);
   if (!rateLimit(`password:${key}`, 5, 15 * 60 * 1000)) {
@@ -18,30 +31,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
   const { password } = body;
-  const expected = assertEnv('ADMIN_PASSWORD');
+
+  // Throws with an actionable message if ADMIN_PASSWORD is missing, blanked by
+  // .env `$` expansion, or stored as plaintext (see getAdminPasswordHash).
+  const expected = getAdminPasswordHash();
 
   if (typeof password !== 'string' || !(await verifySecret(password, expected))) {
+    auditLog('login.failed', { key, factor: 'password' });
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const otp = crypto.randomInt(100_000, 1_000_000).toString();
-  setOtp(key, {
-    hash: await hashSecret(otp),
-    expiresAt: Date.now() + 5 * 60 * 1000,
-    attempts: 0,
-  });
-
-  await sendTelegram(`*Lynx emergency admin*\n\nOTP: \`${escapeMarkdown(otp)}\`\nExpires in 5 minutes.\nIP key: \`${escapeMarkdown(key)}\``);
-
-  const response = NextResponse.json({ ok: true });
-  // AP-17: Only return dev OTP when ADMIN_DEV_MODE is explicitly 'true', with warning header
-  if (isDevMode()) {
-    response.headers.set('X-Dev-Warning', 'DEV MODE: OTP returned in response body — never enable ADMIN_DEV_MODE in production');
-    response.headers.set('X-Content-Type-Options', 'nosniff');
-    const body = await response.json();
-    return NextResponse.json({ ...body, devOtp: otp }, {
-      headers: response.headers,
-    });
+  // Fail here rather than after the password is accepted: an admin panel with no
+  // second factor must not be enterable at all.
+  if (!isTotpConfigured()) {
+    auditLog('login.misconfigured', { key, reason: 'ADMIN_TOTP_SECRET is not set' });
+    return NextResponse.json(
+      {
+        error:
+          'This panel has no second factor configured. Set ADMIN_TOTP_SECRET (see .env.example) before logging in.',
+      },
+      { status: 500 }
+    );
   }
-  return response;
+
+  auditLog('login.password_ok', { key });
+  return NextResponse.json({ ok: true, factor: 'totp' });
 }

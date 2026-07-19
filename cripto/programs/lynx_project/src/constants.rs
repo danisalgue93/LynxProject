@@ -20,6 +20,24 @@ pub const LAMPORTS_TO_MICRO_LYNX_DENOMINATOR: u64 = 1_000;
 pub const ORACLE_TIMEOUT_SECONDS: i64 = 3_600;
 pub const REWARD_SCALE: u128 = 1_000_000_000_000;
 
+// --- TWAP del supply circulante (SC-01) ---
+// El ratio de minteo de LYNX depende del supply circulante. Leerlo de forma
+// instantanea permitia un ataque atomico: quemar LYNX en la misma transaccion
+// (o el mismo bloque) en que se resuelve un mercado hunde el circulante, salta
+// a un tramo mas generoso (hasta 40x mas LYNX) y el atacante cobra el mercado a
+// ese ratio inflado, sin riesgo ni exposicion temporal.
+//
+// Promediando el circulante sobre una ventana de muchas horas, una quema de
+// ultimo minuto solo mueve 1 de SUPPLY_SNAPSHOT_COUNT muestras: el efecto se
+// diluye a ~1/24 y el ataque deja de ser rentable. Para mover el promedio de
+// verdad hay que sostener la reduccion de supply durante horas, a la vista de
+// todos on-chain y afectando por igual a todas las resoluciones de la ventana.
+pub const SUPPLY_SNAPSHOT_COUNT: usize = 24;
+
+// Cadencia minima entre muestras del crank. Con 24 muestras a 1h, la ventana
+// del TWAP es de ~24 horas.
+pub const SUPPLY_SNAPSHOT_INTERVAL_SECONDS: i64 = 3_600;
+
 // --- Gobernanza / multisig / disputa de resoluciones ---
 // Ventana durante la cual una resolucion propuesta por el oraculo puede ser
 // disputada por cualquiera de los firmantes del multisig antes de que los

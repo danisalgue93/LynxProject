@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdminSession } from './lib/session';
+import { getIronSession } from 'iron-session';
+import { sessionOptions, INACTIVITY_TIMEOUT_MS, type AdminSession } from './lib/session';
 import { rateLimit } from './lib/rate-limit';
+import { clientKey } from './lib/security';
 
 function isAllowedHost(host: string | null) {
   const allowed = (process.env.ADMIN_ALLOWED_HOSTS ?? 'localhost:3001,127.0.0.1:3001')
@@ -16,29 +18,66 @@ export async function middleware(req: NextRequest) {
     return new NextResponse('Forbidden host', { status: 403 });
   }
 
-  // AP-21: Rate limit all requests (60 req/15min — admin panel is low-traffic)
-  // AP-20: In-memory rate limiting is acceptable for single-instance admin panel
-  if (!rateLimit('global', 60, 15 * 60 * 1000)) {
+  const { pathname } = req.nextUrl;
+
+  // Static assets and the Next.js RSC/data payloads are fetched many times per
+  // page view. Counting them against the request budget is what made the old
+  // limit self-defeating.
+  const isPublicAsset = pathname.startsWith('/_next/') || pathname === '/favicon.ico';
+
+  // AP-21: coarse per-client request cap, as a backstop only. The real
+  // brute-force protection lives on the auth routes themselves
+  // (`otp:<key>` in request-otp/verify-otp), which stay deliberately strict.
+  //
+  // This used to use a single hardcoded 'global' bucket for EVERY request from
+  // EVERY client at 60/15min. A normal admin session (page loads + polling)
+  // burns that on its own, and any unauthenticated visitor could lock every
+  // admin out of the panel for 15 minutes by sending 60 requests — a trivial
+  // DoS of the exact tool needed to resolve a stuck market. Bucket per client
+  // and skip assets so one client can never starve another.
+  if (!isPublicAsset && !rateLimit(`req:${clientKey(req)}`, 600, 15 * 60 * 1000)) {
     return new NextResponse('Too many requests', { status: 429 });
   }
-
-  const { pathname } = req.nextUrl;
 
   // AP-05: Verify admin session for protected paths
   // Auth routes (login, request-otp, verify-otp) are exempt
   const isAuthRoute = pathname.startsWith('/api/auth/');
   const isLoginPage = pathname === '/login';
-  const isPublicAsset = pathname.startsWith('/_next/') || pathname === '/favicon.ico';
-
-  if (!isAuthRoute && !isLoginPage && !isPublicAsset) {
-    try {
-      await requireAdminSession();
-    } catch {
-      return NextResponse.redirect(new URL('/login', req.url));
-    }
-  }
 
   const res = NextResponse.next();
+
+  if (!isAuthRoute && !isLoginPage && !isPublicAsset) {
+    // Read the session from THIS request/response pair.
+    //
+    // This used to call requireAdminSession(), which resolves the session via
+    // cookies() from next/headers. That helper is for Server Components and
+    // Route Handlers — in middleware it does not see the incoming request, so
+    // the lookup found no session, threw, and the catch redirected to /login.
+    // Every request bounced, including ones carrying a perfectly valid
+    // lynx_admin_session cookie: after logging in successfully, /admin still
+    // redirected to /login, so the panel could not be entered at all. The
+    // symptom was indistinguishable from "not logged in", which is why it
+    // survived — verified end to end against a production build.
+    //
+    // getIronSession(req, res, options) reads the cookie off the NextRequest and
+    // writes any refresh onto the NextResponse we return below.
+    const session = await getIronSession<AdminSession>(req, res, sessionOptions);
+
+    if (!session.admin) {
+      return NextResponse.redirect(new URL('/login', req.url));
+    }
+
+    // Inactivity timeout, mirroring requireAdminSession(): a session idle for
+    // longer than INACTIVITY_TIMEOUT_MS must re-authenticate.
+    if (session.activityAt && Date.now() - session.activityAt > INACTIVITY_TIMEOUT_MS) {
+      session.destroy();
+      return NextResponse.redirect(new URL('/login', req.url));
+    }
+
+    // Sliding expiration: refresh the activity stamp on each authenticated hit.
+    session.activityAt = Date.now();
+    await session.save();
+  }
 
   // AP-29: Security headers set here for direct Next.js access.
   // nginx also sets these for all proxied traffic. This duplication is

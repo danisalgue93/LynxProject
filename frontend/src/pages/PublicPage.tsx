@@ -13,21 +13,17 @@ import { MarketDetail } from '../components/markets/MarketDetail';
 import { CreateDuelModal } from '../components/duels/CreateDuelModal';
 import { RequiresLoginModal } from '../components/common/RequiresLoginModal';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowUpRight, Zap, LogIn } from 'lucide-react';
+import { Zap, LogIn } from 'lucide-react';
 import { Market } from '../types';
 import { useProgram } from '../hooks/useProgram';
 import { eventBus } from '../lib/eventBus';
-import { API_BASE_URL } from '../lib/api';
-import { io } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
-import { useToast } from '../context/ToastContext';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { getManagedWalletAddress, useManagedAuthSession } from '../lib/auth';
 
 export function PublicPage() {
   const { t } = useTranslation();
   const { isAuthenticated } = useAuth();
-  const { addToast } = useToast();
   const { publicKey } = useWallet();
   const managedSession = useManagedAuthSession();
   const navigate = useNavigate();
@@ -37,7 +33,7 @@ export function PublicPage() {
   const [isCreateDuelOpen, setIsCreateDuelOpen] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginModalAction, setLoginModalAction] = useState('');
-  const [marketSummary, setMarketSummary] = useState({ markets: 0, volume: 0 });
+  const [, setMarketSummary] = useState({ markets: 0, volume: 0 });
   const { fetchMarkets, createDuel } = useProgram();
   const activeWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession);
 

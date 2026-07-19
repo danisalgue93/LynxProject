@@ -18,7 +18,7 @@ import { MarketDetail } from '../components/markets/MarketDetail';
 import { CreateDuelModal } from '../components/duels/CreateDuelModal';
 import { CreateMarketModal } from '../components/markets/CreateMarketModal';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowUpRight, Zap } from 'lucide-react';
+import { Zap } from 'lucide-react';
 import { Market } from '../types';
 import { useProgram } from '../hooks/useProgram';
 import { eventBus } from '../lib/eventBus';
@@ -41,7 +41,7 @@ export function Dashboard() {
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
   const [isCreateDuelOpen, setIsCreateDuelOpen] = useState(false);
   const [isCreateMarketOpen, setIsCreateMarketOpen] = useState(false);
-  const [marketSummary, setMarketSummary] = useState({ markets: 0, volume: 0 });
+  const [, setMarketSummary] = useState({ markets: 0, volume: 0 });
   const { fetchMarkets, createDuel, createMarket } = useProgram();
   const activeWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession);
   const socketRef = useRef<any>(null);
@@ -115,17 +115,6 @@ export function Dashboard() {
     };
   }, [fetchMarkets]);
 
-  const launchFirstMarket = async () => {
-    const markets = await fetchMarkets();
-    if (markets.length > 0) {
-      setSelectedMarket(markets[0]);
-      return;
-    }
-    addToast({
-      type: 'info',
-      message: t('dashboard.noActiveMarkets', 'No active markets yet'),
-    });
-  };
 
   const handleLogout = () => {
     logout();

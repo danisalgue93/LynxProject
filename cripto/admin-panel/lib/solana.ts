@@ -184,6 +184,31 @@ export function getAdminKeypair() {
   return Keypair.fromSecretKey(bs58.decode(assertEnv('ADMIN_KEYPAIR_BS58')));
 }
 
+/**
+ * The public key of the signer THIS panel deployment controls.
+ *
+ * Deliberately does not expose (or retain) the secret: it derives the pubkey and
+ * wipes the keypair immediately. Used to answer "what can this panel actually
+ * do to a given proposal?" without touching the private key anywhere else.
+ */
+export function getAdminPubkey(): string {
+  const kp = getAdminKeypair();
+  try {
+    return kp.publicKey.toBase58();
+  } finally {
+    try { wipeKeypair(kp); } catch { /* best-effort memory wipe */ }
+  }
+}
+
+/** Reads and decodes a single GovernanceProposal from chain. */
+export async function fetchProposal(proposalPubkey: string): Promise<GovernanceProposalInfo> {
+  const connection = getConnection();
+  const pubkey = new PublicKey(proposalPubkey);
+  const info = await connection.getAccountInfo(pubkey);
+  if (!info) throw new Error('Proposal account not found on-chain');
+  return decodeProposal(pubkey, info.data);
+}
+
 // AP-14: Zero out keypair secret key bytes to reduce window for memory scraping attacks.
 // Call this in a finally block after any transaction that uses a keypair.
 // Best-effort wipe. V8 GC may have copied the buffer. For maximum security, use Node.js secure heap.
@@ -233,12 +258,32 @@ export function decodeConfig(data: Buffer) {
   reader.u64(); // total_lynx_burned
   reader.u64(); // total_staked
   reader.offset += 16; // reward_per_token_scaled (u128)
-  reader.i64(); // emergency_delay
-  reader.u8(); // bump
+  // NOTE: there is deliberately no `emergency_delay` read here. ProtocolConfig
+  // (see programs/lynx_project/src/state.rs) has no such field — an extra i64
+  // read used to shift `bump`/`paused`/`multisig_initialized` 8 bytes out of
+  // alignment, so `paused` was decoded from garbage bytes. Keep this in lockstep
+  // with state.rs: admin, treasury, lynx_mint, stake_vault, rewards_vault,
+  // total_lynx_supply, total_lynx_burned, total_staked, reward_per_token_scaled,
+  // bump, rewards_vault_bump, paused, multisig_initialized,
+  // protocol_duel_exposure, max_protocol_duel_exposure.
+  const bump = reader.u8();
   reader.u8(); // rewards_vault_bump
   const paused = reader.bool();
   const multisigInitialized = reader.bool();
-  return { admin, treasury, lynxMint, stakeVault, rewardsVault, paused, multisigInitialized };
+  const protocolDuelExposure = reader.u64();
+  const maxProtocolDuelExposure = reader.u64();
+  return {
+    admin,
+    treasury,
+    lynxMint,
+    stakeVault,
+    rewardsVault,
+    bump,
+    paused,
+    multisigInitialized,
+    protocolDuelExposure,
+    maxProtocolDuelExposure,
+  };
 }
 
 export function decodeMarket(pubkey: PublicKey, data: Buffer): AdminMarket {
@@ -317,14 +362,29 @@ export function decodeProposal(pubkey: PublicKey, data: Buffer): GovernancePropo
   const actionVariant = reader.u8();
   let actionMarket: string | undefined;
   let actionResult: OutcomeName | 'Unresolved' | undefined;
-  if (actionVariant === GOVERNANCE_ACTION_VARIANT.ResolveMarketAdmin) {
-    actionMarket = reader.pubkey().toBase58();
-    actionResult = outcomeName(reader.u8());
-  } else {
-    // Las demas variantes caben en como mucho 32 bytes; avanzamos el cursor
-    // igual para no desalinear el resto de la lectura si en el futuro se
-    // decodifican tambien sus campos.
-    reader.offset += 32;
+  // Borsh serializa los enums de forma COMPACTA: 1 byte de discriminante + el
+  // payload real de esa variante, sin relleno hasta MAX_LEN. Saltar siempre 32
+  // bytes desalineaba todo lo que viene despues (approvals/executed/cancelled)
+  // para SetPaused{bool} y SetThreshold{u8}, cuyo payload es de 1 byte. Como
+  // fetchOpenProposals() decodifica TODAS las propuestas abiertas, una sola
+  // propuesta de pausa corrompia el listado completo del panel.
+  // Debe seguir el orden del enum GovernanceAction en state.rs.
+  switch (actionVariant) {
+    case GOVERNANCE_ACTION_VARIANT.ResolveMarketAdmin: // { market: Pubkey, result: Outcome }
+      actionMarket = reader.pubkey().toBase58();
+      actionResult = outcomeName(reader.u8());
+      break;
+    case GOVERNANCE_ACTION_VARIANT.TransferAdmin: // { new_admin: Pubkey }
+    case GOVERNANCE_ACTION_VARIANT.AddSigner: // { signer: Pubkey }
+    case GOVERNANCE_ACTION_VARIANT.RemoveSigner: // { signer: Pubkey }
+      reader.offset += 32;
+      break;
+    case GOVERNANCE_ACTION_VARIANT.SetPaused: // { paused: bool }
+    case GOVERNANCE_ACTION_VARIANT.SetThreshold: // { threshold: u8 }
+      reader.offset += 1;
+      break;
+    default:
+      throw new Error(`Unknown GovernanceAction variant ${actionVariant}; refusing to decode misaligned proposal`);
   }
   const rawApprovals: PublicKey[] = [];
   for (let i = 0; i < 5; i++) rawApprovals.push(reader.pubkey());
@@ -424,16 +484,53 @@ export async function fetchMultisig(): Promise<MultisigInfo> {
   return decodeMultisig(ms, info.data);
 }
 
-export async function fetchOpenProposals(): Promise<GovernanceProposalInfo[]> {
+export type ProposalForThisPanel = GovernanceProposalInfo & {
+  /** True when this panel's key is already among the approvals (usually because it proposed). */
+  approvedByThisPanel: boolean;
+  /** True when this panel's key can still add a distinct approval. */
+  canApproveHere: boolean;
+  /** Why the approve action is unavailable, for display. */
+  approveBlockedReason?: string;
+};
+
+/**
+ * Open proposals, annotated with what THIS deployment's key can actually do.
+ *
+ * Each admin runs their own panel with their own ADMIN_KEYPAIR_BS58, so "can I
+ * approve this?" is deployment-specific. Without this the UI offered an Approve
+ * button on every proposal, including ones this key had itself created — which
+ * could only ever fail on-chain.
+ */
+export async function fetchOpenProposals(): Promise<ProposalForThisPanel[]> {
   const connection = getConnection();
   const programId = getProgramId();
   const accounts = await connection.getProgramAccounts(programId, {
     filters: [{ memcmp: { offset: 0, bytes: DISCRIMINATORS.proposal.toString('base64') } }],
   });
+
+  const [msInfo, thisPanelSigner] = await Promise.all([
+    fetchMultisig().catch(() => null),
+    Promise.resolve().then(() => {
+      try { return getAdminPubkey(); } catch { return null; }
+    }),
+  ]);
+
   return accounts
     .map(({ pubkey, account }) => decodeProposal(pubkey, account.data))
     .filter((p) => !p.executed && !p.cancelled)
-    .sort((a, b) => a.createdTs - b.createdTs);
+    .sort((a, b) => a.createdTs - b.createdTs)
+    .map((p) => {
+      const approvedByThisPanel = thisPanelSigner ? p.approvals.includes(thisPanelSigner) : false;
+      const isSigner = !!thisPanelSigner && !!msInfo && msInfo.signers.includes(thisPanelSigner);
+      let approveBlockedReason: string | undefined;
+      if (!thisPanelSigner) approveBlockedReason = 'This panel has no ADMIN_KEYPAIR_BS58 configured.';
+      else if (!isSigner) approveBlockedReason = 'This panel\'s key is not a signer of the multisig.';
+      else if (approvedByThisPanel) {
+        approveBlockedReason =
+          'Already approved by this panel\'s key — the OTHER admin must approve from their own panel.';
+      }
+      return { ...p, approvedByThisPanel, canApproveHere: !approveBlockedReason, approveBlockedReason };
+    });
 }
 
 // --- Paso 1: un admin (uno de los dos firmantes del multisig) PROPONE
@@ -507,6 +604,30 @@ export async function approveProposal(proposalPubkey: string) {
   const signerPubkey = signerKeypair.publicKey.toBase58();
   if (!msInfo.signers.includes(signerPubkey)) {
     throw new Error('This admin key is not a multisig signer');
+  }
+
+  // A 2-of-2 only means anything if the two signatures come from two different
+  // keys held in two different places. propose_action already records the
+  // proposer as approval #0, and approve_action on-chain rejects a second
+  // approval from that same key (LynxError::AlreadyApproved).
+  //
+  // So a panel can NEVER approve a proposal its own key created. Previously this
+  // surfaced as an opaque on-chain failure, which read like a bug and invited
+  // the "fix" of loading both admin keys into one panel — that would collapse
+  // the 2-of-2 into a 1-of-1, since one compromised host would then hold both
+  // signatures. Fail early with an explanation instead.
+  const onChainProposal = await fetchProposal(proposalPubkey);
+  if (onChainProposal.approvals.includes(signerPubkey)) {
+    try { wipeKeypair(signerKeypair); } catch { /* best-effort memory wipe */ }
+    throw new Error(
+      'This panel\'s admin key has already approved this proposal (it is most likely the proposer). ' +
+      'A 2-of-2 requires the OTHER admin to approve from THEIR panel, using THEIR ADMIN_KEYPAIR_BS58 on a ' +
+      'separate host. Never load both admin keys into one deployment: that would defeat the multisig.'
+    );
+  }
+  if (onChainProposal.executed || onChainProposal.cancelled) {
+    try { wipeKeypair(signerKeypair); } catch { /* best-effort memory wipe */ }
+    throw new Error('This proposal has already been executed or cancelled and can no longer be approved.');
   }
 
   const ix = new TransactionInstruction({

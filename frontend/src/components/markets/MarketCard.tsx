@@ -1,7 +1,7 @@
 import React from 'react';
 import { Market, MarketStatus } from '@/src/types';
-import { formatSOL, formatNumber } from '@/src/lib/utils';
-import { TrendingUp, Users, Clock, ArrowRight } from 'lucide-react';
+import { formatSOL } from '@/src/lib/utils';
+import { Clock, ArrowRight } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 

@@ -16,6 +16,8 @@ export interface RedisLike {
   multi(): RedisMultiLike;
   pexpire(key: string, ms: number): Promise<unknown>;
   set(key: string, value: string, ...args: unknown[]): Promise<unknown>;
+  get(key: string): Promise<string | null>;
+  exists(key: string): Promise<number>;
   del(key: string): Promise<number>;
 }
 

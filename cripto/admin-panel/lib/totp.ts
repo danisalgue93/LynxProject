@@ -47,18 +47,53 @@ function hotp(secret: Buffer, counter: number): string {
   return (code % 1_000_000).toString().padStart(6, '0');
 }
 
-// Verifica un codigo de 6 digitos contra el secreto TOTP del admin, con una
-// tolerancia de +-1 paso (30s) para relojes ligeramente desincronizados.
-export function verifyTotp(base32Secret: string, token: string, windowSteps = 1): boolean {
+/**
+ * Highest TOTP counter already spent, per secret.
+ *
+ * RFC 6238 §5.2 requires that a code be accepted only once: without this, a code
+ * observed by any means (shoulder-surfed, read off a screen share, replayed from
+ * a proxy log) stays valid for the rest of its ~90s acceptance window. Tracking
+ * the last consumed counter turns TOTP into genuine one-time use.
+ *
+ * In-memory, consistent with the single-instance requirement documented in
+ * rate-limit.ts. A restart forgets consumed counters — the worst
+ * case is that one code stays replayable for the remainder of its 30s step,
+ * which is strictly better than the unbounded reuse this replaces.
+ */
+const consumedCounters = new Map<string, number>();
+
+/**
+ * Verifies a 6-digit TOTP code, tolerating ±windowSteps (30s each) of clock skew.
+ *
+ * @param consume when true (the default for a real login) the matching counter is
+ *   burned, so the same code cannot be presented twice. Pass false only to test a
+ *   code without spending it.
+ */
+export function verifyTotp(
+  base32Secret: string,
+  token: string,
+  windowSteps = 1,
+  consume = true
+): boolean {
   if (!/^\d{6}$/.test(token)) return false;
   if (!base32Secret) return false;
   const secret = base32Decode(base32Secret);
   if (secret.length === 0) return false;
+
   const counter = Math.floor(Date.now() / 1000 / STEP_SECONDS);
+  const lastConsumed = consumedCounters.get(base32Secret);
+
   for (let delta = -windowSteps; delta <= windowSteps; delta++) {
-    const candidate = Buffer.from(hotp(secret, counter + delta), 'utf8');
+    const candidateCounter = counter + delta;
+    // Reject anything at or below a counter already used for a successful login.
+    if (consume && lastConsumed !== undefined && candidateCounter <= lastConsumed) continue;
+
+    const candidate = Buffer.from(hotp(secret, candidateCounter), 'utf8');
     const expected = Buffer.from(token, 'utf8');
-    if (candidate.length === expected.length && timingSafeEqual(candidate, expected)) return true;
+    if (candidate.length === expected.length && timingSafeEqual(candidate, expected)) {
+      if (consume) consumedCounters.set(base32Secret, candidateCounter);
+      return true;
+    }
   }
   return false;
 }

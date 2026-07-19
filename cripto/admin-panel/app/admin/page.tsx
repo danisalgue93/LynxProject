@@ -31,6 +31,12 @@ type Proposal = {
   cancelled: boolean;
   createdTs: number;
   expiresTs: number;
+  // Whether THIS panel's key can approve. Each admin runs their own deployment
+  // with their own key, and a key can never approve a proposal it created, so
+  // approvability is per-deployment (see /api/resolve).
+  approvedByThisPanel: boolean;
+  canApproveHere: boolean;
+  approveBlockedReason?: string;
 };
 
 type Outcome = 'Yes' | 'No' | 'Draw';
@@ -46,6 +52,7 @@ function lamportsToSol(value: string): string {
 export default function AdminPage() {
   const [markets, setMarkets] = useState<Market[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [thisPanelSigner, setThisPanelSigner] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [signature, setSignature] = useState('');
@@ -75,6 +82,7 @@ export default function AdminPage() {
       if (!proposalsRes.ok) throw new Error(proposalsData.error || 'Failed to load proposals');
       setMarkets(marketsData.markets);
       setProposals(proposalsData.proposals);
+      setThisPanelSigner(proposalsData.thisPanelSigner ?? null);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -237,6 +245,19 @@ export default function AdminPage() {
           </div>
         </header>
 
+        {/* Each admin runs their own panel with their own key. Without showing
+            which signer this deployment is, an operator cannot tell why a
+            proposal is approvable on one panel and not the other. */}
+        <div className="card" style={{ padding: 12, marginTop: 22 }}>
+          <span className="muted" style={{ fontSize: 12 }}>
+            This panel signs as:{' '}
+            <strong style={{ wordBreak: 'break-all' }}>
+              {thisPanelSigner ?? 'no ADMIN_KEYPAIR_BS58 configured'}
+            </strong>
+            {' — '}the other multisig admin must approve from their own deployment.
+          </span>
+        </div>
+
         {signature && (
           <div className="card" style={{ padding: 16, marginTop: 22, borderColor: '#059669' }}>
             <strong className="success">Transaction sent.</strong>
@@ -323,10 +344,28 @@ export default function AdminPage() {
                         Proposed: <strong>{proposal.actionResult}</strong> by {proposal.proposer.slice(0, 8)}...
                         <br />Proposal: {proposal.pubkey}
                       </p>
-                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                        <button onClick={() => approveProposalAction(proposal)} style={secondaryButtonStyle}>
+                      {/* A 2-of-2 needs two different keys on two different
+                          hosts, so a proposal created here can never be approved
+                          here. Show why instead of offering a button that can
+                          only fail on-chain. */}
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
+                        <button
+                          onClick={() => approveProposalAction(proposal)}
+                          style={{
+                            ...secondaryButtonStyle,
+                            opacity: proposal.canApproveHere ? 1 : 0.4,
+                            cursor: proposal.canApproveHere ? 'pointer' : 'not-allowed',
+                          }}
+                          disabled={!proposal.canApproveHere}
+                          title={proposal.approveBlockedReason ?? 'Approve this proposal with this panel\'s key'}
+                        >
                           Approve
                         </button>
+                        {!proposal.canApproveHere && (
+                          <span className="muted" style={{ fontSize: 12 }}>
+                            {proposal.approveBlockedReason}
+                          </span>
+                        )}
                       </div>
                     </div>
                   );

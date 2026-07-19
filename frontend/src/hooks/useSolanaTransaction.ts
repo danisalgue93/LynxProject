@@ -20,7 +20,7 @@ import {
   Transaction,
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
-import { apiFetch, API_BASE_URL } from '../lib/api';
+import { apiFetch } from '../lib/api';
 import { useToast } from '../context/ToastContext';
 import { getTxExplorerUrl } from '../lib/explorer';
 

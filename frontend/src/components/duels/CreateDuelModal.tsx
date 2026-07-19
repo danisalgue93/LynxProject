@@ -4,9 +4,9 @@ import { Market, Position } from "@/src/types";
 import { useProgram } from "@/src/hooks/useProgram";
 import { useBlockchainTransaction } from "@/src/hooks/useBlockchainTransaction";
 import { getTxExplorerUrl } from "@/src/lib/explorer";
-import { X, Sword, Target, ChevronRight, Info, Loader2 } from "lucide-react";
+import { X, Sword, Target, ChevronRight, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { formatSOL, cn } from "@/src/lib/utils";
+import { cn } from "@/src/lib/utils";
 import { useTranslation } from "react-i18next";
 
 interface CreateDuelModalProps {

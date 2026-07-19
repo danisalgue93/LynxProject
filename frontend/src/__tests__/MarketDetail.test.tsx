@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import type { RenderResult } from '@testing-library/react';
+import { createElement } from 'react';
 import { MarketDetail } from '@/src/components/markets/MarketDetail';
 import { MarketStatus, Position } from '@/src/types';
 import type { Market } from '@/src/types';
@@ -13,15 +13,21 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
+// Declared as vi.fn() rather than a plain arrow function: one test needs
+// mockReturnValueOnce to simulate a winning position, which only exists on a
+// mock function. As a plain arrow it threw "mockReturnValueOnce is not a
+// function" and that test could never have run.
+const defaultUseProgram = () => ({
+  fetchDuels: vi.fn().mockResolvedValue([]),
+  executeTrade: vi.fn().mockResolvedValue(undefined),
+  fetchPositions: vi.fn().mockResolvedValue([]),
+  claimPosition: vi.fn().mockResolvedValue(undefined),
+  isLoading: false,
+  error: null,
+});
+
 vi.mock('@/src/hooks/useProgram', () => ({
-  useProgram: () => ({
-    fetchDuels: vi.fn().mockResolvedValue([]),
-    executeTrade: vi.fn().mockResolvedValue(undefined),
-    fetchPositions: vi.fn().mockResolvedValue([]),
-    claimPosition: vi.fn().mockResolvedValue(undefined),
-    isLoading: false,
-    error: null,
-  }),
+  useProgram: vi.fn(() => defaultUseProgram()),
 }));
 
 vi.mock('@/src/hooks/useBlockchainTransaction', () => ({
@@ -42,7 +48,6 @@ vi.mock('@/src/lib/api', () => ({
 vi.mock('motion/react', () => ({
   motion: new Proxy({}, {
     get: (_target, tag: string) => {
-      const { createElement } = require('react');
       return ({ children, ...props }: any) => createElement(tag, props, children);
     },
   }),
@@ -87,16 +92,13 @@ describe('MarketDetail', () => {
     expect(screen.getByText('Will ETH reach $10k by 2026?')).toBeInTheDocument();
   });
 
-  it('calls onClose when close button is clicked', () => {
+  it('calls onClose when the dismiss button is clicked', () => {
     render(<MarketDetail market={makeMarket()} onClose={onClose} />);
-    // The close button uses an SVG icon; target by its aria-label or find an X button
-    const closeBtn = screen.getAllByRole('button').find(
-      (btn) => btn.getAttribute('aria-label') === 'Close' || btn.querySelector('svg')
-    );
-    // Fallback: click the first button that carries the X icon wrapper
-    const allButtons = screen.getAllByRole('button');
-    // The top-right close button is the first rendered button in the modal header
-    fireEvent.click(allButtons[0]);
+    // There is no icon "Close" button: the dismiss affordance is a labelled text
+    // button. The old test hunted for an aria-label='Close' or any button with an
+    // svg and then blindly clicked buttons[0], which was some other control — so
+    // the spy was never called. Target the real control by its name.
+    fireEvent.click(screen.getAllByText('Discard & Return')[0]);
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -121,16 +123,22 @@ describe('MarketDetail', () => {
         onAuthRequired={onAuthRequired}
       />
     );
-    // Click the place-bet submit button
-    const betButton = screen.getByText('Place bet');
-    fireEvent.click(betButton);
+    // The submit control is labelled 'Confirm Trade', not 'Place bet'.
+    fireEvent.click(screen.getByText('Confirm Trade'));
     expect(onAuthRequired).toHaveBeenCalled();
   });
 
-  it('displays pool amount in the market stats', () => {
-    render(<MarketDetail market={makeMarket({ poolAmount: 1234.56 })} onClose={onClose} />);
-    // formatSOL renders the number; check partial text
-    expect(screen.getByText(/1,234\.56/)).toBeInTheDocument();
+  // This used to assert that `poolAmount` was rendered via formatSOL. It is not:
+  // MarketDetail never displays that prop, and never calls formatSOL. It derives
+  // the pool from yesAmount + noAmount + drawAmount and shows the resulting odds.
+  // Rather than invent a "pool amount" display the product does not have, assert
+  // the stat the component genuinely computes from the pool.
+  it('derives the displayed odds from the pool amounts', () => {
+    render(<MarketDetail market={makeMarket({ yesAmount: 600, noAmount: 400 })} onClose={onClose} />);
+    // 600 / (600 + 400) = 60%. Rendered in more than one place (the responsive
+    // layout emits both a mobile and a desktop variant), so assert presence.
+    expect(screen.getAllByText(/60% Y/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/40% N/).length).toBeGreaterThan(0);
   });
 
   it('shows a Claim payout button for resolved markets with a winning position', async () => {

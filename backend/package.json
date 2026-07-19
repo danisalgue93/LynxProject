@@ -7,7 +7,9 @@
     "dev": "tsx src/server.ts",
     "start": "node dist/src/server.js",
     "build": "tsc -p tsconfig.json",
+    "lint": "eslint .",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "prisma:studio": "prisma studio",
@@ -35,6 +37,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/compression": "^1.7.5",
     "@types/cors": "^2.8.19",
@@ -43,11 +46,15 @@
     "@types/morgan": "^1.9.10",
     "@types/node": "^22.15.3",
     "@types/supertest": "^6.0.3",
+    "@vitest/coverage-v8": "^3.2.7",
+    "eslint": "^9.39.5",
+    "globals": "^17.7.0",
     "pino-pretty": "^10.1.0",
     "prisma": "^6.19.3",
     "supertest": "^7.1.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.64.0",
     "vitest": "^3.2.4"
   }
 }

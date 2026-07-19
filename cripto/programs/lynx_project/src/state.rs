@@ -1,5 +1,40 @@
 use anchor_lang::prelude::*;
-use crate::constants::MAX_MULTISIG_SIGNERS;
+use crate::constants::{MAX_MULTISIG_SIGNERS, SUPPLY_SNAPSHOT_COUNT};
+
+// Ring buffer con las ultimas SUPPLY_SNAPSHOT_COUNT muestras del supply LYNX
+// circulante, alimentado por el crank permissionless record_supply_snapshot.
+//
+// Existe para cerrar SC-01: el ratio de minteo se deriva del PROMEDIO de esta
+// ventana en vez del valor instantaneo, de modo que una quema atomica justo
+// antes de resolver un mercado no puede inflar el ratio (ver constants.rs).
+#[account]
+pub struct CirculatingSupplyTwap {
+    pub config: Pubkey,
+    pub snapshots: [u64; SUPPLY_SNAPSHOT_COUNT],
+    // Muestras validas escritas hasta ahora. Satura en SUPPLY_SNAPSHOT_COUNT;
+    // hasta entonces el promedio solo considera las primeras `count`.
+    pub count: u8,
+    // Cursor circular de escritura.
+    pub next_index: u8,
+    pub last_snapshot_ts: i64,
+    pub bump: u8,
+}
+
+impl CirculatingSupplyTwap {
+    pub const LEN: usize = 8 + 32 + 8 * SUPPLY_SNAPSHOT_COUNT + 1 + 1 + 8 + 1;
+
+    /// Promedio del supply circulante sobre las muestras disponibles.
+    /// Devuelve None mientras no haya ninguna (deployment recien creado).
+    pub fn average(&self) -> Option<u64> {
+        if self.count == 0 {
+            return None;
+        }
+        let n = self.count as usize;
+        // u128 para que la suma de hasta 24 valores u64 no pueda desbordar.
+        let sum: u128 = self.snapshots[..n].iter().map(|&s| s as u128).sum();
+        u64::try_from(sum / n as u128).ok()
+    }
+}
 
 #[account]
 pub struct ProtocolConfig {
@@ -36,7 +71,8 @@ pub struct ProtocolConfig {
 }
 
 impl ProtocolConfig {
-    pub const LEN: usize = 8 + 32 * 5 + 8 * 3 + 16 + 1 * 4 + 8 * 2;
+    // 8 disc + 5 Pubkey + 3 u64 + 1 u128 + 4 u8/bool + 2 u64.
+    pub const LEN: usize = 8 + 32 * 5 + 8 * 3 + 16 + 4 + 8 * 2;
 }
 
 #[account]

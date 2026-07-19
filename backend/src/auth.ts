@@ -78,7 +78,10 @@ export function generateRefreshToken(userId: string): string {
 // Never throws — callers rely on a falsy return to mean "not authenticated".
 export function verifyToken(token: string): AccessTokenPayload | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    // Pin the algorithm to what generateToken uses (HS256). jsonwebtoken v9
+    // already rejects `alg:none` by default, but an explicit allowlist is the
+    // defensive default and rules out any algorithm-confusion class outright.
+    const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
     if (typeof decoded === 'string') return null;
     const { userId, email, role } = decoded as jwt.JwtPayload & Partial<AccessTokenPayload>;
     if (!userId || !email || !role) return null;
@@ -90,7 +93,7 @@ export function verifyToken(token: string): AccessTokenPayload | null {
 
 export function verifyRefreshToken(token: string): RefreshTokenPayload | null {
   try {
-    const decoded = jwt.verify(token, REFRESH_SECRET);
+    const decoded = jwt.verify(token, REFRESH_SECRET, { algorithms: ['HS256'] });
     if (typeof decoded === 'string') return null;
     const { userId } = decoded as jwt.JwtPayload & Partial<RefreshTokenPayload>;
     if (!userId) return null;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Vote, Users, MessageSquare, ChevronRight, CheckCircle2, Clock, AlertCircle, PlusCircle, Loader2 } from 'lucide-react';
+import { Vote, Users, MessageSquare, CheckCircle2, Clock, PlusCircle, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/src/lib/utils';
 import { useProgram } from '@/src/hooks/useProgram';
@@ -22,7 +22,7 @@ function formatPercent(value: number, total: number): string {
 
 export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
   const { t } = useTranslation();
-  const { fetchProposals, fetchDaoStats, castVote, createProposal, stakeLynx, isLoading } = useProgram();
+  const { fetchProposals, fetchDaoStats, castVote, createProposal, stakeLynx } = useProgram();
   const { executeTransaction } = useBlockchainTransaction();
   const { addToast } = useToast();
   const { isAdmin } = useAuth();

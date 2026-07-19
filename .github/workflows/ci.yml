@@ -2,9 +2,9 @@ name: CI/CD
 
 on:
   push:
-    branches: [main, develop]
+    branches: [master, main, develop]
   pull_request:
-    branches: [main]
+    branches: [master, main]
 
 env:
   NODE_VERSION: '20'
@@ -60,6 +60,9 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
+      - name: Lint
+        run: npm run lint
+
       - name: Type check
         run: npx tsc --noEmit
 
@@ -89,14 +92,61 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Type check
+      - name: Lint
         run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
 
       - name: Build
         run: npm run build
 
       - name: Run tests
         run: npm test
+
+  # ── Admin panel ──────────────────────────────────────────────────────────────
+  # This module had no CI at all: it was never built or tested automatically,
+  # which is how two account-decoder bugs survived in it (decodeConfig read a
+  # field that does not exist in ProtocolConfig; decodeProposal skipped a fixed
+  # 32 bytes for Borsh variants whose payload is 1 byte). The panel resolves
+  # markets — it moves real money — so it gets the same gate as everything else.
+  admin-panel:
+    name: Admin Panel — Types · Build · Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cripto/admin-panel
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: cripto/admin-panel/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          # next build evaluates module-level code (lib/session.ts reads
+          # SESSION_SECRET at import time), so the build needs placeholders.
+          # These are build-time only and never reach a deployment.
+          SESSION_SECRET: ci_build_placeholder_secret_at_least_32_chars
+          PROGRAM_ID: CiKuW8r71WnTLkGAKvFyYhtV2UhuJ4j8swDPDc8PEXvu
+          RPC_URL: https://api.devnet.solana.com
 
   # ── Cripto (Solana program) ───────────────────────────────────────────────────
   cripto:
@@ -128,12 +178,42 @@ jobs:
       - name: Check program compiles
         run: cargo check --workspace --locked
 
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      # The unit tests (overflow/fee maths) need no toolchain beyond cargo, but
+      # the integration tests execute the real compiled program through
+      # solana-program-test, so the BPF .so must exist and SBF_OUT_DIR must point
+      # at it. Without this step the job only type-checked and never ran a single
+      # test — including the ones covering the payout overflow that used to lock
+      # every market's funds.
+      - name: Install Solana toolchain
+        # Matches the solana-program 2.1.16 that anchor-lang 0.31.1 resolves in
+        # Cargo.lock; a build-sbf from a different solana line links the program
+        # against a different solana-program than the tests use.
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v2.1.16/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Build BPF program
+        # cargo build-sbf rather than `anchor build`: these tests only need the
+        # deployable .so, and build-sbf emits it without installing the anchor
+        # CLI. `anchor build` now works too and additionally emits the IDL —
+        # 0.30.1 could not, its generator called proc_macro2's Span::source_file(),
+        # removed in current rustc. Switch if CI ever needs to publish the IDL.
+        run: cargo build-sbf
+
+      - name: Run program tests
+        run: cargo test --workspace --locked
+        env:
+          SBF_OUT_DIR: ${{ github.workspace }}/cripto/target/deploy
+
   # ── Docker build (only on main) ───────────────────────────────────────────────
   docker:
     name: Build & Push Docker images
     runs-on: ubuntu-latest
     needs: [backend, frontend, cripto]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && github.event_name == 'push'
     permissions:
       contents: read
       packages: write
