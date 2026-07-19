@@ -16,8 +16,16 @@ if (Test-Path $anchorToml) {
     exit 1
 }
 
-Write-Host "Running 'anchor build --no-idl'..."
-anchor build --no-idl
+# Fund check: deploying the ~1.1 MB program needs ~8 devnet SOL. The CLI faucet
+# (`solana airdrop`) is heavily rate-limited — use the web faucet at
+# https://faucet.solana.com for the deployer address (`solana address`) if it fails.
+Write-Host "Deployer: $(solana address)  Balance: $(solana balance --url devnet)"
+
+# anchor build (WITH IDL). The old `--no-idl` was a workaround for anchor 0.30.1,
+# whose IDL generator called a proc-macro2 API removed in current rustc. On the
+# anchor 0.31.1 this repo now uses, the IDL generates cleanly and TS clients need it.
+Write-Host "Running 'anchor build'..."
+anchor build
 if ($LASTEXITCODE -ne 0) { Write-Host "anchor build failed."; exit 1 }
 
 Write-Host "Running 'anchor deploy --provider.cluster devnet'..."
