@@ -18,7 +18,13 @@ import {
   buildPlaceSpotOrderSellTx,
   buildCancelSpotOrderBuyTx,
   buildCancelSpotOrderSellTx,
+  buildStakeLynxTx,
+  buildUnstakeLynxTx,
+  buildClaimStakingRewardsTx,
+  readStakePosition,
+  readLynxBalance,
   type OnChainOutcome,
+  type StakeInfo,
 } from '../lib/lynxProgram';
 
 /**
@@ -445,47 +451,61 @@ export function useProgram() {
     }
   }, [ensureApproved, startOp, endOp]);
 
+  // Staking is on-chain (phase 5): stake/unstake/claim build and sign real Anchor
+  // transactions against the user's own LYNX, and the staked balance / pending
+  // rewards are read from the on-chain StakePosition — never from an off-chain
+  // backend balance. Needs a connected Solana wallet.
   const stakeLynx = useCallback(async (amount: number) => {
     const opId = `stakeLynx-${Date.now()}`;
     startOp(opId);
     try {
-      const currentWallet = await ensureApproved();
-      return await apiFetch<Portfolio>('/api/staking/stake', {
-        method: 'POST',
-        body: JSON.stringify({ wallet: currentWallet, amount }),
-      });
+      if (!publicKey) throw new Error('Connect a Solana wallet to stake LYNX on-chain.');
+      const tx = await buildStakeLynxTx({ connection, owner: publicKey, amountLynx: amount });
+      const signature = await signAndSendOnChain(tx);
+      return { signature, onChain: true as const };
     } finally {
       endOp(opId);
     }
-  }, [ensureApproved, startOp, endOp]);
+  }, [publicKey, connection, signAndSendOnChain, startOp, endOp]);
 
   const unstakeLynx = useCallback(async (amount: number) => {
     const opId = `unstakeLynx-${Date.now()}`;
     startOp(opId);
     try {
-      const currentWallet = await ensureApproved();
-      return await apiFetch<Portfolio>('/api/staking/unstake', {
-        method: 'POST',
-        body: JSON.stringify({ wallet: currentWallet, amount }),
-      });
+      if (!publicKey) throw new Error('Connect a Solana wallet to unstake LYNX on-chain.');
+      const tx = await buildUnstakeLynxTx({ connection, owner: publicKey, amountLynx: amount });
+      const signature = await signAndSendOnChain(tx);
+      return { signature, onChain: true as const };
     } finally {
       endOp(opId);
     }
-  }, [ensureApproved, startOp, endOp]);
+  }, [publicKey, connection, signAndSendOnChain, startOp, endOp]);
 
   const claimRewards = useCallback(async () => {
     const opId = `claimRewards-${Date.now()}`;
     startOp(opId);
     try {
-      const currentWallet = await ensureApproved();
-      return await apiFetch<{ claimed: number; portfolio: Portfolio }>('/api/staking/claim', {
-        method: 'POST',
-        body: JSON.stringify({ wallet: currentWallet }),
-      });
+      if (!publicKey) throw new Error('Connect a Solana wallet to claim staking rewards on-chain.');
+      const tx = buildClaimStakingRewardsTx({ owner: publicKey });
+      const signature = await signAndSendOnChain(tx);
+      return { signature, onChain: true as const };
     } finally {
       endOp(opId);
     }
-  }, [ensureApproved, startOp, endOp]);
+  }, [publicKey, signAndSendOnChain, startOp, endOp]);
+
+  // On-chain reads for the staking UI (the backend indexer will also expose
+  // these, but reading the PDA directly keeps the UI correct without waiting on
+  // an indexer round-trip). Return null / 0 when there is no connected wallet.
+  const fetchStakeInfo = useCallback(async (): Promise<StakeInfo | null> => {
+    if (!publicKey) return null;
+    return readStakePosition(connection, publicKey);
+  }, [publicKey, connection]);
+
+  const fetchLynxBalance = useCallback(async (): Promise<number> => {
+    if (!publicKey) return 0;
+    return readLynxBalance(connection, publicKey);
+  }, [publicKey, connection]);
 
   const acceptDuel = useCallback(async (duelId: string, position?: string) => {
     const opId = `acceptDuel-${Date.now()}`;
@@ -682,6 +702,8 @@ export function useProgram() {
     depositSol,
     withdrawSol,
     claimRewards,
+    fetchStakeInfo,
+    fetchLynxBalance,
     claimPosition,
     cancelOrder,
   };

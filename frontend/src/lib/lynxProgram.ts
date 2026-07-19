@@ -248,6 +248,43 @@ export function clearProtocolConfigCache() {
   cachedConfigTimestamp = 0;
 }
 
+export type StakeInfo = { amount: number; pendingRewards: number };
+
+// Reads the on-chain StakePosition for `owner`, or null if they have never
+// staked (the PDA does not exist yet). This is the source of truth for the
+// staked balance once staking is on-chain — the UI must read it here rather
+// than from the backend's off-chain portfolio.
+//
+// Layout, after the 8-byte account discriminator (see StakePosition in
+// programs/lynx_project/src/state.rs): owner Pubkey(32), amount u64,
+// reward_debt_scaled u128, pending_rewards u64, bump u8. `amount` is in
+// micro-LYNX; `pending_rewards` is in lamports (rewards are paid in SOL).
+export async function readStakePosition(connection: Connection, owner: PublicKey): Promise<StakeInfo | null> {
+  const info = await connection.getAccountInfo(stakePositionPda(owner));
+  if (!info || info.data.length < 8 + 32 + 8 + 16 + 8) return null;
+  const d = info.data;
+  const amountMicroLynx = d.readBigUInt64LE(8 + 32); // offset 40
+  const pendingLamports = d.readBigUInt64LE(8 + 32 + 8 + 16); // offset 64
+  return {
+    amount: Number(amountMicroLynx) / 10 ** LYNX_DECIMALS,
+    pendingRewards: Number(pendingLamports) / 1_000_000_000,
+  };
+}
+
+// The owner's on-chain LYNX (SPL) balance in whole LYNX, or 0 if they have no
+// LYNX token account yet. This is what "available to stake" must read from once
+// staking is on-chain — not the backend's off-chain portfolio balance.
+export async function readLynxBalance(connection: Connection, owner: PublicKey): Promise<number> {
+  const { lynxMint } = await getProtocolConfigInfo(connection);
+  const ata = await getAssociatedTokenAddress(lynxMint, owner);
+  try {
+    const bal = await connection.getTokenAccountBalance(ata);
+    return bal.value.uiAmount ?? 0;
+  } catch {
+    return 0; // ATA does not exist yet
+  }
+}
+
 async function ensureAtaInstruction(
   connection: Connection,
   payer: PublicKey,

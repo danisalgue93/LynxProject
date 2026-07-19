@@ -93,7 +93,7 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
       await executeTransaction(
         async () => {
           const result = await stakeLynx(amount);
-          return typeof result === 'string' ? result : `stake-${amount}-${Date.now()}`;
+          return result.signature;
         },
         {
           pendingMessage: t('governance.stakePending', 'Staking {{amount}} LYNX...', { amount }),

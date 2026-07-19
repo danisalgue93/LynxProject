@@ -12,8 +12,8 @@ vi.mock('@solana/wallet-adapter-react', () => ({
   useWallet: () => ({ publicKey: null, connected: false }),
 }));
 
-const stakeLynx = vi.fn().mockResolvedValue(undefined);
-const unstakeLynx = vi.fn().mockResolvedValue(undefined);
+const stakeLynx = vi.fn().mockResolvedValue({ signature: 'sig-stake', onChain: true });
+const unstakeLynx = vi.fn().mockResolvedValue({ signature: 'sig-unstake', onChain: true });
 
 const portfolio = {
   wallet: 'MAGIC:00000000000000000000000000000000',
@@ -28,11 +28,15 @@ vi.mock('@/src/hooks/useProgram', () => ({
   useProgram: () => ({
     fetchMarkets: vi.fn().mockResolvedValue([]),
     fetchPortfolio: vi.fn().mockResolvedValue(portfolio),
-    claimRewards: vi.fn().mockResolvedValue(undefined),
+    claimRewards: vi.fn().mockResolvedValue({ signature: 'sig-claim', onChain: true }),
     stakeLynx,
     unstakeLynx,
     depositSol: vi.fn().mockResolvedValue(undefined),
     withdrawSol: vi.fn().mockResolvedValue(undefined),
+    // Staking is on-chain now: the "available to stake" and staked balance come
+    // from these readers, not from the off-chain portfolio.
+    fetchStakeInfo: vi.fn().mockResolvedValue({ amount: 20, pendingRewards: 0 }),
+    fetchLynxBalance: vi.fn().mockResolvedValue(50),
     isLoading: false,
     error: null,
   }),
