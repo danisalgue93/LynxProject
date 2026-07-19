@@ -116,23 +116,37 @@ corresponding Anchor instructions. It is planned as verifiable slices, each
 proven end-to-end before the next, the same discipline used for the Anchor 0.31
 upgrade.
 
-Progress (2026-07-17):
-- **Staking client half — built.** `buildStakeLynxTx` / `buildUnstakeLynxTx` /
-  `buildClaimStakingRewardsTx` in `frontend/src/lib/lynxProgram.ts`, transcribed
-  from the program's account structs and unit-tested (discriminators, arg bytes,
-  account metas).
-- **Duel client half — built.** `buildCreateDuelTx` / `buildAcceptDuelTx` /
-  `buildCancelDuelTx`, same technique and test coverage. Duel settlement is a
-  permissionless crank and stays in the keeper.
-- Both are **additive**: the UI is not switched over and `state.ts` is untouched.
-- **Devnet-gated, not done:** wiring these into the UI, verifying the deployed
-  program accepts them end-to-end, and only then retiring the off-chain paths.
-  A correct byte layout is not proof of on-chain acceptance. This step needs a
-  devnet deployment and a test wallet — see decision 4.2.
-- **Not started:** DAO governance and deposit/withdraw client halves. DAO is
-  multisig-admin rather than a user trading flow, and deposit/withdraw ride fiat
-  on/off-ramps that are inherently backend-mediated, so neither maps cleanly to a
-  single user-signed instruction the way staking and duels do.
+The operator has confirmed (2026-07-19): **everything on-chain, the backend
+becomes a pure indexer** (like the prediction-market path already is). Exposure
+limits are to be enforced **in SOL / native units** (no EUR price feed).
+
+Progress:
+- **Staking — MIGRATED (frontend), 2026-07-19.** `useProgram.stakeLynx/unstakeLynx/
+  claimRewards` now build+sign the on-chain instructions; `readStakePosition` and
+  `readLynxBalance` are the display source; `PortfolioView`/`GovernanceView` are
+  wired to them. Off-chain `/api/staking/*` left in place (unused) until DEV-
+  verified, then removed. Unit-tested (readers + builders), typechecks, builds.
+  **NEEDS DEV E2E** before the off-chain routes are deleted.
+- **Duel client half — built and unit-tested** (`buildCreateDuelTx` /
+  `buildAcceptDuelTx` / `buildCancelDuelTx`). Not yet wired: duels depend on the
+  parent market's on-chain pubkey and on listing on-chain `Duel` accounts, so the
+  wiring needs the **backend Duel indexer** first (index `Duel` accounts → expose
+  `/api/onchain/duels`), then the frontend reads pubkeys from there and switches
+  create/accept/cancel to on-chain. Deliberately not done blind — it is entangled
+  with market state and must be verified in DEV.
+- **DAO — needs new program code + a design decision (open question).** There is
+  no on-chain user-proposal/voting instruction today (only the admin 2-of-2
+  multisig governance). Building it on-chain means new instructions (create
+  proposal, cast vote) + accounts (Proposal, VoteRecord to block double votes) +
+  a tally. The voting-weight model is a real decision: mirror the off-chain
+  stake-weighted majority (weight = staked LYNX, simple majority at endTime), or
+  something with quorum / on-chain execution of passed proposals? Flagged for the
+  operator; not built speculatively.
+- **deposit/withdraw** stay as on/off-ramp bridges (fiat + on-chain SOL), verified
+  against the chain — they are the boundary, not off-chain balance mutation.
+- **Backend → indexer:** the prediction-market path is already indexer-only. The
+  remaining work is to index StakePosition/Duel (and DAO once built) and retire
+  the `state.ts` money mutation for those, once each slice is DEV-verified.
 
 Everything marked YOURS above is not a gap in the code — it is work that requires
 your credentials, hardware, external parties, or elapsed time, and cannot honestly
