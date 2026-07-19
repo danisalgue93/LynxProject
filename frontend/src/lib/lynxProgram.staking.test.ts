@@ -147,3 +147,22 @@ describe('buildClaimStakingRewardsTx', () => {
     });
   });
 });
+
+describe('readStakePosition', () => {
+  it('decodes amount (micro-LYNX) and pending_rewards (lamports) at the right offsets', async () => {
+    // StakePosition: disc(8), owner(32), amount u64 @40, reward_debt u128 @48,
+    // pending_rewards u64 @64, bump @72.
+    const buf = Buffer.alloc(73);
+    buf.writeBigUInt64LE(5_000_000n, 40);      // 5 LYNX
+    buf.writeBigUInt64LE(2_000_000_000n, 64);  // 2 SOL of rewards
+    const connection = { getAccountInfo: vi.fn().mockResolvedValue({ data: buf }) } as unknown as import('@solana/web3.js').Connection;
+
+    const info = await lynx.readStakePosition(connection, owner);
+    expect(info).toEqual({ amount: 5, pendingRewards: 2 });
+  });
+
+  it('returns null when the stake position does not exist', async () => {
+    const connection = { getAccountInfo: vi.fn().mockResolvedValue(null) } as unknown as import('@solana/web3.js').Connection;
+    expect(await lynx.readStakePosition(connection, owner)).toBeNull();
+  });
+});

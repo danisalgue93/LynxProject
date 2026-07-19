@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Wallet, PieChart, TrendingUp, CheckCircle2, Trophy as RewardIcon, CreditCard } from 'lucide-react';
 import { formatSOL, formatNumber, cn } from '@/src/lib/utils';
 import { useProgram } from '@/src/hooks/useProgram';
@@ -24,17 +24,11 @@ async function openSignedMoonPay(walletAddress?: string) {
   window.open(data.url, '_blank', 'width=500,height=700,noopener,noreferrer');
 }
 
-function getPendingRewards(portfolio?: Portfolio | null) {
-  if (!portfolio) return 0;
-  if (typeof portfolio.totalProfit === 'number') return portfolio.totalProfit;
-  return portfolio.payments?.reduce((total, payment: any) => total + (Number(payment.amount) || 0), 0) || 0;
-}
-
 export function PortfolioView() {
   const { t } = useTranslation();
   const { publicKey } = useWallet();
   const walletAddress = publicKey?.toBase58();
-  const { fetchMarkets, fetchPortfolio, claimRewards, stakeLynx, unstakeLynx, depositSol, withdrawSol, error } = useProgram();
+  const { fetchMarkets, fetchPortfolio, claimRewards, stakeLynx, unstakeLynx, depositSol, withdrawSol, fetchStakeInfo, fetchLynxBalance, error } = useProgram();
   const { executeTransaction } = useBlockchainTransaction();
   const { addToast } = useToast();
   const { user } = useAuth();
@@ -71,6 +65,18 @@ export function PortfolioView() {
   const [moonPayError, setMoonPayError] = useState<string | null>(null);
   const [solLedgerAmount, setSolLedgerAmount] = useState('');
   const [isLedgerPending, setIsLedgerPending] = useState(false);
+  // On-chain staking state (phase 5). The staked amount and the LYNX available
+  // to stake are read from the chain, not the off-chain portfolio.
+  const [stakedLynxOnChain, setStakedLynxOnChain] = useState(0);
+  const [pendingRewardsOnChain, setPendingRewardsOnChain] = useState(0);
+  const [lynxBalanceOnChain, setLynxBalanceOnChain] = useState(0);
+
+  const reloadStaking = useCallback(async () => {
+    const [info, bal] = await Promise.all([fetchStakeInfo(), fetchLynxBalance()]);
+    setStakedLynxOnChain(info?.amount ?? 0);
+    setPendingRewardsOnChain(info?.pendingRewards ?? 0);
+    setLynxBalanceOnChain(bal);
+  }, [fetchStakeInfo, fetchLynxBalance]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -80,6 +86,7 @@ export function PortfolioView() {
       ]);
       setMarkets(marketData);
       setPortfolio(portfolioData);
+      reloadStaking().catch(() => {});
     };
     loadData();
     const onUpdate = () => { loadData(); };
@@ -92,14 +99,14 @@ export function PortfolioView() {
   }, [fetchMarkets, fetchPortfolio]);
 
   const handleClaim = async () => {
-    if (getPendingRewards(portfolio) <= 0) return;
+    if (pendingRewardsOnChain <= 0) return;
     setIsClaiming(true);
     try {
       await executeTransaction(
         async () => {
-          const result = await claimRewards();
-          if (result?.portfolio) setPortfolio(result.portfolio);
-          return `claim-${Date.now()}`;
+          const res = await claimRewards();
+          await reloadStaking().catch(() => {});
+          return res.signature;
         },
         {
           pendingMessage: t('portfolio.claimRewardsPending', 'Claiming staking rewards...'),
@@ -135,7 +142,7 @@ export function PortfolioView() {
       return;
     }
 
-    const available = stakeMode === 'stake' ? portfolio?.lynxBalance : portfolio?.stakedLynx;
+    const available = stakeMode === 'stake' ? lynxBalanceOnChain : stakedLynxOnChain;
     if (available !== undefined && amount > available) {
       setStakeError(
         stakeMode === 'stake'
@@ -150,14 +157,9 @@ export function PortfolioView() {
     try {
       await executeTransaction(
         async () => {
-          if (stakeMode === 'stake') {
-            const updated = await stakeLynx(amount);
-            if (updated) setPortfolio(updated);
-          } else {
-            const updated = await unstakeLynx(amount);
-            if (updated) setPortfolio(updated);
-          }
-          return `${stakeMode}-${amount}-${Date.now()}`;
+          const res = stakeMode === 'stake' ? await stakeLynx(amount) : await unstakeLynx(amount);
+          await reloadStaking().catch(() => {});
+          return res.signature;
         },
         {
           pendingMessage: t(
@@ -264,7 +266,7 @@ export function PortfolioView() {
     );
   }
 
-  const pendingRewards = getPendingRewards(portfolio);
+  const pendingRewards = pendingRewardsOnChain;
   const hasPendingRewards = pendingRewards > 0;
   const solLedgerValue = Number(solLedgerAmount);
   const isSolLedgerAmountInvalid = !Number.isFinite(solLedgerValue) || solLedgerValue <= 0;
@@ -591,7 +593,7 @@ export function PortfolioView() {
               <div className="space-y-2 mb-6 bg-[#18181B] p-4 rounded border border-[#27272A]">
                 <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider">
                   <span className="text-[#52525B]">{t('portfolio.staked', 'Staked')}</span>
-                  <span className="text-white font-mono tracking-tighter">{formatNumber(portfolio.stakedLynx || 0)} $LYNX</span>
+                  <span className="text-white font-mono tracking-tighter">{formatNumber(stakedLynxOnChain)} $LYNX</span>
                 </div>
                 <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider">
                   <span className="text-[#52525B]">{t('portfolio.feeShare', 'Fee Share')}</span>
@@ -621,7 +623,7 @@ export function PortfolioView() {
                   </div>
                   <div className="bg-[#141417] border border-[#27272A] rounded p-3 flex-1 text-center">
                     <div className="text-[9px] text-[#71717A] uppercase font-bold tracking-widest mb-2">{t('portfolio.staked', 'Staked')}</div>
-                    <div className="text-sm font-mono font-bold text-white">{formatNumber(portfolio.stakedLynx || 0)}</div>
+                    <div className="text-sm font-mono font-bold text-white">{formatNumber(stakedLynxOnChain)}</div>
                   </div>
                 </div>
                 
@@ -659,7 +661,7 @@ export function PortfolioView() {
                     className="w-full bg-[#18181B] border border-[#27272A] rounded p-3 text-sm text-white placeholder-[#52525B] focus:outline-none focus:border-[#00FFD1]/50 focus:ring-1 focus:ring-[#00FFD1]/50 transition-all font-mono"
                   />
                   <button 
-                    onClick={() => setStakeAmount(String(stakeMode === 'stake' ? portfolio.lynxBalance : portfolio.stakedLynx))}
+                    onClick={() => setStakeAmount(String(stakeMode === 'stake' ? lynxBalanceOnChain : stakedLynxOnChain))}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-bold text-[#00FFD1] uppercase tracking-widest hover:underline"
                   >
                     {t('portfolio.max', 'MAX')}
