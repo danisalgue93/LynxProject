@@ -18,7 +18,7 @@
  */
 
 import { Connection, PublicKey, Transaction, TransactionInstruction, Keypair, sendAndConfirmTransaction } from '@solana/web3.js';
-import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } from '@solana/spl-token';
+import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction } from '@solana/spl-token';
 import bs58 from 'bs58';
 import { readFileSync } from 'fs';
 
@@ -89,6 +89,9 @@ const IX = {
   executePredictionLimitOrderSol: Buffer.from([56, 177, 97, 204, 12, 178, 243, 17]),
   executePredictionLimitOrderLynx: Buffer.from([247, 237, 45, 14, 53, 85, 90, 40]),
   matchSpotOrders: Buffer.from([65, 14, 80, 122, 12, 6, 136, 178]),
+  resolveDuelSol: Buffer.from([129, 41, 7, 114, 73, 244, 181, 126]),
+  resolveProtocolDuel: Buffer.from([35, 255, 3, 100, 146, 192, 185, 59]),
+  finalizeDaoProposal: Buffer.from([76, 23, 122, 24, 113, 102, 12, 35]),
 };
 
 export type OnChainOutcome = 'Unresolved' | 'Yes' | 'No' | 'Draw';
@@ -658,7 +661,115 @@ export async function runKeeperOnce() {
   }
 
   await matchSpotOrdersOnce(keeper, conn);
+  await settleReadyDuels(keeper, conn);
+  await finalizeReadyDaoProposals(keeper, conn);
   keeperConsecutiveErrors = 0; // Reset on successful completion
+}
+
+// Settle duels whose parent market has resolved. Permissionless cranks
+// (resolve_duel_sol / resolve_protocol_duel); the program re-checks who won and
+// pins the recipient/LYNX account on-chain, so a wrong recipient here only fails
+// the tx, never misroutes funds. Account order MUST match ResolveDuelSol /
+// ResolveProtocolDuel in lib.rs.
+async function settleReadyDuels(keeper: Keypair, conn: Connection) {
+  if (!PROGRAM_ID) return;
+  let treasury: PublicKey;
+  let lynxMint: PublicKey;
+  try {
+    ({ treasury, lynxMint } = await getConfigInfo(conn));
+  } catch {
+    return; // config not readable — skip this pass
+  }
+  const configPk = pda([Buffer.from('config')], PROGRAM_ID);
+
+  for (const d of duelsByPubkey.values()) {
+    if (d.status !== 'Active') continue;
+    const market = marketsByPubkey.get(d.parentMarket);
+    if (!market || market.status !== 'Resolved') continue;
+    try {
+      const duelPk = new PublicKey(d.pubkey);
+      const parentMarketPk = new PublicKey(d.parentMarket);
+      const duelVault = pda([Buffer.from('duel_vault'), duelPk.toBuffer()], PROGRAM_ID);
+
+      const instructions: TransactionInstruction[] = [];
+      if (d.duelType === 'OneVOne') {
+        const creatorWins = market.result === d.creatorOutcome;
+        const rivalWins = market.result === d.rivalOutcome;
+        const recipient = creatorWins && !rivalWins ? new PublicKey(d.creator)
+          : rivalWins && !creatorWins ? new PublicKey(d.rival)
+          : treasury; // tie / both-or-neither -> pool to treasury (mirrors lib.rs)
+        instructions.push(new TransactionInstruction({
+          programId: PROGRAM_ID,
+          keys: [
+            { pubkey: configPk, isSigner: false, isWritable: false },
+            { pubkey: parentMarketPk, isSigner: false, isWritable: false },
+            { pubkey: duelPk, isSigner: false, isWritable: true },
+            { pubkey: duelVault, isSigner: false, isWritable: true },
+            { pubkey: recipient, isSigner: false, isWritable: true },
+            { pubkey: treasury, isSigner: false, isWritable: true },
+          ],
+          data: IX.resolveDuelSol,
+        }));
+      } else {
+        // OneVOneVProtocol: recipient is always the creator; the LYNX bonus is
+        // minted to the creator's ATA, so ensure it exists (keeper pays rent).
+        const creator = new PublicKey(d.creator);
+        const recipientLynxAccount = await getAssociatedTokenAddress(lynxMint, creator);
+        const ataInfo = await withRpcTimeout(conn.getAccountInfo(recipientLynxAccount), 'settleDuel:getAccountInfo:ata', 15000);
+        if (!ataInfo) {
+          instructions.push(createAssociatedTokenAccountInstruction(keeper.publicKey, recipientLynxAccount, creator, lynxMint));
+        }
+        instructions.push(new TransactionInstruction({
+          programId: PROGRAM_ID,
+          keys: [
+            { pubkey: configPk, isSigner: false, isWritable: true },
+            { pubkey: parentMarketPk, isSigner: false, isWritable: false },
+            { pubkey: duelPk, isSigner: false, isWritable: true },
+            { pubkey: duelVault, isSigner: false, isWritable: true },
+            { pubkey: creator, isSigner: false, isWritable: true },
+            { pubkey: lynxMint, isSigner: false, isWritable: true },
+            { pubkey: recipientLynxAccount, isSigner: false, isWritable: true },
+            { pubkey: treasury, isSigner: false, isWritable: true },
+            { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          ],
+          data: IX.resolveProtocolDuel,
+        }));
+      }
+
+      const tx = new Transaction();
+      instructions.forEach((ix) => tx.add(ix));
+      tx.feePayer = keeper.publicKey;
+      const signature = await sendAndConfirmTransaction(conn, tx, [keeper], { commitment: 'confirmed' });
+      chainLog.info('keeper settled duel', { duel: d.pubkey, duelType: d.duelType, signature });
+    } catch (err: any) {
+      chainLog.warn('keeper failed to settle duel', { duel: d.pubkey, error: err?.message });
+    }
+  }
+}
+
+// Close DAO proposals whose voting window has ended. finalize_dao_proposal is
+// permissionless and takes only the proposal account; the winner is decided by
+// the majority of on-chain votes.
+async function finalizeReadyDaoProposals(keeper: Keypair, conn: Connection) {
+  if (!PROGRAM_ID) return;
+  const now = Math.floor(Date.now() / 1000);
+  for (const p of daoProposalsByPubkey.values()) {
+    if (p.status !== 'Active') continue;
+    if (now < p.endTs) continue;
+    try {
+      const ix = new TransactionInstruction({
+        programId: PROGRAM_ID,
+        keys: [{ pubkey: new PublicKey(p.pubkey), isSigner: false, isWritable: true }],
+        data: IX.finalizeDaoProposal,
+      });
+      const tx = new Transaction().add(ix);
+      tx.feePayer = keeper.publicKey;
+      const signature = await sendAndConfirmTransaction(conn, tx, [keeper], { commitment: 'confirmed' });
+      chainLog.info('keeper finalized dao proposal', { proposal: p.pubkey, signature });
+    } catch (err: any) {
+      chainLog.warn('keeper failed to finalize dao proposal', { proposal: p.pubkey, error: err?.message });
+    }
+  }
 }
 
 // Cruza ordenes del libro LYNX/SOL de forma greedy (prioridad precio-tiempo),

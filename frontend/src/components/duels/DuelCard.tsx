@@ -47,7 +47,9 @@ export function DuelCard({ duel }: DuelCardProps) {
     try {
       await executeTransaction(
         async () => {
-          await acceptDuel(duel.id, position);
+          // Pass the whole duel so accept goes on-chain when it carries
+          // onChainDuel/onChainMarket (falls back to off-chain otherwise).
+          await acceptDuel(duel, position);
           return `accept-duel-${duel.id}-${Date.now()}`;
         },
         {
@@ -70,7 +72,7 @@ export function DuelCard({ duel }: DuelCardProps) {
     try {
       await executeTransaction(
         async () => {
-          await cancelDuel(duel.id);
+          await cancelDuel(duel);
           return `cancel-duel-${duel.id}-${Date.now()}`;
         },
         {

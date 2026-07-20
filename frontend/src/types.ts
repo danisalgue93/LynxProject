@@ -64,6 +64,12 @@ export interface Duel {
   acceptedAt?: number;
   resolvedAt?: number;
   winner?: string;
+  // Present when the duel lives on-chain (indexed from the Duel account). These
+  // let accept/cancel build the real Anchor transaction against the right
+  // accounts. Absent for legacy off-chain duels.
+  onChainDuel?: string;   // Duel account pubkey
+  onChainMarket?: string; // parent Market account pubkey
+  duelType?: 'OneVOne' | 'OneVOneVProtocol';
 }
 
 export interface Order {

@@ -251,7 +251,9 @@ export function Dashboard() {
             onClose={() => setIsCreateDuelOpen(false)} 
             onSubmit={async (data) => {
               try {
-                await createDuel(data);
+                // Carry the parent market's on-chain pubkey so the duel is
+                // created on-chain (SOL) when the market lives on-chain.
+                await createDuel({ ...data, onChainMarket: selectedMarket?.onChainMarket });
                 setIsCreateDuelOpen(false);
               } catch (e: any) {
                 console.error(e);
@@ -260,7 +262,7 @@ export function Dashboard() {
                   message: e?.message || t('duels.createFailed', 'Failed to create duel'),
                 });
               }
-            }} 
+            }}
           />
         )}
         {isCreateMarketOpen && isAdmin && (

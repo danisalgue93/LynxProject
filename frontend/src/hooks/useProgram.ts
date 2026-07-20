@@ -22,10 +22,16 @@ import {
   buildStakeLynxTx,
   buildUnstakeLynxTx,
   buildClaimStakingRewardsTx,
+  buildCreateDaoProposalTx,
+  buildCastDaoVoteTx,
+  buildCreateDuelTx,
+  buildAcceptDuelTx,
+  buildCancelDuelTx,
   readStakePosition,
   readLynxBalance,
   maxPriceBpsWithSlippage,
   type OnChainOutcome,
+  type DuelType,
   type StakeInfo,
 } from '../lib/lynxProgram';
 
@@ -50,12 +56,73 @@ function toOnChainOutcome(position: string): OnChainOutcome {
   throw new Error(`Posicion "${position}" no soportada on-chain.`);
 }
 
+// Shape returned by GET /api/onchain/dao-proposals (see backend chain.ts
+// IndexedDaoProposal). Votes are stake-weighted, in micro-LYNX.
+type OnChainDaoProposalDto = {
+  pubkey: string; id: string; proposer: string; title: string;
+  createdTs: number; endTs: number; votesYes: string; votesNo: string;
+  status: 'Active' | 'Passed' | 'Rejected';
+};
+
+// Shape returned by GET /api/onchain/duels (see backend chain.ts IndexedDuel).
+type OnChainDuelDto = {
+  pubkey: string; id: string; parentMarket: string; creator: string; rival: string;
+  amount: string; creatorOutcome: OnChainOutcome; rivalOutcome: OnChainOutcome;
+  duelType: DuelType; status: 'Open' | 'Active' | 'Resolved' | 'Cancelled'; expiresTs: number;
+};
+
+const SYSTEM_PROGRAM_ID = '11111111111111111111111111111111'; // Pubkey::default (unaccepted duel's rival)
+
+function outcomeToPosition(o: OnChainOutcome): Position {
+  return o === 'Yes' ? Position.YES : o === 'No' ? Position.NO : o === 'Draw' ? Position.DRAW : Position.YES;
+}
+
+function mapOnChainDuel(d: OnChainDuelDto): Duel {
+  const rivalSet = d.rival && d.rival !== SYSTEM_PROGRAM_ID;
+  const status = d.status === 'Open' ? 'OPEN' : d.status === 'Active' ? 'ACTIVE'
+    : d.status === 'Resolved' ? 'RESOLVED' : 'CANCELLED';
+  return {
+    id: d.pubkey, // the duel account pubkey is the stable id for accept/cancel
+    parentMarketId: d.parentMarket,
+    creator: d.creator,
+    rival: rivalSet ? d.rival : undefined,
+    amount: Number(d.amount) / 1_000_000_000, // lamports -> SOL
+    currency: 'SOL',
+    status: status as Duel['status'],
+    positionA: outcomeToPosition(d.creatorOutcome),
+    positionB: outcomeToPosition(d.rivalOutcome),
+    createdAt: 0,
+    onChainDuel: d.pubkey,
+    onChainMarket: d.parentMarket,
+    duelType: d.duelType,
+  };
+}
+
+function mapOnChainProposal(p: OnChainDaoProposalDto): Proposal {
+  const status = p.status === 'Passed' ? 'passed' : p.status === 'Rejected' ? 'rejected' : 'active';
+  return {
+    id: p.id,
+    title: p.title,
+    description: '',
+    status,
+    votesYes: Number(p.votesYes) / 1_000_000, // micro-LYNX -> LYNX
+    votesNo: Number(p.votesNo) / 1_000_000,
+    endTime: new Date(p.endTs * 1000).toISOString(),
+    category: 'community',
+    author: p.proposer,
+  };
+}
+
 export interface CreateDuelParams {
   marketId: string;
   side: Position;
   amount: number;
   currency: 'SOL' | 'LYNX';
   type?: string;
+  // When the parent market is on-chain, pass its account pubkey to create the
+  // duel on-chain (SOL only). Absent → legacy off-chain duel.
+  onChainMarket?: string;
+  expiresTs?: number; // unix seconds; defaults to +7d
 }
 
 export interface CreateMarketParams {
@@ -339,6 +406,11 @@ export function useProgram() {
     const opId = `fetchDuels-${Date.now()}`;
     startOp(opId);
     try {
+      // On-chain-is-truth: read the indexed Duel accounts; fall back to legacy.
+      try {
+        const res = await apiFetch<{ data: OnChainDuelDto[] }>('/api/onchain/duels');
+        if (res?.data?.length) return res.data.map(mapOnChainDuel);
+      } catch { /* on-chain index unavailable — fall through to legacy */ }
       const response = await apiFetch<{ data: Duel[]; total: number; limit: number; offset: number }>('/api/duels?limit=200');
       return response.data;
     } catch (err: any) {
@@ -349,10 +421,28 @@ export function useProgram() {
     }
   }, [startOp, endOp]);
 
+  // On-chain duels are SOL-only (the DuelVault holds lamports) and need an
+  // on-chain parent Market + a connected wallet. Otherwise falls back to the
+  // legacy off-chain duel.
   const createDuel = useCallback(async (duelParams: CreateDuelParams) => {
     const opId = `createDuel-${Date.now()}`;
     startOp(opId);
     try {
+      if (publicKey && duelParams.onChainMarket && (duelParams.currency ?? 'SOL') === 'SOL') {
+        const duelType: DuelType = (duelParams.type === 'protocol' || duelParams.type === 'OneVOneVProtocol')
+          ? 'OneVOneVProtocol' : 'OneVOne';
+        const expiresTs = duelParams.expiresTs ?? Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
+        const { tx } = await buildCreateDuelTx({
+          creator: publicKey,
+          parentMarket: new PublicKey(duelParams.onChainMarket),
+          creatorOutcome: toOnChainOutcome(duelParams.side),
+          duelType,
+          amountSol: duelParams.amount,
+          expiresTs,
+        });
+        const signature = await signAndSendOnChain(tx);
+        return { signature, onChain: true as const };
+      }
       const currentWallet = await ensureApproved();
       return await apiFetch('/api/duels', {
         method: 'POST',
@@ -361,7 +451,7 @@ export function useProgram() {
     } finally {
       endOp(opId);
     }
-  }, [ensureApproved, startOp, endOp]);
+  }, [publicKey, ensureApproved, signAndSendOnChain, startOp, endOp]);
 
   // Crea el mercado ON-CHAIN de verdad: el admin firma create_market con su
   // wallet externa, se espera confirmacion, y solo entonces se registra en el
@@ -437,10 +527,17 @@ export function useProgram() {
   }, [requireWallet, startOp, endOp]);
 
   // Fetch DAO proposals
+  // On-chain-is-truth: read the indexed DaoProposal accounts. Falls back to the
+  // legacy off-chain list only if the on-chain index is unavailable or empty
+  // (transition period, see LAUNCH_DECISIONS.md phase 5 / audit M-N2).
   const fetchProposals = useCallback(async (): Promise<Proposal[]> => {
     const opId = `fetchProposals-${Date.now()}`;
     startOp(opId);
     try {
+      try {
+        const res = await apiFetch<{ data: OnChainDaoProposalDto[] }>('/api/onchain/dao-proposals');
+        if (res?.data?.length) return res.data.map(mapOnChainProposal);
+      } catch { /* on-chain index unavailable — fall through to legacy */ }
       return await apiFetch<Proposal[]>('/api/proposals');
     } catch (err: any) {
       setError(err.message || 'Failed to fetch proposals');
@@ -450,10 +547,19 @@ export function useProgram() {
     }
   }, [startOp, endOp]);
 
-  const createProposal = useCallback(async (input: { title: string; description?: string; category?: string; author?: string }) => {
+  // Creating a DAO proposal is ADMIN-ONLY on-chain (the program enforces
+  // config.admin) and requires an external wallet to sign. Legacy off-chain path
+  // kept only for managed (email) accounts without a signing wallet.
+  const createProposal = useCallback(async (input: { title: string; description?: string; category?: string; author?: string; durationSeconds?: number }) => {
     const opId = `createProposal-${Date.now()}`;
     startOp(opId);
     try {
+      if (publicKey) {
+        const durationSeconds = input.durationSeconds ?? 7 * 24 * 60 * 60; // 7d default
+        const { tx } = buildCreateDaoProposalTx({ admin: publicKey, title: input.title, durationSeconds });
+        const signature = await signAndSendOnChain(tx);
+        return { signature, onChain: true as const };
+      }
       return await apiFetch('/api/proposals', {
         method: 'POST',
         body: JSON.stringify(input)
@@ -464,7 +570,7 @@ export function useProgram() {
     } finally {
       endOp(opId);
     }
-  }, [startOp, endOp]);
+  }, [publicKey, signAndSendOnChain, startOp, endOp]);
 
   // Fetch DAO Stats
   const fetchDaoStats = useCallback(async (): Promise<any> => {
@@ -480,10 +586,19 @@ export function useProgram() {
     }
   }, [startOp, endOp]);
 
+  // On-chain stake-weighted vote when a wallet is connected: the program pins the
+  // weight to the voter's StakePosition and blocks double-voting via the DaoVote
+  // PDA. On-chain proposal ids are numeric; a non-numeric id is a legacy off-chain
+  // proposal and routes to the old path.
   const castVote = useCallback(async (proposalId: string, voteType: 'yes' | 'no') => {
     const opId = `castVote-${Date.now()}`;
     startOp(opId);
     try {
+      if (publicKey && /^\d+$/.test(proposalId)) {
+        const tx = buildCastDaoVoteTx({ voter: publicKey, proposalId: BigInt(proposalId), voteYes: voteType === 'yes' });
+        const signature = await signAndSendOnChain(tx);
+        return { signature, onChain: true as const };
+      }
       const currentWallet = await ensureApproved();
       return await apiFetch(`/api/proposals/${proposalId}/vote`, {
         method: 'POST',
@@ -492,7 +607,7 @@ export function useProgram() {
     } finally {
       endOp(opId);
     }
-  }, [ensureApproved, startOp, endOp]);
+  }, [publicKey, ensureApproved, signAndSendOnChain, startOp, endOp]);
 
   // Staking is on-chain (phase 5): stake/unstake/claim build and sign real Anchor
   // transactions against the user's own LYNX, and the staked balance / pending
@@ -550,10 +665,24 @@ export function useProgram() {
     return readLynxBalance(connection, publicKey);
   }, [publicKey, connection]);
 
-  const acceptDuel = useCallback(async (duelId: string, position?: string) => {
+  // Accept a duel. Pass the full Duel object (with onChainDuel/onChainMarket) to
+  // stake the matching SOL on-chain via accept_duel; a bare id string keeps the
+  // legacy off-chain path (backward compatible for callers not yet updated).
+  const acceptDuel = useCallback(async (duel: Duel | string, position?: string) => {
     const opId = `acceptDuel-${Date.now()}`;
     startOp(opId);
     try {
+      if (publicKey && typeof duel === 'object' && duel.onChainDuel && duel.onChainMarket && position) {
+        const tx = buildAcceptDuelTx({
+          rival: publicKey,
+          duel: new PublicKey(duel.onChainDuel),
+          parentMarket: new PublicKey(duel.onChainMarket),
+          rivalOutcome: toOnChainOutcome(position),
+        });
+        const signature = await signAndSendOnChain(tx);
+        return { signature, onChain: true as const };
+      }
+      const duelId = typeof duel === 'string' ? duel : duel.id;
       const currentWallet = await ensureApproved();
       return await apiFetch(`/api/duels/${duelId}/accept`, {
         method: 'POST',
@@ -562,12 +691,20 @@ export function useProgram() {
     } finally {
       endOp(opId);
     }
-  }, [ensureApproved, startOp, endOp]);
+  }, [publicKey, ensureApproved, signAndSendOnChain, startOp, endOp]);
 
-  const cancelDuel = useCallback(async (duelId: string) => {
+  // Cancel an unaccepted duel and reclaim the creator's SOL. On-chain via
+  // cancel_duel when the Duel object carries onChainDuel; legacy otherwise.
+  const cancelDuel = useCallback(async (duel: Duel | string) => {
     const opId = `cancelDuel-${Date.now()}`;
     startOp(opId);
     try {
+      if (publicKey && typeof duel === 'object' && duel.onChainDuel) {
+        const tx = buildCancelDuelTx({ creator: publicKey, duel: new PublicKey(duel.onChainDuel) });
+        const signature = await signAndSendOnChain(tx);
+        return { signature, onChain: true as const };
+      }
+      const duelId = typeof duel === 'string' ? duel : duel.id;
       const currentWallet = await ensureApproved();
       return await apiFetch(`/api/duels/${duelId}`, {
         method: 'DELETE',
@@ -576,7 +713,7 @@ export function useProgram() {
     } finally {
       endOp(opId);
     }
-  }, [ensureApproved, startOp, endOp]);
+  }, [publicKey, ensureApproved, signAndSendOnChain, startOp, endOp]);
 
 
   const depositSol = useCallback(async (amount: number, onChainSignature?: string) => {

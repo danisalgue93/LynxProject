@@ -272,8 +272,8 @@ export function PublicPage() {
           <CreateDuelModal 
             onClose={() => setIsCreateDuelOpen(false)} 
             onSubmit={async (data) => {
-              await createDuel(data);
-            }} 
+              await createDuel({ ...data, onChainMarket: selectedMarket?.onChainMarket });
+            }}
           />
         )}
       </AnimatePresence>
