@@ -77,7 +77,11 @@ async function startServer() {
       return;
     }
 
-    const walletAddress = typeof req.query.walletAddress === 'string' ? req.query.walletAddress.trim() : '';
+    // Only forward a wallet that looks like a Solana address (base58, 32–44
+    // chars); otherwise drop it rather than HMAC-signing an arbitrary
+    // attacker-supplied value into the MoonPay URL (audit B-N5).
+    const rawWallet = typeof req.query.walletAddress === 'string' ? req.query.walletAddress.trim() : '';
+    const walletAddress = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(rawWallet) ? rawWallet : '';
     const currencyCode = typeof req.query.currencyCode === 'string' ? req.query.currencyCode.trim().toLowerCase() : 'sol';
     const baseUrl = process.env.MOONPAY_WIDGET_URL || 'https://buy.moonpay.com';
     const url = new URL(baseUrl);

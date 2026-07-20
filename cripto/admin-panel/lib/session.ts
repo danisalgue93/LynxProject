@@ -11,8 +11,11 @@ export type AdminSession = {
 
 function sessionPassword() {
   const value = process.env.SESSION_SECRET;
-  if (!value) {
-    throw new Error('Missing env var: SESSION_SECRET. Set it to a cryptographically random string of at least 32 characters.');
+  // iron-session requires a key of at least 32 characters; enforce it here so a
+  // too-short secret fails loudly at import time with an actionable message,
+  // rather than deep inside iron-session at the first request (audit B-N6).
+  if (!value || value.length < 32) {
+    throw new Error('Missing or too-short env var: SESSION_SECRET. Set it to a cryptographically random string of at least 32 characters.');
   }
   return value;
 }

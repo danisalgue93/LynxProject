@@ -15,6 +15,30 @@ real de las suites de test.
 
 ---
 
+## 0. Estado de correcciones — iteración 1
+
+Aplicadas y verificadas en esta ronda (`tsc` + tests verdes en frontend y
+admin-panel; compose revisado):
+
+| Hallazgo | Estado |
+|----------|--------|
+| **A-N1** Redis URL/password | ✅ CORREGIDO — `docker-compose.yml` sin `REDIS_USER`, `redis://:${REDIS_PASSWORD:?…}@`, `:?` en las 3 referencias |
+| **M-N1** `.env.local` trackeado | ✅ CORREGIDO — `git rm --cached`, ya ignorado |
+| **B-N1** `@google/genai` sin usar | ✅ CORREGIDO — desinstalado (−16 paquetes); `npm audit` front = 0 vulns |
+| **B-N2** cabeceras en assets nginx | ✅ CORREGIDO — HSTS/nosniff/X-Frame re-declaradas en la location de assets |
+| **B-N5** MoonPay | ✅ CORREGIDO — `walletAddress` validado (base58 32–44) + `limit_req` en `/integrations/` |
+| **B-N6** longitud `SESSION_SECRET` | ✅ CORREGIDO — exige ≥32 chars |
+| **M-N3** `npm audit` en CI | ✅ CORREGIDO — paso advisory en los 3 jobs JS |
+
+Diferidos con justificación (grandes o por-diseño):
+- **M-N2** migración on-chain: decisión de producto (20–60 h) — fuera del alcance de un fix puntual.
+- **B-N3** denylist de access token: mitigado por TTL 15 min; endurecimiento opcional.
+- **B-N4** `error.message` al admin: **aceptado por diseño** — el panel es una herramienta de un operador de confianza (host-allowlist + TOTP + iron-session) que NECESITA el detalle para diagnosticar un mercado atascado; degradarlo a genérico perjudica el propósito del panel.
+- **B-N7** migración completa a `DomainError`: incremental; la infraestructura ya está.
+- **I-1** modularización de ficheros grandes: continuo.
+
+---
+
 ## 1. Resumen ejecutivo
 
 LynxProject es un protocolo de mercados de predicción en Solana con dinero

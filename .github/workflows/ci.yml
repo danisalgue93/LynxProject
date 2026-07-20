@@ -57,6 +57,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # M-N3: surface known CVEs on every run. Advisory (continue-on-error) so a
+      # single accepted transitive advisory (e.g. bigint-buffer via web3.js) does
+      # not block the pipeline, while still logging anything new for triage.
+      - name: Audit dependencies (advisory)
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+
       - name: Generate Prisma client
         run: npx prisma generate
 
@@ -91,6 +98,13 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # M-N3: surface known CVEs on every run. Advisory (continue-on-error) so a
+      # single accepted transitive advisory (e.g. bigint-buffer via web3.js) does
+      # not block the pipeline, while still logging anything new for triage.
+      - name: Audit dependencies (advisory)
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
 
       - name: Lint
         run: npm run lint
@@ -128,6 +142,13 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # M-N3: surface known CVEs on every run. Advisory (continue-on-error) so a
+      # single accepted transitive advisory (e.g. bigint-buffer via web3.js) does
+      # not block the pipeline, while still logging anything new for triage.
+      - name: Audit dependencies (advisory)
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
 
       - name: Lint
         run: npm run lint

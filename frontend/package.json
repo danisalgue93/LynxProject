@@ -16,7 +16,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@google/genai": "^1.29.0",
     "@sentry/react": "^8.48.0",
     "@solana/spl-token": "^0.4.9",
     "@solana/wallet-adapter-base": "^0.9.27",
