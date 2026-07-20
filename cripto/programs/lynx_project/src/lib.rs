@@ -351,7 +351,13 @@ pub mod lynx_project {
         Ok(())
     }
 
-    pub fn buy_position_sol(ctx: Context<BuyPositionSol>, outcome: Outcome, lamports: u64) -> Result<()> {
+    // max_price_bps: proteccion de slippage. Precio implicito maximo (en bps,
+    // 1..=10000) del lado elegido que el comprador acepta dado el estado ACTUAL
+    // del pool. Si el pool ya tiene liquidez y el lado se encarecio por encima
+    // de esa tolerancia entre que el usuario vio la cotizacion y confirmo, la
+    // instruccion revierte en vez de ejecutar a un reparto peor. Pasa 10000
+    // para desactivar el guard (equivale a "a cualquier precio").
+    pub fn buy_position_sol(ctx: Context<BuyPositionSol>, outcome: Outcome, lamports: u64, max_price_bps: u64) -> Result<()> {
         require!(lamports > 0, LynxError::InvalidAmount);
         require!(lamports >= MIN_ORDER_LAMPORTS, LynxError::InvalidAmount);
         require!(lamports <= MAX_ORDER_LAMPORTS, LynxError::InvalidAmount);
@@ -363,6 +369,7 @@ pub mod lynx_project {
         require!(market.currency == Currency::SOL, LynxError::InvalidCurrency);
         require!(market.status == MarketStatus::Open || market.status == MarketStatus::Active, LynxError::MarketClosed);
         require!(now < market.cutoff_ts, LynxError::MarketClosed);
+        enforce_market_slippage(market, outcome, max_price_bps)?;
 
         invoke(
             &system_instruction::transfer(&ctx.accounts.buyer.key(), &ctx.accounts.vault.key(), lamports),
@@ -451,7 +458,9 @@ pub mod lynx_project {
         Ok(())
     }
 
-    pub fn buy_position_lynx_with_burn(ctx: Context<BuyPositionLynxWithBurn>, outcome: Outcome, amount: u64) -> Result<()> {
+    // max_price_bps: misma proteccion de slippage que buy_position_sol (ver
+    // ahi). Pasa 10000 para desactivarla.
+    pub fn buy_position_lynx_with_burn(ctx: Context<BuyPositionLynxWithBurn>, outcome: Outcome, amount: u64, max_price_bps: u64) -> Result<()> {
         require!(amount > 0, LynxError::InvalidAmount);
         require!(amount >= MIN_ORDER_LAMPORTS, LynxError::InvalidAmount);
         require!(amount <= MAX_ORDER_LAMPORTS, LynxError::InvalidAmount);
@@ -463,6 +472,7 @@ pub mod lynx_project {
         let market = &mut ctx.accounts.market;
         require!(market.status == MarketStatus::Open || market.status == MarketStatus::Active, LynxError::MarketClosed);
         require!(now < market.cutoff_ts, LynxError::MarketClosed);
+        enforce_market_slippage(market, outcome, max_price_bps)?;
 
         let burn_amount = bps(amount, LYNX_EVENT_BURN_BPS)?;
         if burn_amount > 0 {
@@ -2714,6 +2724,23 @@ fn implied_price_bps(market: &Market, outcome: Outcome) -> Result<u64> {
         .ok_or(LynxError::MathOverflow)?
         .checked_div(market.pool_total)
         .ok_or_else(|| error!(LynxError::MathOverflow))
+}
+
+// Proteccion de slippage para compras a mercado. max_price_bps es el precio
+// implicito maximo (bps) del lado elegido que el comprador tolera, medido sobre
+// el estado ACTUAL del pool (antes de anadir su propia compra, que es el precio
+// que vio en la UI). Con el pool vacio no hay precio de referencia — el primer
+// comprador fija el precio inicial — asi que el guard se omite. Mismo
+// numerador/denominador que las ordenes limite (implied_price_bps), de modo que
+// ambos caminos hablan de "precio" en la misma escala.
+fn enforce_market_slippage(market: &Market, outcome: Outcome, max_price_bps: u64) -> Result<()> {
+    require!((1..=BPS_DENOMINATOR).contains(&max_price_bps), LynxError::InvalidSlippage);
+    if market.pool_total == 0 {
+        return Ok(());
+    }
+    let current = implied_price_bps(market, outcome)?;
+    require!(current <= max_price_bps, LynxError::SlippageExceeded);
+    Ok(())
 }
 
 // Convierte una cantidad de micro-LYNX a lamports al precio dado (escalado

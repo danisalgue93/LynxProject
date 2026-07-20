@@ -67,6 +67,7 @@ export type OnChainOutcome = 'Yes' | 'No' | 'Draw';
 // Recalcula estos si cambias los nombres de las instrucciones/cuentas en el
 // programa Anchor (ver cripto/programs/lynx_project/src/lib.rs).
 const IX = {
+  createMarket: Buffer.from([103, 226, 97, 235, 200, 188, 251, 254]),
   buyPositionSol: Buffer.from([156, 155, 60, 104, 79, 37, 11, 151]),
   buyPositionLynxWithBurn: Buffer.from([233, 55, 73, 166, 178, 33, 3, 126]),
   createPredictionLimitOrderSol: Buffer.from([119, 18, 41, 21, 24, 40, 207, 22]),
@@ -102,6 +103,22 @@ function outcomeByte(outcome: OnChainOutcome): number {
   return { Yes: 1, No: 2, Draw: 3 }[outcome];
 }
 
+// Enum Currency on-chain (state.rs): SOL = 0, LYNX = 1.
+function currencyByte(currency: 'SOL' | 'LYNX'): number {
+  return currency === 'SOL' ? 0 : 1;
+}
+
+// Debe coincidir con Market::TITLE_MAX en state.rs.
+export const MARKET_TITLE_MAX = 128;
+
+// Serializa un String de Borsh: u32 LE de longitud (en bytes UTF-8) + bytes.
+function borshString(value: string): Buffer {
+  const bytes = Buffer.from(value, 'utf8');
+  const len = Buffer.alloc(4);
+  len.writeUInt32LE(bytes.length, 0);
+  return Buffer.concat([len, bytes]);
+}
+
 function u64LE(value: bigint | number): Buffer {
   const buf = Buffer.alloc(8);
   buf.writeBigUInt64LE(BigInt(value), 0);
@@ -132,10 +149,50 @@ export function probabilityToBps(probability: number): number {
   return Math.max(0, Math.min(BPS_DENOMINATOR, Math.round(probability * BPS_DENOMINATOR)));
 }
 
+// Banda de slippage por defecto para compras a mercado: 10 puntos porcentuales
+// sobre el precio implicito que el usuario vio. Generosa a proposito para no
+// revertir compras legitimas en pools pequenos (donde una sola apuesta mueve
+// mucho el precio implicito), pero corta un movimiento grande e inesperado.
+export const DEFAULT_SLIPPAGE_BPS = 1000;
+
+// Recorta max_price_bps al rango valido on-chain (1..=10000). 10000 = sin
+// proteccion. Ver enforce_market_slippage en lib.rs.
+function clampMaxPriceBps(value?: number): number {
+  if (value === undefined || !Number.isFinite(value)) return BPS_DENOMINATOR;
+  return Math.max(1, Math.min(BPS_DENOMINATOR, Math.round(value)));
+}
+
+// Precio implicito (bps) del lado `outcome` dado el estado actual del pool, o
+// null si el pool esta vacio (aun no hay precio de referencia).
+export function impliedPriceBpsForSide(pool: { yes: number; no: number; draw?: number }, outcome: OnChainOutcome): number | null {
+  const total = pool.yes + pool.no + (pool.draw ?? 0);
+  if (total <= 0) return null;
+  const side = outcome === 'Yes' ? pool.yes : outcome === 'No' ? pool.no : (pool.draw ?? 0);
+  return Math.round((side / total) * BPS_DENOMINATOR);
+}
+
+// max_price_bps para una compra a mercado: precio implicito actual del lado +
+// una banda de tolerancia. Si el pool esta vacio devuelve 10000 (el guard
+// on-chain se omite igualmente para el primer comprador).
+export function maxPriceBpsWithSlippage(
+  pool: { yes: number; no: number; draw?: number },
+  outcome: OnChainOutcome,
+  slippageBps: number = DEFAULT_SLIPPAGE_BPS,
+): number {
+  const current = impliedPriceBpsForSide(pool, outcome);
+  if (current === null) return BPS_DENOMINATOR;
+  return clampMaxPriceBps(current + slippageBps);
+}
+
 // --- PDAs ---
 
 export function configPda(programId = getProgramId()) {
   return PublicKey.findProgramAddressSync([Buffer.from('config')], programId)[0];
+}
+
+// Market PDA: seeds = [b"market", market_id.to_le_bytes()] (ver CreateMarket en lib.rs).
+export function marketPda(marketId: bigint, programId = getProgramId()) {
+  return PublicKey.findProgramAddressSync([Buffer.from('market'), u64LE(marketId)], programId)[0];
 }
 
 export function marketVaultPda(market: PublicKey, programId = getProgramId()) {
@@ -310,6 +367,62 @@ function buildTx(instructions: TransactionInstruction[], feePayer: PublicKey): T
   return tx;
 }
 
+// --- Creacion de mercado (admin) ---
+//
+// Construye la instruccion create_market que el admin firma con su wallet. El
+// mercado y su boveda son PDAs init; el backend NO custodia nada: solo verifica
+// contra el RPC que esta cuenta Market existe, la posee el programa y su titulo
+// coincide, antes de indexarla (ver backend/src/chain.ts verifyOnChainMarketCreation).
+//
+// oracle_authority es quien podra proponer/resolver el resultado on-chain; para
+// mercados manuales ("manual:admin") es el propio admin. cutoff_ts/resolve_ts van
+// en SEGUNDOS unix (el programa los compara contra Clock).
+export function buildCreateMarketTx(params: {
+  admin: PublicKey;
+  title: string;
+  currency: 'SOL' | 'LYNX';
+  isTernary: boolean;
+  cutoffTs: number; // unix seconds
+  resolveTs: number; // unix seconds
+  oracleAuthority?: PublicKey; // por defecto, el admin (oraculo manual)
+}): { tx: Transaction; marketId: bigint; marketPubkey: PublicKey } {
+  const { admin, title, currency, isTernary, cutoffTs, resolveTs } = params;
+  const trimmedTitle = title.trim();
+  if (!trimmedTitle) throw new Error('El titulo del mercado no puede estar vacio.');
+  if (Buffer.from(trimmedTitle, 'utf8').length > MARKET_TITLE_MAX) {
+    throw new Error(`El titulo del mercado supera ${MARKET_TITLE_MAX} bytes.`);
+  }
+  const programId = getProgramId();
+  const oracleAuthority = params.oracleAuthority ?? admin;
+  const marketId = randomOrderId();
+  const market = marketPda(marketId, programId);
+  const config = configPda(programId);
+  const vault = marketVaultPda(market, programId);
+
+  const data = Buffer.concat([
+    IX.createMarket,
+    u64LE(marketId),
+    borshString(trimmedTitle),
+    oracleAuthority.toBuffer(),
+    i64LE(cutoffTs),
+    i64LE(resolveTs),
+    Buffer.from([currencyByte(currency)]),
+    Buffer.from([isTernary ? 1 : 0]),
+  ]);
+  const ix = new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: config, isSigner: false, isWritable: true },
+      { pubkey: market, isSigner: false, isWritable: true },
+      { pubkey: vault, isSigner: false, isWritable: true },
+      { pubkey: admin, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data,
+  });
+  return { tx: buildTx([ix], admin), marketId, marketPubkey: market };
+}
+
 // --- Compra a mercado (precio actual del pool, sin condicion) ---
 
 export async function buildBuyPositionSolTx(params: {
@@ -317,15 +430,19 @@ export async function buildBuyPositionSolTx(params: {
   market: PublicKey;
   outcome: OnChainOutcome;
   amountSol: number;
+  // Precio implicito maximo (bps, 1..=10000) del lado elegido que se acepta.
+  // Por defecto 10000 = sin proteccion. Ver buy_position_sol en lib.rs.
+  maxPriceBps?: number;
 }): Promise<Transaction> {
   const { buyer, market, outcome, amountSol } = params;
   const programId = getProgramId();
   const lamports = toBaseUnits(amountSol, 'SOL');
+  const maxPriceBps = clampMaxPriceBps(params.maxPriceBps);
   const config = configPda(programId);
   const vault = marketVaultPda(market, programId);
   const position = positionPda(market, buyer, outcome, programId);
 
-  const data = Buffer.concat([IX.buyPositionSol, Buffer.from([outcomeByte(outcome)]), u64LE(lamports)]);
+  const data = Buffer.concat([IX.buyPositionSol, Buffer.from([outcomeByte(outcome)]), u64LE(lamports), u64LE(maxPriceBps)]);
   const ix = new TransactionInstruction({
     programId,
     keys: [
@@ -347,17 +464,20 @@ export async function buildBuyPositionLynxTx(params: {
   market: PublicKey;
   outcome: OnChainOutcome;
   amountLynx: number;
+  // Ver buildBuyPositionSolTx. Por defecto 10000 = sin proteccion.
+  maxPriceBps?: number;
 }): Promise<Transaction> {
   const { connection, buyer, market, outcome, amountLynx } = params;
   const programId = getProgramId();
   const { lynxMint } = await getProtocolConfigInfo(connection);
   const amount = toBaseUnits(amountLynx, 'LYNX');
+  const maxPriceBps = clampMaxPriceBps(params.maxPriceBps);
   const config = configPda(programId);
   const position = positionPda(market, buyer, outcome, programId);
   const marketLynxVault = marketLynxVaultPda(market, programId);
   const userLynxAccount = await getAssociatedTokenAddress(lynxMint, buyer);
 
-  const data = Buffer.concat([IX.buyPositionLynxWithBurn, Buffer.from([outcomeByte(outcome)]), u64LE(amount)]);
+  const data = Buffer.concat([IX.buyPositionLynxWithBurn, Buffer.from([outcomeByte(outcome)]), u64LE(amount), u64LE(maxPriceBps)]);
   const ix = new TransactionInstruction({
     programId,
     keys: [

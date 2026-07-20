@@ -91,6 +91,12 @@ pub enum LynxError {
     #[msg("Market has no liquidity yet to compute an implied price")]
     MarketNotFillable,
 
+    // --- Slippage en compras a mercado ---
+    #[msg("Slippage tolerance is invalid (must be between 1 and 10000 bps)")]
+    InvalidSlippage,
+    #[msg("The pool's implied price moved beyond the accepted slippage tolerance")]
+    SlippageExceeded,
+
     // --- Libro de ordenes LYNX/SOL on-chain ---
     #[msg("Orders must be on opposite sides (one Buy, one Sell) to match")]
     SameSide,

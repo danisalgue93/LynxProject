@@ -20,6 +20,7 @@ import { createPersistence } from './persistence.js';
 import { redis } from './redisClient.js';
 import { LynxState } from './state.js';
 import type { Currency, OrderSide, OrderStatus, Position } from './types.js';
+import { DomainError } from './errors.js';
 import { generateToken, generateRefreshToken, verifyToken, verifyRefreshToken, hashPassword, verifyPassword, extractToken } from './auth.js';
 import { sendVerificationEmail, sendPasswordResetEmail, isEmailConfigured } from './email.js';
 import { onchainRouter } from './onchainRoutes.js';
@@ -2733,8 +2734,24 @@ app.post('/api/dev/reset', asyncRoute(async (req, res) => {
 Sentry.setupExpressErrorHandler(app);
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // Camino explícito y NO frágil: un error que declara su propio código HTTP
+  // (ver backend/src/errors.ts). El código nuevo debe lanzar un DomainError en
+  // vez de confiar en el match por texto de más abajo. Informe BAJA-3.
+  if (error instanceof DomainError) {
+    if (error.statusCode >= 500) {
+      logger.error({ err: error.message }, 'unhandled-error');
+      res.status(error.statusCode).json({ error: error.expose ? error.message : 'Internal Server Error' });
+      return;
+    }
+    res.status(error.statusCode).json({ error: error.message });
+    return;
+  }
+
   const rawMessage = error instanceof Error ? error.message : 'Internal Server Error';
   const normalizedMessage = rawMessage.toLowerCase();
+  // Fallback LEGACY: infiere el status del texto del mensaje. Frágil por diseño
+  // (ver comentario y errors.ts); se mantiene solo para los muchos throws de
+  // string ya existentes y debería ir retirándose a favor de DomainError.
   const status = error instanceof ZodError
     ? 400
     : normalizedMessage.includes('not found')

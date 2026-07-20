@@ -6,6 +6,7 @@ import { apiFetch } from '../lib/api';
 import { getManagedWalletAddress, useManagedAuthSession } from '../lib/auth';
 import { useSolanaTransaction } from './useSolanaTransaction';
 import {
+  buildCreateMarketTx,
   buildBuyPositionSolTx,
   buildBuyPositionLynxTx,
   buildCreateLimitOrderSolTx,
@@ -23,6 +24,7 @@ import {
   buildClaimStakingRewardsTx,
   readStakePosition,
   readLynxBalance,
+  maxPriceBpsWithSlippage,
   type OnChainOutcome,
   type StakeInfo,
 } from '../lib/lynxProgram';
@@ -61,8 +63,8 @@ export interface CreateMarketParams {
   description?: string;
   category?: string;
   oracleId?: string;
-  cutoffAt?: number;
-  resolvedAt?: number;
+  cutoffAt?: number; // epoch ms
+  resolveAt?: number; // epoch ms
   isTernary?: boolean;
   currency?: 'SOL' | 'LYNX';
 }
@@ -270,13 +272,18 @@ export function useProgram() {
           return { signature, onChain: true };
         }
 
-        // Compra a mercado (precio actual del pool)
+        // Compra a mercado (precio actual del pool) CON proteccion de slippage:
+        // se acepta hasta el precio implicito actual del lado + una banda por
+        // defecto; si el pool se movio mas alla entre la cotizacion y la firma,
+        // la instruccion revierte on-chain (enforce_market_slippage en lib.rs).
+        const pool = { yes: marketObj.yesAmount, no: marketObj.noAmount, draw: marketObj.drawAmount };
+        const maxPriceBps = maxPriceBpsWithSlippage(pool, outcome);
         if (marketObj.currency === 'LYNX') {
-          const tx = await buildBuyPositionLynxTx({ connection, buyer: publicKey, market: marketPubkey, outcome, amountLynx: amount });
+          const tx = await buildBuyPositionLynxTx({ connection, buyer: publicKey, market: marketPubkey, outcome, amountLynx: amount, maxPriceBps });
           const signature = await signAndSendOnChain(tx);
           return { signature, onChain: true };
         }
-        const tx = await buildBuyPositionSolTx({ buyer: publicKey, market: marketPubkey, outcome, amountSol: amount });
+        const tx = await buildBuyPositionSolTx({ buyer: publicKey, market: marketPubkey, outcome, amountSol: amount, maxPriceBps });
         const signature = await signAndSendOnChain(tx);
         return { signature, onChain: true };
       }
@@ -356,19 +363,55 @@ export function useProgram() {
     }
   }, [ensureApproved, startOp, endOp]);
 
+  // Crea el mercado ON-CHAIN de verdad: el admin firma create_market con su
+  // wallet externa, se espera confirmacion, y solo entonces se registra en el
+  // backend con el pubkey de la cuenta Market + la firma de esa transaccion.
+  // El backend verifica ambos contra el RPC (verifyOnChainMarketCreation) y
+  // rechaza cualquier mercado no-legacy sin un onChainMarket real. Antes esta
+  // funcion solo firmaba un mensaje off-chain y el POST fallaba siempre con 400.
   const createMarket = useCallback(async (marketParams: CreateMarketParams) => {
     const opId = `createMarket-${Date.now()}`;
     startOp(opId);
     try {
-      const signed = await signAction('CREATE_MARKET', marketParams as unknown as Record<string, unknown>);
+      if (!publicKey) {
+        throw new Error('Connect a Solana wallet (Phantom, Solflare, etc.) to create a market on-chain.');
+      }
+      const now = Date.now();
+      const cutoffAtMs = marketParams.cutoffAt ?? now + 24 * 60 * 60 * 1000;
+      const resolveAtMs = marketParams.resolveAt ?? cutoffAtMs + 24 * 60 * 60 * 1000;
+      const currency = marketParams.currency ?? 'SOL';
+
+      const { tx, marketPubkey } = buildCreateMarketTx({
+        admin: publicKey,
+        title: marketParams.title,
+        currency,
+        isTernary: marketParams.isTernary ?? false,
+        cutoffTs: Math.floor(cutoffAtMs / 1000),
+        resolveTs: Math.floor(resolveAtMs / 1000),
+        // Oraculo manual: el propio admin propone/resuelve el resultado on-chain.
+        oracleAuthority: publicKey,
+      });
+      const signature = await signAndSendOnChain(tx);
+
       return await apiFetch('/api/markets', {
         method: 'POST',
-        body: JSON.stringify({ ...marketParams, ...signed }),
+        body: JSON.stringify({
+          title: marketParams.title,
+          description: marketParams.description ?? '',
+          category: marketParams.category ?? 'General',
+          currency,
+          isTernary: marketParams.isTernary ?? false,
+          oracleId: marketParams.oracleId ?? 'manual:admin',
+          cutoffAt: cutoffAtMs,
+          resolveAt: resolveAtMs,
+          onChainMarket: marketPubkey.toBase58(),
+          signature,
+        }),
       });
     } finally {
       endOp(opId);
     }
-  }, [signAction, startOp, endOp]);
+  }, [publicKey, signAndSendOnChain, startOp, endOp]);
 
   // Fetch user portfolio
   const fetchPortfolio = useCallback(async (): Promise<Portfolio> => {

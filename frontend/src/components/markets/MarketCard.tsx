@@ -24,12 +24,22 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
   const yesPct = poolAmount > 0 ? (market.yesAmount / poolAmount) * 100 : 0;
   const noPct = poolAmount > 0 ? (market.noAmount / poolAmount) * 100 : 0;
   const drawPct = poolAmount > 0 ? ((market.drawAmount || 0) / poolAmount) * 100 : 0;
-  const rewardLabel = poolAmount > 0
-    ? `Up to +${Math.max((market.noAmount * 0.9 / (market.yesAmount || 1)) * 100, (market.yesAmount * 0.9 / (market.noAmount || 1)) * 100).toFixed(0)}% ROI`
-    : 'No pool yet';
-  const rawRoi = Math.max((market.noAmount * 0.9 / (market.yesAmount || 1)) * 100, (market.yesAmount * 0.9 / (market.noAmount || 1)) * 100);
-  const displayRoi = isFinite(rawRoi) ? rawRoi : 0;
-  
+
+  // ROI estimado POR LADO. Si apuestas a un lado y ese lado gana, cobras (a
+  // prorrata) el 90% del pool del/los lado(s) perdedor(es). Antes se mostraba
+  // un único Math.max de ambos lados: en un pool desbalanceado ese máximo
+  // corresponde al lado MINORITARIO, y la tarjeta no lo aclaraba, así que se
+  // leía como si el "+X%" aplicara a cualquier elección. Ahora se muestra el
+  // ROI de cada lado por separado. Un lado con 0 apostado no tiene ROI
+  // cuantificable (serías el primero en él) y se muestra como "—".
+  const drawAmount = market.drawAmount || 0;
+  const opposingPool = (side: number) => poolAmount - side; // lo que reparte el lado ganador
+  const roiFor = (side: number) => (side > 0 ? (opposingPool(side) * 0.9 / side) * 100 : null);
+  const fmtRoi = (roi: number | null) => (roi === null || !isFinite(roi) ? '—' : `+${roi.toFixed(0)}%`);
+  const yesRoi = roiFor(market.yesAmount);
+  const noRoi = roiFor(market.noAmount);
+  const drawRoi = roiFor(drawAmount);
+
   return (
     <motion.div 
       whileHover={{ y: -4 }}
@@ -91,12 +101,17 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
               </div>
             </div>
             <div className="text-right">
-              <div className="text-[7px] md:text-[9px] uppercase font-bold text-[#52525B] tracking-widest mb-1">{t('marketCard.estReward', 'Est. Win Reward')}</div>
+              <div className="text-[7px] md:text-[9px] uppercase font-bold text-[#52525B] tracking-widest mb-1">{t('marketCard.estReward', 'Est. Win Reward (by side)')}</div>
               <div className="flex flex-col items-end gap-1.5">
-                <div className="text-sm md:text-lg font-mono font-bold text-[#00FFD1] leading-none tracking-tighter">
-                  {rewardLabel}
-                  {isFinite(rawRoi) ? ` (ROI: ${displayRoi.toFixed(0)}%)` : ''}
-                </div>
+                {poolAmount > 0 ? (
+                  <div className="flex flex-col items-end gap-0.5 text-xs md:text-base font-mono font-bold leading-none tracking-tighter">
+                    <span className="text-[#00FFD1]">{market.isTernary ? t('marketCard.optA', 'A') : t('marketCard.yes', 'YES')} {fmtRoi(yesRoi)}</span>
+                    <span className="text-red-400/90">{market.isTernary ? t('marketCard.optB', 'B') : t('marketCard.no', 'NO')} {fmtRoi(noRoi)}</span>
+                    {market.isTernary && <span className="text-blue-400/90">{t('marketCard.draw', 'Draw')} {fmtRoi(drawRoi)}</span>}
+                  </div>
+                ) : (
+                  <div className="text-sm md:text-lg font-mono font-bold text-[#00FFD1] leading-none tracking-tighter">{t('marketCard.noPool', 'No pool yet')}</div>
+                )}
                 {!isLynx ? (
                   <div className="text-[6px] md:text-[8px] bg-[#9945FF]/10 border border-[#9945FF]/30 text-[#9945FF] px-1.5 py-0.5 rounded uppercase tracking-widest">
                     {t('marketCard.lynxEmission', '+ 30% USER EMISSION')}

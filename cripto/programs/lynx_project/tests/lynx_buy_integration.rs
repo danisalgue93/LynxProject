@@ -222,6 +222,7 @@ async fn buying_into_a_lynx_market_works() {
         data: lynx_project::instruction::BuyPositionLynxWithBurn {
             outcome: Outcome::Yes,
             amount: BUY_AMOUNT,
+            max_price_bps: 10_000,
         }
         .data(),
     };

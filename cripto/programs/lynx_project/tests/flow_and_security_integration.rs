@@ -38,6 +38,11 @@ use solana_sdk::{
 /// (index 3). The recipient_lynx_account owner constraint fails with this exact
 /// code, which is what makes the C-04 test prove the fix rather than an accident.
 const LYNX_ERROR_UNAUTHORIZED: u32 = 6003;
+// Anchor error codes = 6000 + variant index. SlippageExceeded is the 44th
+// LynxError variant (index 43), right after the two new slippage variants
+// (InvalidSlippage = 6042). Used to prove the market-buy slippage guard rejects
+// for the RIGHT reason, not by accident.
+const LYNX_ERROR_SLIPPAGE_EXCEEDED: u32 = 6043;
 use std::str::FromStr;
 
 fn program_id() -> Pubkey {
@@ -218,8 +223,30 @@ async fn full_market_lifecycle_pays_the_winner() {
         process(&mut ctx, Instruction {
             program_id: pid,
             accounts: lynx_project::accounts::BuyPositionSol { config, market: market_pda, vault: vault_pda, position: pos, buyer: better.pubkey(), system_program: system_program::id() }.to_account_metas(None),
-            data: lynx_project::instruction::BuyPositionSol { outcome, lamports: 10 * LAMPORTS_PER_SOL }.data(),
+            data: lynx_project::instruction::BuyPositionSol { outcome, lamports: 10 * LAMPORTS_PER_SOL, max_price_bps: 10_000 }.data(),
         }, &[better]).await;
+    }
+
+    // 2b. Slippage guard (ALTA-2): with the pool at 10/10 the implied price of
+    //     each side is 5000 bps. A market buy on Yes that only tolerates 4000 bps
+    //     must be REJECTED with SlippageExceeded. Because it's rejected it moves
+    //     no funds and leaves the pool untouched, so the rest of the lifecycle
+    //     (and the winner's payout below) is unaffected.
+    {
+        let blockhash = ctx.banks_client.get_latest_blockhash().await.unwrap();
+        let ix = Instruction {
+            program_id: pid,
+            accounts: lynx_project::accounts::BuyPositionSol { config, market: market_pda, vault: vault_pda, position: winner_pos, buyer: winner.pubkey(), system_program: system_program::id() }.to_account_metas(None),
+            data: lynx_project::instruction::BuyPositionSol { outcome: Outcome::Yes, lamports: LAMPORTS_PER_SOL, max_price_bps: 4000 }.data(),
+        };
+        let mut tx = Transaction::new_with_payer(&[ix], Some(&ctx.payer.pubkey()));
+        tx.sign(&[&ctx.payer, &winner], blockhash);
+        match ctx.banks_client.process_transaction(tx).await
+            .expect_err("buy must be REJECTED when the pool's implied price exceeds max_price_bps") {
+            BanksClientError::TransactionError(TransactionError::InstructionError(_, InstructionError::Custom(code))) =>
+                assert_eq!(code, LYNX_ERROR_SLIPPAGE_EXCEEDED, "must fail with LynxError::SlippageExceeded"),
+            other => panic!("expected Custom({LYNX_ERROR_SLIPPAGE_EXCEEDED}) SlippageExceeded, got: {other:?}"),
+        }
     }
 
     // 3. cut off at cutoff_ts

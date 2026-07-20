@@ -1448,16 +1448,29 @@ export class LynxState {
     // exclusivo del lado ganador; esto es un mecanismo aparte.
     const participantPositions = [...this.positions.values()].filter((position) => position.marketId === market.id);
     const participantTotal = participantPositions.reduce((sum, position) => sum + position.amount, 0);
-    for (const position of participantPositions) {
+    // Reparto proporcional con reconciliación de dust (informe BAJA-4): cada
+    // "minted" se redondea antes de acreditarse y se acumula; el último
+    // participante recibe el remanente exacto (participantEmission - repartido)
+    // para que la suma total acreditada iguale participantEmission al céntimo,
+    // en vez de dejar una diferencia flotante sin contabilizar.
+    let distributed = 0;
+    participantPositions.forEach((position, index) => {
       const wallet = this.getWallet(position.wallet);
-      const minted = participantTotal > 0 ? participantEmission * (position.amount / participantTotal) : 0;
+      const isLast = index === participantPositions.length - 1;
+      let minted = 0;
+      if (participantTotal > 0) {
+        minted = isLast
+          ? roundAmount(participantEmission - distributed)
+          : roundAmount(participantEmission * (position.amount / participantTotal));
+      }
+      distributed = roundAmount(distributed + minted);
       wallet.lynxBalance = roundAmount(wallet.lynxBalance + minted);
       this.pushNotification(wallet.wallet, {
         type: 'claimable',
         title: 'LYNX emission received',
-        message: `${roundAmount(minted)} LYNX were minted from ${market.title}.`
+        message: `${minted} LYNX were minted from ${market.title}.`
       });
-    }
+    });
 
     this.treasury.lynx = roundAmount(this.treasury.lynx + treasuryEmission);
     this.treasury.lynxForInitialSale = roundAmount(this.treasury.lynxForInitialSale + initialSaleEmission);

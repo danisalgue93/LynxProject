@@ -407,7 +407,7 @@ export function CreateDuelModal({ onClose, onSubmit }: CreateDuelModalProps) {
                         {t("createDuel.potentialReturn", "Potential Return")}
                       </span>
                       <span className="text-lg font-mono font-bold text-white tracking-tighter">
-                        {(amount * 1.998).toFixed(amount === 0.25 ? 2 : 1)}{" "}
+                        {(amount * 1.998).toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
                         {currency}
                       </span>
                     </div>

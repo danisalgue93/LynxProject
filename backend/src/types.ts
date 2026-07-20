@@ -1,9 +1,16 @@
+// 'EXPIRED' no lo asigna el motor off-chain (state.ts), pero NO es dead code:
+// es una variante real del enum on-chain MarketStatus (state.rs) que el
+// indexador mapea a 'EXPIRED' (ver server.ts, statusMap) y que la UI estiliza
+// (frontend/src/constants.ts, MarketCard). No la elimines "por limpieza".
 export type MarketStatus = 'OPEN' | 'ACTIVE' | 'CUT_OFF' | 'RESOLVED' | 'EXPIRED';
 export type Currency = 'SOL' | 'LYNX';
 export type Position = 'YES' | 'NO' | 'A' | 'B' | 'DRAW';
 export type OrderSide = 'BUY' | 'SELL';
 export type OrderStatus = 'OPEN' | 'PARTIAL_FILLED' | 'FILLED' | 'CANCELLED';
-export type DuelStatus = 'OPEN' | 'ACCEPTED' | 'ACTIVE' | 'RESOLVED' | 'CANCELLED' | 'EXPIRED';
+// Alineado con el enum DuelStatus on-chain (state.rs: Open/Active/Resolved/
+// Cancelled) y con el enum del frontend. Antes incluía 'ACCEPTED' y 'EXPIRED',
+// que nunca se asignaban ni existen on-chain (dead states, informe BAJA-2).
+export type DuelStatus = 'OPEN' | 'ACTIVE' | 'RESOLVED' | 'CANCELLED';
 export type ProposalStatus = 'ACTIVE' | 'PASSED' | 'REJECTED' | 'CANCELLED' | 'PENDING';
 
 export interface Market {
