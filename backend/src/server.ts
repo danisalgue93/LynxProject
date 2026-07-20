@@ -377,8 +377,21 @@ async function persist() {
   await persistAfterMutation();
 }
 
+// Broadcast to EVERY connected client. Only for PUBLIC data (market/duel/
+// orderbook/dao state) — never for a specific wallet's money activity, which
+// must use emitToWallet so it only reaches that wallet's own authenticated
+// sockets (see audit A-N2: ledger:deposit/withdrawal/approved and crypto:tx
+// were being globally broadcast, leaking every user's amounts + tx signatures
+// to any logged-in client).
 function emit(event: string, payload: unknown) {
   io.emit(event, payload);
+}
+
+// Deliver a private, wallet-scoped event only to the sockets that authenticated
+// as this wallet (rooms are JWT-auto-joined on connect; a client cannot join
+// another wallet's room).
+function emitToWallet(wallet: string, event: string, payload: unknown) {
+  io.to(`wallet:${wallet}`).emit(event, payload);
 }
 
 function emitPortfolioUpdated(wallet: string, portfolio: unknown) {
@@ -2183,7 +2196,7 @@ app.post('/api/ledger/approve', asyncRoute(async (req, res) => {
   const result = store.approveWallet(wallet, body.externalWallet);
   await persist();
   store.addTransaction({ signature: body.signature, wallet, intent: { type: 'APPROVE', message: body.signatureMessage } });
-  emit('ledger:approved', { wallet, result });
+  emitToWallet(wallet, 'ledger:approved', { wallet, result });
   res.json(result);
 }));
 
@@ -2264,7 +2277,7 @@ app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
     if (existing) existing.intent = { type: 'DEPOSIT', currency: body.currency, amount: body.amount, provider: body.provider };
   }
   await persist();
-  emit('ledger:deposit', { wallet, ledgerEntry: result.ledgerEntry });
+  emitToWallet(wallet, 'ledger:deposit', { wallet, ledgerEntry: result.ledgerEntry });
   emitPortfolioUpdated(wallet, result.portfolio);
   res.status(201).json(result);
 }));
@@ -2337,7 +2350,7 @@ app.post('/api/admin/credits/:id/execute', asyncRoute(async (req, res) => {
     });
     markExecuted(request.id);
     await persist();
-    emit('ledger:deposit', { wallet: request.wallet, ledgerEntry: result.ledgerEntry });
+    emitToWallet(request.wallet, 'ledger:deposit', { wallet: request.wallet, ledgerEntry: result.ledgerEntry });
     emitPortfolioUpdated(request.wallet, result.portfolio);
     res.status(201).json({ request, result });
   } catch (err: any) {
@@ -2401,7 +2414,7 @@ app.post('/api/ledger/withdraw', asyncRoute(async (req, res) => {
     withdrawalResult.ledgerEntry.reference = withdrawalSignature;
     store.addTransaction({ signature: withdrawalSignature, wallet, intent: { type: 'WITHDRAWAL', currency: body.currency, amount: body.amount } });
     await persist();
-    emit('ledger:withdrawal', { wallet, ledgerEntry: withdrawalResult.ledgerEntry, signature: withdrawalSignature });
+    emitToWallet(wallet, 'ledger:withdrawal', { wallet, ledgerEntry: withdrawalResult.ledgerEntry, signature: withdrawalSignature });
     emitPortfolioUpdated(wallet, withdrawalResult.portfolio);
     res.json({ portfolio: withdrawalResult.portfolio, ledgerEntry: withdrawalResult.ledgerEntry, signature: withdrawalSignature });
     return;
@@ -2452,7 +2465,7 @@ app.post('/api/ledger/withdraw', asyncRoute(async (req, res) => {
     // would restore the balance and allow a second withdrawal.
     store.addTransaction({ signature: withdrawalSignature, wallet, intent: { type: 'WITHDRAWAL', currency: body.currency, amount: body.amount } });
     await persist();
-    emit('ledger:withdrawal', { wallet, ledgerEntry: withdrawalResult.ledgerEntry, signature: withdrawalSignature });
+    emitToWallet(wallet, 'ledger:withdrawal', { wallet, ledgerEntry: withdrawalResult.ledgerEntry, signature: withdrawalSignature });
     emitPortfolioUpdated(wallet, withdrawalResult.portfolio);
     res.json({ portfolio: withdrawalResult.portfolio, ledgerEntry: withdrawalResult.ledgerEntry, signature: withdrawalSignature });
     return;
@@ -2692,7 +2705,7 @@ app.post('/api/transactions', asyncRoute(async (req, res) => {
     // persist signature in store and emit socket event
     try {
       store.addTransaction({ signature: intent.signature, wallet: typeof intent.wallet === 'string' ? intent.wallet : undefined, intent });
-      emit('crypto:tx', { signature: intent.signature, wallet: intent.wallet, link, timestamp: Date.now() });
+      emitToWallet(intent.wallet, 'crypto:tx', { signature: intent.signature, wallet: intent.wallet, link, timestamp: Date.now() });
       await persist();
     } catch (e) {
       try { if ((req as any).log) (req as any).log.error({ err: e }, 'Failed to persist tx'); } catch { logger.error({ requestId: (req as any).id, err: e }, 'Failed to persist tx'); }

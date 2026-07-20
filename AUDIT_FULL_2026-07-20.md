@@ -39,6 +39,46 @@ Diferidos con justificación (grandes o por-diseño):
 
 ---
 
+## 0-ter. Ronda 3 de auditoría (desde cero) — 1 hallazgo nuevo (corregido)
+
+Foco en superficies aún no revisadas línea a línea: WebSocket, scripts de shell,
+y settlement on-chain (claim/sweep).
+
+**A-N2 — ALTO — Fuga de privacidad financiera por WebSocket — CORREGIDO**
+- **Archivo:** `backend/src/server.ts` — helper `emit()` (= `io.emit()`, difunde a
+  TODOS los sockets) usado para eventos **privados**: `ledger:approved` (2186),
+  `ledger:deposit` (2267, 2340), `ledger:withdrawal` (2404, 2455, **incluye la
+  firma on-chain**), `crypto:tx` (2695).
+- **Riesgo / explotación:** el socket exige JWT (`io.use`, línea 177) y auto-une
+  al usuario a las rooms de SUS wallets — pero estos eventos se emitían con
+  `io.emit` global. Cualquier usuario **autenticado** (basta registrarse) que
+  conecte un socket recibe en tiempo real los depósitos, retiros, importes,
+  wallets y **firmas de transacción de TODOS los demás usuarios**. Es un
+  Broken Access Control / exposición de datos sensibles (OWASP A01/A04): permite
+  a cualquier usuario mapear la actividad financiera y las wallets de todos.
+- **Impacto:** ALTO en una app FinTech — desanonimización, inteligencia para
+  ataques dirigidos, incumplimiento de confidencialidad.
+- **Corrección aplicada:** nuevo helper `emitToWallet(wallet, event, payload)`
+  (= `io.to('wallet:'+wallet).emit(...)`, mismo mecanismo probado que
+  `emitPortfolioUpdated`); los 6 emisores privados ahora van solo a la room de la
+  wallet. Los eventos públicos (`market:*`, `duel:*`, `orderbook:*`, `dao:*`)
+  siguen globales. Verificado: los eventos `ledger:*` no tienen consumidor en el
+  frontend (0 listeners), y `crypto:tx` es un toast de confirmación de la PROPIA
+  tx del usuario, así que escoparlos no rompe ninguna feature. `tsc` + 65 tests
+  backend verdes.
+- **Hueco de test (INFO):** no hay test de integración de la frontera de
+  autorización del socket; requiere `socket.io-client` en devDeps del backend
+  (no instalable offline aquí). **REVISIÓN MANUAL / test pendiente.**
+
+Otros (INFO, no corregidos):
+- `scripts/validate-env.sh:20` `export $(grep … .env)` hace word-splitting: valores con espacios se manglean; `display_value` (`:78`) se calcula y nunca se usa.
+- `scripts/pre-migration-backup.sh:21` parsea la password de `DATABASE_URL` con `sed` hasta el primer `@`: una password que contenga `@`/`:` se trunca.
+- `frontend/src/pages/PublicPage.tsx:50` emite `identify` al socket, pero el backend eliminó ese handler (rooms por JWT) — dead code inofensivo.
+
+Settlement on-chain revisado y **correcto**: `claim_market_sol/lynx` (`lib.rs:1126-1200`) exigen `Resolved`, `!claimed`, `position_is_winner`, `winning_total>0`, pago pro-rata con `mul_div`; y `ClaimMarketSol/Lynx` (`2277-2300`) **pinean la posición** con `constraint = position.owner == claimant.key()` + `has_one = market` → sin robo de claim ni doble-claim ni cruce de mercados.
+
+---
+
 ## 0-bis. Ronda 2 de auditoría (desde cero) — resultado: CONVERGE
 
 Tras aplicar las correcciones, se re-auditó todo profundizando en las rutas de
