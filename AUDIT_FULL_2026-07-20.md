@@ -39,6 +39,23 @@ Diferidos con justificación (grandes o por-diseño):
 
 ---
 
+## 0-quater. Ronda 4 de auditoría (desde cero) — sinks XSS frontend
+
+Revisados los sinks de `href`/`src`/`window.open`/`target=_blank` del frontend:
+- `Dashboard.tsx:289`, `PublicPage.tsx:294`: `href={toast.link}` con `rel="noreferrer"` — link de explorer construido en servidor. OK.
+- `PortfolioView.tsx:24`: `window.open(data.url, …, 'noopener,noreferrer')` — URL MoonPay firmada en servidor. OK.
+- `ToastContainer.tsx:36`: tiene `rel="noopener noreferrer"` — sin reverse-tabnabbing. `toast.url` se genera en cliente.
+- `MarketCard.tsx:58`: `<img src={market.imageUrl}>` (admin) — `img src` no ejecuta JS. INFO.
+
+**Corregido (hardening, INFO):** `ToastContainer.tsx` — React no bloquea hrefs
+`javascript:`/`data:`; se añadió un guard `^https?://` para que el enlace solo se
+renderice con URLs http(s). Cierra el sink ante cualquier ruta futura que
+alimente `toast.url` con datos no confiables. `tsc` + 49 tests frontend verdes.
+
+Resultado ronda 4: **0 bugs explotables nuevos**; solo el hardening anterior.
+
+---
+
 ## 0-ter. Ronda 3 de auditoría (desde cero) — 1 hallazgo nuevo (corregido)
 
 Foco en superficies aún no revisadas línea a línea: WebSocket, scripts de shell,

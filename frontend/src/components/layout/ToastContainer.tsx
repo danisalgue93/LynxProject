@@ -31,7 +31,11 @@ export function ToastContainer() {
 
           <div className="flex-1">
             <p className="text-sm text-[#E5E7EB]">{toast.message}</p>
-            {toast.url && (
+            {/* Defence-in-depth: React does NOT block javascript:/data: hrefs, so
+                only render the link for http(s) URLs. Today toast.url is always a
+                client-built explorer link, but this guards against any future path
+                that lets untrusted data reach it (audit round-4). */}
+            {toast.url && /^https?:\/\//i.test(toast.url) && (
               <a
                 href={toast.url}
                 target="_blank"
