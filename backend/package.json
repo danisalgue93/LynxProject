@@ -51,6 +51,7 @@
     "globals": "^17.7.0",
     "pino-pretty": "^10.1.0",
     "prisma": "^6.19.3",
+    "socket.io-client": "^4.8.3",
     "supertest": "^7.1.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",

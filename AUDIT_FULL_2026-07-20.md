@@ -15,6 +15,58 @@ real de las suites de test.
 
 ---
 
+## 00. Testing y verificación completados (para producción)
+
+Todo lo automatizable ejecutado y en verde:
+
+| Módulo | Build prod | Tests | Lint | npm audit (prod) |
+|--------|-----------|-------|------|------------------|
+| **Backend** | `tsc` ✓ | **68** ✓ (incl. nuevo test de socket A-N2) | 0 errores (135 warns `any`) | 24 — todas transitivas *breaking* |
+| **Frontend** | `vite build` ✓ | **49** ✓ | 0 errores (107 warns `any`) | 52 — transitivas *breaking* (Solana/lodash/ws) |
+| **Admin-panel** | `next build` ✓ (bundle 87–90 kB) | **24** ✓ | ✔ sin warnings | 8 — transitivas *breaking* (next/web3.js) |
+| **On-chain** | `cargo build` + `build-sbf` ✓ | **52** ✓ | `clippy -D warnings` = 0 | — |
+| **Infra** | `docker compose config` ✓ (valida + confirma los `:?` de A-N1) | — | — | — |
+
+**Test nuevo añadido:** `backend/tests/socket.test.ts` — prueba de extremo a
+extremo de la frontera de autorización del WebSocket (regresión de A-N2): (1)
+rechaza conexión sin token, (2) rechaza token inválido, (3) un evento
+`ledger:*` scoped a la wallet de Alice llega SOLO a Alice, **nunca a Bob**.
+Cierra el hueco de test que quedaba abierto. Añadido `socket.io-client` a
+devDeps del backend.
+
+**Dependencias (M-N3 ejecutado con red):** aplicados los `npm audit fix`
+*no-breaking* (backend 28→24, quitó 1 crítico + 2 high + 1 low; frontend 53→52).
+Los residuales son **todos transitivos y requieren fixes *breaking***:
+- Árbol Solana (`bigint-buffer` → `@solana/spl-token`/`buffer-layout-utils`):
+  CVE inherente al ecosistema `web3.js`, **sin parche upstream**; `--force` lo
+  degradaría y rompería la integración de wallets. **Riesgo aceptado** (ya
+  documentado como riesgo asumido por el equipo).
+- `lodash`/`ws` (frontend, transitivos): no explotables por el uso de la app
+  (no se llama `_.template` con entrada no confiable).
+- `next` (admin): DoS del Image Optimizer vía `remotePatterns` — **no
+  alcanzable**: el panel usa `img-src 'self' data:` (sin imágenes remotas).
+No se aplicó ningún `--force` para no romper Solana/Next por una transitiva.
+
+### Gates manuales que quedan (solo TÚ puedes ejecutarlos)
+
+Lo automatizable está hecho. Para el 100% de producción faltan verificaciones que
+requieren tu entorno/despliegue y no se pueden hacer desde aquí:
+
+1. **Devnet end-to-end (imprescindible):** fondear el deployer `GYMUuhZ4…`,
+   `anchor deploy --provider.cluster devnet`, `init_protocol`, y probar el flujo
+   completo con wallet real: crear mercado → comprar (con slippage) → cerrar →
+   resolver por multisig 2-de-2 → claim. Es el único test que ejercita el
+   programa desplegado + firmas reales de Phantom.
+2. **Migración M-N2 (decisión):** completar o acotar la parte off-chain
+   (duelos/DAO/spot en `state.ts`) antes de abrir esos flujos con dinero real.
+3. **Prueba de carga/latencia** del backend+indexador (p.ej. k6/artillery) con
+   ≥2 réplicas y Redis, para validar los locks distribuidos bajo concurrencia.
+4. **Auditoría de accesibilidad (a11y)** del frontend (axe/Lighthouse).
+5. **Simulacro de backup/restore** real (`RUNBOOK.md`) y de rollback de deploy.
+6. **`npm audit` en CI** ya añadido (advisory); revisar su salida en cada corrida.
+
+---
+
 ## 0. Estado de correcciones — iteración 1
 
 Aplicadas y verificadas en esta ronda (`tsc` + tests verdes en frontend y
