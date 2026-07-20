@@ -5,7 +5,16 @@ ROOT="/mnt/c/Users/danisalgue/Desktop/LynxProject"
 
 export PROGRAM_ID="${PROGRAM_ID:-CiKuW8r71WnTLkGAKvFyYhtV2UhuJ4j8swDPDc8PEXvu}"
 export VITE_API_URL="${VITE_API_URL:-http://localhost:4000}"
+# The frontend reads VITE_PROGRAM_ID (see lynxProgram.ts) and VITE_SOLANA_NETWORK
+# (see useSolanaTransaction.ts). The old VITE_LYNX_PROGRAM_ID is kept only as a
+# legacy alias; without VITE_PROGRAM_ID the on-chain features throw
+# "VITE_PROGRAM_ID no está configurado", and without the devnet network they hit
+# the wrong RPC.
+export VITE_PROGRAM_ID="${VITE_PROGRAM_ID:-$PROGRAM_ID}"
 export VITE_LYNX_PROGRAM_ID="${VITE_LYNX_PROGRAM_ID:-$PROGRAM_ID}"
+export VITE_SOLANA_NETWORK="${VITE_SOLANA_NETWORK:-devnet}"
+# Backend indexer/keeper RPC.
+export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
 
 if [ -s "$HOME/.nvm/nvm.sh" ]; then
   # shellcheck disable=SC1090
