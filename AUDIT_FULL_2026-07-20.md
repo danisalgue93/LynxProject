@@ -39,6 +39,36 @@ Diferidos con justificación (grandes o por-diseño):
 
 ---
 
+## 0-bis. Ronda 2 de auditoría (desde cero) — resultado: CONVERGE
+
+Tras aplicar las correcciones, se re-auditó todo profundizando en las rutas de
+dinero **no cubiertas a fondo en la ronda 1**. Verificado con evidencia:
+
+- **`chain.ts` decoders** (`decodeMarket/PredictionOrder/Position/SpotOrder`,
+  líneas 182-252): cada campo coincide **exacto** con los structs de `state.rs`
+  (verificado `UserPosition` 266-274, `PredictionOrder` 397-418, `SpotOrder`
+  457-476). Sin bugs de offset.
+- **Keeper** (`chain.ts:456-548`): keypair separado de tesorería; la condición de
+  precio se **re-valida on-chain** aunque la caché esté stale (≤8 s); fallos por
+  orden aislados. Un keeper comprometido no puede robar. Correcto.
+- **Depósito on-chain** (`server.ts:2190-2270` + `verifyOnChainSolDeposit`
+  999-1069): pre-registro **atómico** de la firma antes de la verificación RPC
+  (anti-TOCTOU); no permite sobre-acreditar (`treasuryDelta`/`senderDelta`);
+  crédito manual INTERNAL/CARD **eliminado** (410) → solo doble-admin.
+- **Doble aprobación** (`creditApprovals.ts:249-262, 393-405`): el proponente
+  **no puede autoaprobarse** (`proposedBy === approverUserId` lanza) y las
+  aprobaciones se deduplican → 2-de-2 real.
+
+**Resultado de la ronda 2: 0 hallazgos críticos/altos/medios nuevos.** Regresión
+completa verde (frontend 49/49, backend 65/65, admin-panel 24/24, on-chain 52).
+
+El bucle "corregir → re-auditar" **converge**: lo que queda no son bugs sino
+decisiones/refactors ya listados como diferidos (M-N2 migración on-chain, I-1
+modularización, B-N3/B-N7 endurecimiento opcional). No se han inventado hallazgos
+para prolongar el bucle.
+
+---
+
 ## 1. Resumen ejecutivo
 
 LynxProject es un protocolo de mercados de predicción en Solana con dinero
