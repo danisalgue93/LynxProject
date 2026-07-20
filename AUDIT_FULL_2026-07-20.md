@@ -83,7 +83,12 @@ admin-panel; compose revisado):
 | **M-N3** `npm audit` en CI | ✅ CORREGIDO — paso advisory en los 3 jobs JS |
 
 Diferidos con justificación (grandes o por-diseño):
-- **M-N2** migración on-chain: decisión de producto (20–60 h) — fuera del alcance de un fix puntual.
+- **M-N2** migración on-chain de duelos + DAO: **IMPLEMENTADA** (paso 2). Capa
+  cliente + indexador + cableado UI + keeper de auto-liquidación, con fallback
+  legacy y unit-tests de layout de bytes (frontend 55, backend 72). Duelos =
+  solo-SOL; propuestas DAO = solo-admin + voto ponderado por stake. **Aceptación
+  end-to-end pendiente de devnet** (requiere el programa desplegado). Ver los
+  commits `19dabb2` (builders DAO + indexador) y `3bdd9fe` (UI + keeper).
 - **B-N3** denylist de access token: mitigado por TTL 15 min; endurecimiento opcional.
 - **B-N4** `error.message` al admin: **aceptado por diseño** — el panel es una herramienta de un operador de confianza (host-allowlist + TOTP + iron-session) que NECESITA el detalle para diagnosticar un mercado atascado; degradarlo a genérico perjudica el propósito del panel.
 - **B-N7** migración completa a `DomainError`: incremental; la infraestructura ya está.
