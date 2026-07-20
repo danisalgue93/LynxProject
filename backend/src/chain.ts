@@ -78,6 +78,8 @@ const ACCOUNT_DISC = {
   predictionOrder: Buffer.from([143, 114, 109, 86, 201, 242, 189, 215]),
   userPosition: Buffer.from([251, 248, 209, 245, 83, 234, 17, 27]),
   spotOrder: Buffer.from([136, 35, 83, 247, 161, 60, 47, 233]),
+  duel: Buffer.from([126, 229, 210, 60, 177, 135, 124, 224]),
+  daoProposal: Buffer.from([140, 16, 138, 15, 20, 224, 135, 137]),
 };
 
 // Discriminadores calculados como sha256("global:<nombre_instruccion>")[:8],
@@ -142,6 +144,35 @@ export type IndexedSpotOrder = {
   status: 'Open' | 'Filled' | 'Cancelled';
   createdTs: number;
   expiresTs: number;
+};
+
+export type OnChainDuelStatus = 'Open' | 'Active' | 'Resolved' | 'Cancelled';
+export type OnChainDuelType = 'OneVOne' | 'OneVOneVProtocol';
+export type IndexedDuel = {
+  pubkey: string;
+  id: string;
+  parentMarket: string;
+  creator: string;
+  rival: string; // Pubkey.default (all-1s base58) while unaccepted
+  amount: string;
+  creatorOutcome: OnChainOutcome;
+  rivalOutcome: OnChainOutcome;
+  duelType: OnChainDuelType;
+  status: OnChainDuelStatus;
+  expiresTs: number;
+};
+
+export type OnChainDaoStatus = 'Active' | 'Passed' | 'Rejected';
+export type IndexedDaoProposal = {
+  pubkey: string;
+  id: string;
+  proposer: string;
+  title: string;
+  createdTs: number;
+  endTs: number;
+  votesYes: string; // stake-weighted, micro-LYNX
+  votesNo: string;
+  status: OnChainDaoStatus;
 };
 
 export function fromOnChainOutcomeName(outcome: OnChainOutcome): 'YES' | 'NO' | 'DRAW' | null {
@@ -251,6 +282,59 @@ function decodeSpotOrder(pubkey: PublicKey, data: Buffer): IndexedSpotOrder {
   };
 }
 
+// Enum DuelType (state.rs): OneVOne = 0, OneVOneVProtocol = 1.
+function duelTypeName(v: number): OnChainDuelType {
+  return v === 1 ? 'OneVOneVProtocol' : 'OneVOne';
+}
+// Enum DuelStatus (state.rs): Open, Active, Resolved, Cancelled.
+function duelStatusName(v: number): OnChainDuelStatus {
+  return (['Open', 'Active', 'Resolved', 'Cancelled'][v] ?? 'Open') as OnChainDuelStatus;
+}
+// Enum DaoProposalStatus (state.rs): Active, Passed, Rejected.
+function daoStatusName(v: number): OnChainDaoStatus {
+  return (['Active', 'Passed', 'Rejected'][v] ?? 'Active') as OnChainDaoStatus;
+}
+
+// Duel layout (state.rs): parent_market, creator, rival, id(u64), amount(u64),
+// creator_outcome(1), rival_outcome(1), duel_type(1), status(1), expires_ts(i64),
+// bump, vault_bump.
+export function decodeDuel(pubkey: PublicKey, data: Buffer): IndexedDuel {
+  const r = new Reader(data);
+  const parentMarket = r.pubkey();
+  const creator = r.pubkey();
+  const rival = r.pubkey();
+  const id = r.u64();
+  const amount = r.u64();
+  const creatorOutcome = outcomeName(r.u8());
+  const rivalOutcome = outcomeName(r.u8());
+  const duelType = duelTypeName(r.u8());
+  const status = duelStatusName(r.u8());
+  const expiresTs = Number(r.i64());
+  return {
+    pubkey: pubkey.toBase58(), id: id.toString(), parentMarket: parentMarket.toBase58(),
+    creator: creator.toBase58(), rival: rival.toBase58(), amount: amount.toString(),
+    creatorOutcome, rivalOutcome, duelType, status, expiresTs,
+  };
+}
+
+// DaoProposal layout (state.rs): id(u64), proposer, title(String), created_ts(i64),
+// end_ts(i64), votes_yes(u64), votes_no(u64), status(1), bump.
+export function decodeDaoProposal(pubkey: PublicKey, data: Buffer): IndexedDaoProposal {
+  const r = new Reader(data);
+  const id = r.u64();
+  const proposer = r.pubkey();
+  const title = r.string();
+  const createdTs = Number(r.i64());
+  const endTs = Number(r.i64());
+  const votesYes = r.u64();
+  const votesNo = r.u64();
+  const status = daoStatusName(r.u8());
+  return {
+    pubkey: pubkey.toBase58(), id: id.toString(), proposer: proposer.toBase58(), title,
+    createdTs, endTs, votesYes: votesYes.toString(), votesNo: votesNo.toString(), status,
+  };
+}
+
 // --- Cache en memoria (se reconstruye desde RPC cada REFRESH_INTERVAL_MS; es
 // un espejo de solo lectura, nunca la fuente de verdad, asi que es seguro
 // correr varias instancias del backend sin ningun riesgo de doble gasto: la
@@ -259,6 +343,8 @@ const marketsByPubkey = new Map<string, IndexedMarket>();
 const ordersByPubkey = new Map<string, IndexedPredictionOrder>();
 const positionsByPubkey = new Map<string, IndexedPosition>();
 const spotOrdersByPubkey = new Map<string, IndexedSpotOrder>();
+const duelsByPubkey = new Map<string, IndexedDuel>();
+const daoProposalsByPubkey = new Map<string, IndexedDaoProposal>();
 let lastRefreshError: string | null = null;
 let lastRefreshAt = 0;
 
@@ -266,11 +352,13 @@ async function refreshOnce() {
   if (!PROGRAM_ID) return;
   const conn = getConnection();
   try {
-    const [marketAccounts, orderAccounts, positionAccounts, spotOrderAccounts] = await Promise.all([
+    const [marketAccounts, orderAccounts, positionAccounts, spotOrderAccounts, duelAccounts, daoProposalAccounts] = await Promise.all([
       conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.market) } }] }),
       withRpcTimeout(conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.predictionOrder) } }] }), 'refresh:getProgramAccounts:predictionOrder'),
       withRpcTimeout(conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.userPosition) } }] }), 'refresh:getProgramAccounts:userPosition'),
       withRpcTimeout(conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.spotOrder) } }] }), 'refresh:getProgramAccounts:spotOrder'),
+      withRpcTimeout(conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.duel) } }] }), 'refresh:getProgramAccounts:duel'),
+      withRpcTimeout(conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.daoProposal) } }] }), 'refresh:getProgramAccounts:daoProposal'),
     ]);
 
     marketsByPubkey.clear();
@@ -288,6 +376,14 @@ async function refreshOnce() {
     spotOrdersByPubkey.clear();
     for (const { pubkey, account } of spotOrderAccounts) {
       try { spotOrdersByPubkey.set(pubkey.toBase58(), decodeSpotOrder(pubkey, account.data)); } catch { /* ignora */ }
+    }
+    duelsByPubkey.clear();
+    for (const { pubkey, account } of duelAccounts) {
+      try { duelsByPubkey.set(pubkey.toBase58(), decodeDuel(pubkey, account.data)); } catch { /* ignora */ }
+    }
+    daoProposalsByPubkey.clear();
+    for (const { pubkey, account } of daoProposalAccounts) {
+      try { daoProposalsByPubkey.set(pubkey.toBase58(), decodeDaoProposal(pubkey, account.data)); } catch { /* ignora */ }
     }
 
     lastRefreshError = null;
@@ -394,7 +490,9 @@ export function getIndexerStatus() {
     markets: marketsByPubkey.size,
     orders: ordersByPubkey.size,
     positions: positionsByPubkey.size,
-    spotOrders: spotOrdersByPubkey.size
+    spotOrders: spotOrdersByPubkey.size,
+    duels: duelsByPubkey.size,
+    daoProposals: daoProposalsByPubkey.size
   };
 }
 
@@ -416,6 +514,22 @@ export function listPositionsForOwner(owner: string): IndexedPosition[] {
 
 export function listOpenSpotOrders(): IndexedSpotOrder[] {
   return Array.from(spotOrdersByPubkey.values()).filter((o) => o.status === 'Open');
+}
+
+export function listIndexedDuels(): IndexedDuel[] {
+  return Array.from(duelsByPubkey.values());
+}
+
+export function getIndexedDuel(pubkey: string): IndexedDuel | undefined {
+  return duelsByPubkey.get(pubkey);
+}
+
+export function listIndexedDaoProposals(): IndexedDaoProposal[] {
+  return Array.from(daoProposalsByPubkey.values());
+}
+
+export function getIndexedDaoProposal(pubkey: string): IndexedDaoProposal | undefined {
+  return daoProposalsByPubkey.get(pubkey);
 }
 
 // --- Keeper: ejecuta ordenes limite ya cumplidas ---

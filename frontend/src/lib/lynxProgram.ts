@@ -86,6 +86,9 @@ const IX = {
   createDuel: Buffer.from([49, 28, 93, 11, 75, 242, 69, 165]),
   acceptDuel: Buffer.from([80, 52, 90, 135, 172, 221, 175, 102]),
   cancelDuel: Buffer.from([83, 124, 224, 237, 235, 44, 38, 57]),
+  createDaoProposal: Buffer.from([112, 127, 42, 71, 195, 95, 60, 165]),
+  castDaoVote: Buffer.from([129, 151, 210, 43, 50, 222, 234, 39]),
+  finalizeDaoProposal: Buffer.from([76, 23, 122, 24, 113, 102, 12, 35]),
 };
 
 export type DuelType = 'OneVOne' | 'OneVOneVProtocol';
@@ -258,6 +261,16 @@ export function duelPda(parentMarket: PublicKey, creator: PublicKey, duelId: big
 // DuelVault PDA: seeds = [b"duel_vault", duel] (ver CreateDuel en lib.rs).
 export function duelVaultPda(duel: PublicKey, programId = getProgramId()) {
   return PublicKey.findProgramAddressSync([Buffer.from('duel_vault'), duel.toBuffer()], programId)[0];
+}
+
+// DaoProposal PDA: seeds = [b"dao_proposal", proposal_id.to_le_bytes()] (ver CreateDaoProposal en lib.rs).
+export function daoProposalPda(proposalId: bigint, programId = getProgramId()) {
+  return PublicKey.findProgramAddressSync([Buffer.from('dao_proposal'), u64LE(proposalId)], programId)[0];
+}
+
+// DaoVote PDA: seeds = [b"dao_vote", proposal, voter] (ver CastDaoVote en lib.rs).
+export function daoVotePda(proposal: PublicKey, voter: PublicKey, programId = getProgramId()) {
+  return PublicKey.findProgramAddressSync([Buffer.from('dao_vote'), proposal.toBuffer(), voter.toBuffer()], programId)[0];
 }
 
 // Genera un order_id "unico con alta probabilidad" para este owner+mercado.
@@ -1009,4 +1022,95 @@ export function buildCancelDuelTx(params: {
     data: IX.cancelDuel,
   });
   return buildTx([ix], creator);
+}
+
+// --- DAO on-chain (gobernanza, voto ponderado por stake) --------------------
+//
+// Reemplaza el DAO simulado del backend (state.ts). Crear propuestas es
+// SOLO-ADMIN on-chain (create_dao_proposal exige config.admin); el peso del voto
+// es el LYNX apostado del votante (StakePosition.amount) leido on-chain al votar,
+// y la cuenta DaoVote (una por proposal+voter, `init`) impide el doble voto a
+// nivel de programa. finalize_dao_proposal es permissionless tras end_ts.
+// Layout/orden de cuentas cross-checkeado con CreateDaoProposal/CastDaoVote/
+// FinalizeDaoProposal en lib.rs y unit-tested en lynxProgram.dao.test.ts.
+
+export const DAO_TITLE_MAX = 128; // == DaoProposal::TITLE_MAX en state.rs
+
+export function buildCreateDaoProposalTx(params: {
+  admin: PublicKey;
+  title: string;
+  durationSeconds: number;
+  proposalId?: bigint;
+}): { tx: Transaction; proposalId: bigint; proposalPubkey: PublicKey } {
+  const { admin, title, durationSeconds } = params;
+  const trimmed = title.trim();
+  if (!trimmed) throw new Error('El titulo de la propuesta no puede estar vacio.');
+  if (Buffer.from(trimmed, 'utf8').length > DAO_TITLE_MAX) {
+    throw new Error(`El titulo de la propuesta supera ${DAO_TITLE_MAX} bytes.`);
+  }
+  const programId = getProgramId();
+  const proposalId = params.proposalId ?? randomOrderId();
+  const config = configPda(programId);
+  const proposal = daoProposalPda(proposalId, programId);
+
+  const data = Buffer.concat([
+    IX.createDaoProposal,
+    u64LE(proposalId),
+    borshString(trimmed),
+    i64LE(durationSeconds),
+  ]);
+  const ix = new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: config, isSigner: false, isWritable: false },
+      { pubkey: proposal, isSigner: false, isWritable: true },
+      { pubkey: admin, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data,
+  });
+  return { tx: buildTx([ix], admin), proposalId, proposalPubkey: proposal };
+}
+
+export function buildCastDaoVoteTx(params: {
+  voter: PublicKey;
+  proposalId: bigint;
+  voteYes: boolean;
+}): Transaction {
+  const { voter, proposalId, voteYes } = params;
+  const programId = getProgramId();
+  const proposal = daoProposalPda(proposalId, programId);
+  const stakePosition = stakePositionPda(voter, programId);
+  const vote = daoVotePda(proposal, voter, programId);
+
+  const data = Buffer.concat([IX.castDaoVote, Buffer.from([voteYes ? 1 : 0])]);
+  const ix = new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: proposal, isSigner: false, isWritable: true },
+      { pubkey: stakePosition, isSigner: false, isWritable: false },
+      { pubkey: vote, isSigner: false, isWritable: true },
+      { pubkey: voter, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data,
+  });
+  return buildTx([ix], voter);
+}
+
+// Permissionless tras end_ts: cualquiera (nuestro keeper o un tercero) puede
+// cerrar la propuesta; el resultado lo decide la mayoria de votos on-chain.
+export function buildFinalizeDaoProposalTx(params: {
+  payer: PublicKey;
+  proposalId: bigint;
+}): Transaction {
+  const { payer, proposalId } = params;
+  const programId = getProgramId();
+  const proposal = daoProposalPda(proposalId, programId);
+  const ix = new TransactionInstruction({
+    programId,
+    keys: [{ pubkey: proposal, isSigner: false, isWritable: true }],
+    data: IX.finalizeDaoProposal,
+  });
+  return buildTx([ix], payer);
 }

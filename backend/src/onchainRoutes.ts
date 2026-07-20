@@ -15,6 +15,8 @@ import {
   listOpenOrdersForMarket,
   listPositionsForOwner,
   listOpenSpotOrders,
+  listIndexedDuels,
+  listIndexedDaoProposals,
   forceRefresh,
   getIndexerStatus,
 } from './chain.js';
@@ -47,6 +49,14 @@ onchainRouter.get('/api/onchain/positions', (req, res) => {
 
 onchainRouter.get('/api/onchain/spot-orders', (_req, res) => {
   res.json({ data: listOpenSpotOrders() });
+});
+
+onchainRouter.get('/api/onchain/duels', (_req, res) => {
+  res.json({ data: listIndexedDuels() });
+});
+
+onchainRouter.get('/api/onchain/dao-proposals', (_req, res) => {
+  res.json({ data: listIndexedDaoProposals() });
 });
 
 // Llamado por el frontend justo despues de confirmar una transaccion propia,
