@@ -4,26 +4,17 @@ members = [
 ]
 resolver = "2"
 
-# ── KNOWN ISSUE: `anchor build` cannot emit the IDL ──────────────────────────
-# anchor-syn 0.30.1 (the IDL generator) calls proc_macro2's `Span::source_file()`,
-# removed in proc-macro2 1.0.85. With anything newer, `anchor build` fails during
-# IDL emission. The deployable program is unaffected — `cargo build-sbf` produces
-# a working .so, which is what CI builds and what the tests execute.
+# ── RESOLVED (2026-07): `anchor build` now emits the IDL ─────────────────────
+# This used to be a launch blocker: anchor-syn 0.30.1 (the IDL generator) called
+# proc_macro2's `Span::source_file()`, removed in proc-macro2 1.0.85, so
+# `anchor build` failed during IDL emission on any modern proc-macro2.
 #
-# Pinning proc-macro2 <= 1.0.84 does NOT work: parts of the tree hard-require
-# ^1.0.91, so cargo cannot satisfy both. Attempted and reverted rather than left
-# as a no-op `[workspace.dependencies]` entry that looks like a fix.
-#
-# The real options, in order of preference:
-#   1. Upgrade Anchor to >= 0.31, where anchor-syn no longer uses source_file().
-#      Biggest change, but it also improves the account codegen that forced the
-#      Box<Account<..>> workarounds elsewhere in this program.
-#   2. Generate the IDL with a toolchain pinned to an older proc-macro2 in an
-#      isolated build (e.g. a container just for IDL emission).
-#   3. Hand-maintain the IDL — not recommended: it silently drifts from the
-#      program and every client then talks to an interface that no longer exists.
-#
-# Tracked as a launch blocker: TypeScript clients need the IDL.
+# FIXED via option #1 below: the workspace is now on anchor-lang / anchor-spl
+# 0.31.1 (see programs/lynx_project/Cargo.toml), whose anchor-syn no longer uses
+# source_file(). `anchor build` generates the IDL cleanly, and the `idl-build`
+# feature is wired up. `cargo build-sbf` still produces the deployable .so that
+# CI builds and the tests execute. (Historical audit note: a stale copy of this
+# comment led one external review to re-flag N-1 — it is closed.)
 
 [profile.release]
 overflow-checks = true
