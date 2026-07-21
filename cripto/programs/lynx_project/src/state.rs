@@ -284,10 +284,16 @@ pub struct StakePosition {
     pub reward_debt_scaled: u128,
     pub pending_rewards: u64,
     pub bump: u8,
+    // Unix ts of the most recent stake_lynx that changed `amount`. DAO voting
+    // requires the stake to predate the proposal (staked_at < proposal.created_ts)
+    // so a voter cannot stake right before a proposal, vote with that weight, and
+    // unstake immediately (flash-stake vote — audit BUG-2). Placed last so the
+    // amount/pending_rewards offsets the clients decode stay unchanged.
+    pub staked_at: i64,
 }
 
 impl StakePosition {
-    pub const LEN: usize = 8 + 32 + 8 + 16 + 8 + 1;
+    pub const LEN: usize = 8 + 32 + 8 + 16 + 8 + 1 + 8;
 }
 
 #[account]

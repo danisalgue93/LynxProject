@@ -61,7 +61,10 @@ fn config_account(admin: Pubkey) -> ProtocolConfig {
 
 fn stake_position(owner: Pubkey, amount: u64) -> StakePosition {
     let (_p, bump) = stake_pda(&owner);
-    StakePosition { owner, amount, reward_debt_scaled: 0, pending_rewards: 0, bump }
+    // staked_at = 1 (well before the proposal's created_ts, which is the live
+    // clock at create_dao_proposal time) so these seeded stakers pass the
+    // anti-flash-stake check (BUG-2). See stake_position offsets note in state.rs.
+    StakePosition { owner, amount, reward_debt_scaled: 0, pending_rewards: 0, bump, staked_at: 1 }
 }
 
 async fn fund(ctx: &mut ProgramTestContext, who: &Pubkey) {
@@ -166,6 +169,28 @@ async fn a_wallet_with_no_stake_cannot_vote() {
     send(&mut ctx, create_ix(&admin.pubkey(), 7, "x", 3600), &[&admin]).await.unwrap();
     assert!(send(&mut ctx, vote_ix(&nobody.pubkey(), 7, true), &[&nobody]).await.is_err(),
         "a zero-weight staker must not be able to vote");
+}
+
+#[tokio::test]
+async fn a_stake_that_postdates_the_proposal_cannot_vote() {
+    // BUG-2 regression: a staker with plenty of weight but whose stake was placed
+    // AFTER the proposal (staked_at not before created_ts) must be rejected — this
+    // is the flash-stake-vote-unstake attack.
+    let admin = Keypair::new();
+    let flash = Keypair::new();
+    let mut pt = ProgramTest::new("lynx_project", program_id(), None);
+    pt.add_account(config_pda().0, program_account(account_bytes(&config_account(admin.pubkey())), 0));
+    let flash_pos = StakePosition {
+        owner: flash.pubkey(), amount: 100 * MICRO, reward_debt_scaled: 0,
+        pending_rewards: 0, bump: stake_pda(&flash.pubkey()).1, staked_at: i64::MAX,
+    };
+    pt.add_account(stake_pda(&flash.pubkey()).0, program_account(account_bytes(&flash_pos), 0));
+    let mut ctx = pt.start_with_context().await;
+    for k in [&admin, &flash] { fund(&mut ctx, &k.pubkey()).await; }
+
+    send(&mut ctx, create_ix(&admin.pubkey(), 9, "flash?", 3600), &[&admin]).await.expect("admin creates proposal");
+    assert!(send(&mut ctx, vote_ix(&flash.pubkey(), 9, true), &[&flash]).await.is_err(),
+        "a stake that postdates the proposal must not be able to vote (anti flash-stake)");
 }
 
 #[tokio::test]

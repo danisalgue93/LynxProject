@@ -2005,11 +2005,23 @@ app.delete('/api/duels/:id', asyncRoute(async (req, res) => {
   if (!wallet) return; // requireWalletBody already sent the 400
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   if (!requireApprovedWallet(res, wallet)) return;
-  const result = store.cancelDuel({ wallet, duelId: req.params.id });
-  await persist();
-  emit('duel:cancelled', result.duel);
-  emitPortfolioUpdated(wallet, result.portfolio);
-  res.json(result);
+  // Distributed lock (audit BUG-1): cancelDuel reads duel.status==OPEN, refunds
+  // the creator and flips to CANCELLED. Two replicas could both refund the same
+  // open duel before either writes CANCELLED — double refund.
+  const cancelDuelLockKey = `cancel-duel:${req.params.id}`;
+  if (!(await acquireLock(cancelDuelLockKey, 10_000))) {
+    res.status(409).json({ error: 'Concurrent cancel in progress. Please retry.' });
+    return;
+  }
+  try {
+    const result = store.cancelDuel({ wallet, duelId: req.params.id });
+    await persist();
+    emit('duel:cancelled', result.duel);
+    emitPortfolioUpdated(wallet, result.portfolio);
+    res.json(result);
+  } finally {
+    await releaseLock(cancelDuelLockKey);
+  }
 }));
 
 
@@ -2101,31 +2113,44 @@ app.post('/api/orders', tradingRateLimit, walletTradingRateLimit, asyncRoute(asy
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   if (!requireApprovedWallet(res, wallet)) return;
 
-  const result = store.placeOrder({
-    wallet,
-    marketId: body.marketId,
-    pair: body.pair,
-    side: body.side as OrderSide,
-    position: body.position as Position | undefined,
-    amount: body.amount,
-    price: body.price,
-    currency: body.currency as Currency,
-    tradeType: body.tradeType,
-    maxPrice: body.maxPrice,
-    minPrice: body.minPrice
-  });
-  await persist();
-  emit('orderbook:updated', result.orderbook);
-  // A prediction limit order (pair === marketId, not LYNX/SOL) can match
-  // immediately against the pool in placeOrder -> matchPredictionOrders,
-  // changing the market's pool/yes/no right away. Mirror the same
-  // market:updated emission used by /api/markets/:id/trades so connected
-  // clients see the price/pool change in real time.
-  if (body.marketId && body.pair !== 'LYNX/SOL') {
-    const updatedMarket = store.getMarket(body.marketId);
-    if (updatedMarket) emit('market:updated', updatedMarket);
+  // Distributed lock (audit BUG-1 / endpoint×lock sweep): placeOrder reads the
+  // wallet's balance and escrows (locks/debits) part of it. Two concurrent order
+  // creations from the same wallet on different replicas could both read the same
+  // balance and both escrow it — over-committing more than the wallet holds.
+  const placeOrderLockKey = `place-order:${wallet}`;
+  if (!(await acquireLock(placeOrderLockKey, 10_000))) {
+    res.status(409).json({ error: 'Concurrent order placement in progress. Please retry.' });
+    return;
   }
-  res.status(201).json(result);
+  try {
+    const result = store.placeOrder({
+      wallet,
+      marketId: body.marketId,
+      pair: body.pair,
+      side: body.side as OrderSide,
+      position: body.position as Position | undefined,
+      amount: body.amount,
+      price: body.price,
+      currency: body.currency as Currency,
+      tradeType: body.tradeType,
+      maxPrice: body.maxPrice,
+      minPrice: body.minPrice
+    });
+    await persist();
+    emit('orderbook:updated', result.orderbook);
+    // A prediction limit order (pair === marketId, not LYNX/SOL) can match
+    // immediately against the pool in placeOrder -> matchPredictionOrders,
+    // changing the market's pool/yes/no right away. Mirror the same
+    // market:updated emission used by /api/markets/:id/trades so connected
+    // clients see the price/pool change in real time.
+    if (body.marketId && body.pair !== 'LYNX/SOL') {
+      const updatedMarket = store.getMarket(body.marketId);
+      if (updatedMarket) emit('market:updated', updatedMarket);
+    }
+    res.status(201).json(result);
+  } finally {
+    await releaseLock(placeOrderLockKey);
+  }
 }));
 
 app.get('/api/portfolio', (req: any, res) => {
@@ -2535,10 +2560,22 @@ app.post('/api/positions/:id/claim', asyncRoute(async (req, res) => {
   if (!wallet) return; // requireWalletBody already sent the 400
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   if (!requireApprovedWallet(res, wallet)) return;
-  const result = store.claimPosition(wallet, req.params.id);
-  await persist();
-  emitPortfolioUpdated(wallet, result.portfolio);
-  res.json(result);
+  // Distributed lock (audit BUG-1): claimPosition reads position.claimed, then
+  // pays out and sets it true. Without this, two replicas could both read
+  // claimed=false and pay the same winning position twice.
+  const claimLockKey = `claim-position:${req.params.id}`;
+  if (!(await acquireLock(claimLockKey, 10_000))) {
+    res.status(409).json({ error: 'Concurrent claim in progress. Please retry.' });
+    return;
+  }
+  try {
+    const result = store.claimPosition(wallet, req.params.id);
+    await persist();
+    emitPortfolioUpdated(wallet, result.portfolio);
+    res.json(result);
+  } finally {
+    await releaseLock(claimLockKey);
+  }
 }));
 
 app.post('/api/positions/:id/boost-with-lynx', tradingRateLimit, walletTradingRateLimit, asyncRoute(async (req, res) => {
@@ -2576,12 +2613,24 @@ app.delete('/api/orders/:id', asyncRoute(async (req, res) => {
   if (!wallet) return; // requireWalletBody already sent the 400
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   if (!requireApprovedWallet(res, wallet)) return;
-  const result = store.cancelOrder(wallet, req.params.id);
-  await persist();
-  const cancelledOrder = store.orders.get(req.params.id);
-  emit('orderbook:updated', store.getOrderBook(cancelledOrder?.pair ?? 'LYNX/SOL', cancelledOrder?.marketId));
-  emitPortfolioUpdated(wallet, result.portfolio);
-  res.json(result);
+  // Distributed lock (audit BUG-1): cancelOrder reads order.status, refunds the
+  // locked amount and flips it to CANCELLED. Two replicas cancelling the same
+  // order could both refund before either writes CANCELLED — double refund.
+  const cancelOrderLockKey = `cancel-order:${req.params.id}`;
+  if (!(await acquireLock(cancelOrderLockKey, 10_000))) {
+    res.status(409).json({ error: 'Concurrent cancel in progress. Please retry.' });
+    return;
+  }
+  try {
+    const result = store.cancelOrder(wallet, req.params.id);
+    await persist();
+    const cancelledOrder = store.orders.get(req.params.id);
+    emit('orderbook:updated', store.getOrderBook(cancelledOrder?.pair ?? 'LYNX/SOL', cancelledOrder?.marketId));
+    emitPortfolioUpdated(wallet, result.portfolio);
+    res.json(result);
+  } finally {
+    await releaseLock(cancelOrderLockKey);
+  }
 }));
 
 app.post('/api/staking/stake', tradingRateLimit, walletTradingRateLimit, asyncRoute(async (req, res) => {
@@ -2591,10 +2640,21 @@ app.post('/api/staking/stake', tradingRateLimit, walletTradingRateLimit, asyncRo
   if (!wallet) return; // requireWalletBody already sent the 400
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   if (!requireApprovedWallet(res, wallet)) return;
-  const portfolio = store.stake(wallet, body.amount);
-  await persist();
-  emitPortfolioUpdated(wallet, portfolio);
-  res.json(portfolio);
+  // Distributed lock (audit BUG-1): stake/unstake/claim all read-modify-write the
+  // same wallet's staked/rewards balance, so they share one lock per wallet.
+  const stakeLockKey = `staking:${wallet}`;
+  if (!(await acquireLock(stakeLockKey, 10_000))) {
+    res.status(409).json({ error: 'Concurrent staking operation in progress. Please retry.' });
+    return;
+  }
+  try {
+    const portfolio = store.stake(wallet, body.amount);
+    await persist();
+    emitPortfolioUpdated(wallet, portfolio);
+    res.json(portfolio);
+  } finally {
+    await releaseLock(stakeLockKey);
+  }
 }));
 
 app.post('/api/staking/unstake', tradingRateLimit, walletTradingRateLimit, asyncRoute(async (req, res) => {
@@ -2604,10 +2664,19 @@ app.post('/api/staking/unstake', tradingRateLimit, walletTradingRateLimit, async
   if (!wallet) return; // requireWalletBody already sent the 400
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   if (!requireApprovedWallet(res, wallet)) return;
-  const portfolio = store.unstake(wallet, body.amount);
-  await persist();
-  emitPortfolioUpdated(wallet, portfolio);
-  res.json(portfolio);
+  const unstakeLockKey = `staking:${wallet}`;
+  if (!(await acquireLock(unstakeLockKey, 10_000))) {
+    res.status(409).json({ error: 'Concurrent staking operation in progress. Please retry.' });
+    return;
+  }
+  try {
+    const portfolio = store.unstake(wallet, body.amount);
+    await persist();
+    emitPortfolioUpdated(wallet, portfolio);
+    res.json(portfolio);
+  } finally {
+    await releaseLock(unstakeLockKey);
+  }
 }));
 
 app.post('/api/staking/claim', tradingRateLimit, walletTradingRateLimit, asyncRoute(async (req, res) => {
@@ -2617,10 +2686,19 @@ app.post('/api/staking/claim', tradingRateLimit, walletTradingRateLimit, asyncRo
   if (!wallet) return; // requireWalletBody already sent the 400
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   if (!requireApprovedWallet(res, wallet)) return;
-  const result = store.claimRewards(wallet);
-  await persist();
-  emitPortfolioUpdated(wallet, result.portfolio);
-  res.json(result);
+  const claimRewardsLockKey = `staking:${wallet}`;
+  if (!(await acquireLock(claimRewardsLockKey, 10_000))) {
+    res.status(409).json({ error: 'Concurrent staking operation in progress. Please retry.' });
+    return;
+  }
+  try {
+    const result = store.claimRewards(wallet);
+    await persist();
+    emitPortfolioUpdated(wallet, result.portfolio);
+    res.json(result);
+  } finally {
+    await releaseLock(claimRewardsLockKey);
+  }
 }));
 
 app.get('/api/proposals', (_req, res) => {
@@ -2657,10 +2735,21 @@ app.post('/api/proposals/:id/vote', asyncRoute(async (req, res) => {
   if (!wallet) return; // requireWalletBody already sent the 400
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
   if (!requireApprovedWallet(res, wallet)) return;
-  const proposal = await store.castVote({ wallet, proposalId: req.params.id, voteType: body.voteType }, persistence.recordVote);
-  await persist();
-  emit('dao:proposal-updated', proposal);
-  res.json(proposal);
+  // Distributed lock (audit BUG-1): serialize a wallet's vote on a proposal so a
+  // double-submit from two replicas can't both pass the "already voted" check.
+  const voteLockKey = `vote:${req.params.id}:${wallet}`;
+  if (!(await acquireLock(voteLockKey, 10_000))) {
+    res.status(409).json({ error: 'Concurrent vote in progress. Please retry.' });
+    return;
+  }
+  try {
+    const proposal = await store.castVote({ wallet, proposalId: req.params.id, voteType: body.voteType }, persistence.recordVote);
+    await persist();
+    emit('dao:proposal-updated', proposal);
+    res.json(proposal);
+  } finally {
+    await releaseLock(voteLockKey);
+  }
 }));
 
 // ==================== ADMIN ENDPOINTS ====================

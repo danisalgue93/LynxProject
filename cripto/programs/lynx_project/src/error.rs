@@ -128,4 +128,6 @@ pub enum LynxError {
     NoStakeToVote,
     #[msg("Invalid DAO proposal duration")]
     InvalidProposalDuration,
+    #[msg("Your stake must predate the proposal to vote (anti flash-stake)")]
+    StakeTooRecentToVote,
 }

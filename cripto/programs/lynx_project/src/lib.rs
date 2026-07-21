@@ -1368,6 +1368,10 @@ pub mod lynx_project {
         ctx.accounts.stake_position.amount = ctx.accounts.stake_position.amount.checked_add(amount).ok_or(LynxError::MathOverflow)?;
         ctx.accounts.stake_position.reward_debt_scaled = reward_debt(ctx.accounts.stake_position.amount, ctx.accounts.config.reward_per_token_scaled)?;
         ctx.accounts.stake_position.bump = ctx.bumps.stake_position;
+        // Stamp the stake time so DAO votes can require the stake to predate the
+        // proposal (anti flash-stake voting, BUG-2). Any top-up resets the clock:
+        // freshly-added weight cannot vote on a proposal created before it.
+        ctx.accounts.stake_position.staked_at = Clock::get()?.unix_timestamp;
         ctx.accounts.config.total_staked = ctx.accounts.config.total_staked.checked_add(amount).ok_or(LynxError::MathOverflow)?;
         Ok(())
     }
@@ -1644,6 +1648,17 @@ pub mod lynx_project {
         // a second vote by the same wallet fail at account creation.
         let weight = ctx.accounts.stake_position.amount;
         require!(weight > 0, LynxError::NoStakeToVote);
+        // Anti flash-stake voting (BUG-2): the stake must have been in place BEFORE
+        // this proposal was created. Otherwise a voter could stake a large amount
+        // right after seeing a proposal, vote with that weight, and unstake in the
+        // next transaction without ever holding real, at-risk skin in the game —
+        // the exact attack the off-chain engine already blocked with a per-proposal
+        // stake snapshot.
+        require!(
+            ctx.accounts.stake_position.staked_at > 0
+                && ctx.accounts.stake_position.staked_at < ctx.accounts.proposal.created_ts,
+            LynxError::StakeTooRecentToVote
+        );
 
         let vote = &mut ctx.accounts.vote;
         vote.proposal = ctx.accounts.proposal.key();

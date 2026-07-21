@@ -278,7 +278,16 @@ export class LynxState {
   }
 
   getWallet(wallet: string) {
-    const key = wallet || 'DEV_WALLET';
+    // Audit N-2: never silently fall back to a shared 'DEV_WALLET' on an empty
+    // string. That would read/write everyone's balance into one shared wallet if
+    // an empty value ever reached here (a new internal caller, or an optional
+    // field propagated as '' instead of undefined). Fail loudly instead — the
+    // HTTP boundary already rejects empty/DEV_WALLET (requireWalletBody), so a
+    // non-empty wallet is an invariant every real caller must uphold.
+    if (!wallet) {
+      throw new Error('getWallet requires a non-empty wallet address');
+    }
+    const key = wallet;
     let state = this.wallets.get(key);
     if (!state) {
       state = {
@@ -1783,16 +1792,26 @@ export class LynxState {
 
     const wallet = this.getWallet(walletAddress);
     if (order.lockedAmount !== undefined && order.lockedCurrency) {
+      // Modern path: refund exactly what was escrowed and not yet spent.
       const refund = roundAmount(order.lockedAmount - (order.spentAmount ?? 0));
       if (refund > 0) this.credit(wallet, order.lockedCurrency, refund);
       order.lockedAmount = order.spentAmount ?? order.lockedAmount;
     } else if (order.pair === 'LYNX/SOL' && order.side === 'BUY') {
+      // Legacy LYNX/SOL BUY: SOL was locked (remaining LYNX * price).
       const refund = roundAmount(order.remaining * order.price);
       wallet.solBalance = roundAmount(wallet.solBalance + refund);
     } else if (order.pair === 'LYNX/SOL') {
+      // Legacy LYNX/SOL SELL (e.g. the treasury initial-sale order): LYNX locked.
       wallet.lynxBalance = roundAmount(wallet.lynxBalance + order.remaining);
     } else {
-      this.credit(wallet, order.currency, order.remaining);
+      // Audit BUG-3: an order with no lockedAmount/lockedCurrency on an unknown
+      // pair. Refunding `remaining` of `currency` here is a GUESS that is wrong
+      // for, e.g., a BUY order on a new pair (which locks the quote currency, not
+      // the base). Fail loudly so any new order type is forced to record its
+      // escrow via lockedAmount/lockedCurrency instead of relying on this branch.
+      throw new Error(
+        `Cannot safely refund order ${orderId}: no lockedAmount/lockedCurrency and not a known legacy LYNX/SOL order. New order types must set lockedAmount/lockedCurrency.`
+      );
     }
 
     return { cancelled: orderId, portfolio: this.getPortfolio(walletAddress) };
