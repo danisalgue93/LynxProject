@@ -1,8 +1,14 @@
-# Devnet deployment — 2026-07-20
+# Devnet deployment — 2026-07-20 (upgraded 2026-07-21)
 
 The Lynx program is deployed and bootstrapped on **devnet**. Smoke-tested
-end-to-end (create_market + buy_position_sol with the slippage arg accepted;
-market decoded correctly).
+end-to-end (create_market + buy_position_sol with the slippage arg, limit orders,
+duels create/accept/cancel, spot orders, DAO proposal — all accepted).
+
+**Upgraded 2026-07-21** with the external-audit fixes (BUG-1 locks, BUG-2 anti
+flash-stake, N-2, BUG-3). Upgrade authority remains the deployer `GYMUuhZ4…`.
+`config.admin` was moved to your Phantom via `transfer_admin`, so `create_market`
+/ DAO-propose now require your wallet (a deployer-signed create_market correctly
+returns Unauthorized — confirmed on-chain).
 
 ## On-chain addresses
 
@@ -12,7 +18,7 @@ market decoded correctly).
 | ProgramData | `HhKtdCB47jUEmZsRRPhZVSjdMFKXG2p6k4QGVoDf8v3m` |
 | **Upgrade authority** | `GYMUuhZ4HiDrshzCE6YjVL6xE1W5CDDqpxaKa7auzSwW` (deployer) |
 | ProtocolConfig (PDA `config`) | `6YCxuiHvs2deL4hKga22y7ZTXvAy4Fwjj8rYTf8ycQfh` |
-| **admin** (config.admin) | `GYMUuhZ4HiDrshzCE6YjVL6xE1W5CDDqpxaKa7auzSwW` (deployer) |
+| **admin** (config.admin) | `9Jga2n3B8bQr1gCJJRE6Ei7XhsntoUQ1bYWJBSZPYr5d` (tu Phantom, via transfer_admin) |
 | **treasury** | `GYMUuhZ4HiDrshzCE6YjVL6xE1W5CDDqpxaKa7auzSwW` (deployer, devnet) |
 | LYNX mint | `6igDBKaWX42nYcVzGfrXaHC4vy11xk2hj4DzfqJckZjK` |
 | stakeVault | `2vAi7PMiTVFBxzrU8NPVYTXeewMAs4rHrTaZHPcspaTv` |
