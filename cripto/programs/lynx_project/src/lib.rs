@@ -1297,16 +1297,25 @@ pub mod lynx_project {
         let ratio_bps = market.mint_ratio_bps;
         let total_micro_lynx = bps(base_micro_lynx, ratio_bps)?;
         let position_amount = ctx.accounts.position.amount;
-        let participant_amount = prorated_bps(total_micro_lynx, LYNX_PARTICIPANT_BPS, position_amount, market.pool_total)?;
-        let treasury_amount_base = prorated_bps(total_micro_lynx, LYNX_TREASURY_BPS, position_amount, market.pool_total)?;
-        let sale_amount = prorated_bps(total_micro_lynx, LYNX_INITIAL_SALE_BPS, position_amount, market.pool_total)?;
+        // FIRST prorate the whole-market emission down to THIS position's share of
+        // the pool, THEN split that share 85/0/15. Splitting `total_micro_lynx`
+        // directly and deriving dust as `total - allocated` was a supply-inflation
+        // bug: for any position smaller than the whole pool, `dust` became the
+        // entire un-emitted remainder (every OTHER participant's share), so each
+        // fractional participant minted the full market emission and dumped
+        // everyone else's LYNX into treasury. See mint_distribution_integration.rs.
+        let position_micro_lynx = mul_div(total_micro_lynx, position_amount, market.pool_total)?;
+        let participant_amount = bps(position_micro_lynx, LYNX_PARTICIPANT_BPS)?;
+        let treasury_amount_base = bps(position_micro_lynx, LYNX_TREASURY_BPS)?;
+        let sale_amount = bps(position_micro_lynx, LYNX_INITIAL_SALE_BPS)?;
         // Each of the three amounts above is independently rounded down. The remainder
-        // ("dust") from that rounding is routed to treasury instead of being lost, so the
-        // sum actually minted always equals total_micro_lynx exactly.
+        // ("dust") from that rounding — now bounded to a few micro-LYNX within this
+        // position's own share — is routed to treasury instead of being lost, so the
+        // sum actually minted always equals position_micro_lynx exactly.
         let allocated_amount = participant_amount
             .checked_add(treasury_amount_base).ok_or(LynxError::MathOverflow)?
             .checked_add(sale_amount).ok_or(LynxError::MathOverflow)?;
-        let dust_amount = total_micro_lynx.checked_sub(allocated_amount).ok_or(LynxError::MathOverflow)?;
+        let dust_amount = position_micro_lynx.checked_sub(allocated_amount).ok_or(LynxError::MathOverflow)?;
         let treasury_amount = treasury_amount_base.checked_add(dust_amount).ok_or(LynxError::MathOverflow)?;
 
         let signer: &[&[&[u8]]] = &[&[b"config", &[ctx.accounts.config.bump]]];
@@ -2931,14 +2940,6 @@ fn mint_ratio_bps_twap(twap: &CirculatingSupplyTwap, config: &ProtocolConfig) ->
     Ok(ratio_for_circulating(circulating))
 }
 
-fn prorated_bps(total: u64, basis_points: u64, numerator: u64, denominator: u64) -> Result<u64> {
-    require!(denominator > 0, LynxError::InvalidAmount);
-    // Same u64-overflow hazard as claim_market_sol: bps(total, ..) can be ~1e9
-    // micro-LYNX and `numerator` a position of ~1e11 lamports, whose product
-    // exceeds u64::MAX and previously reverted mint_lynx_distribution outright.
-    mul_div(bps(total, basis_points)?, numerator, denominator)
-}
-
 fn bps(amount: u64, basis_points: u64) -> Result<u64> {
     // basis_points <= BPS_DENOMINATOR at every call site, so the result always
     // fits back into u64; u128 is only needed to survive the intermediate product.
@@ -3035,15 +3036,20 @@ mod math_tests {
         assert_eq!(bps(1_000, BPS_DENOMINATOR - EVENT_PROTOCOL_FEE_BPS).unwrap(), 900);
     }
 
-    /// prorated_bps feeds mint_lynx_distribution; a 1000 SOL market previously
-    /// overflowed here too.
+    /// The mint_lynx_distribution proration (prorate the emission to the
+    /// position's pool share, THEN take the participant %) must survive a large
+    /// market without u64 overflow and stay exact. A 1000 SOL market's product
+    /// (total_micro_lynx ~1e9 × position ~1e11) exceeds u64::MAX, so the u128
+    /// intermediate in mul_div is what keeps it from reverting.
     #[test]
-    fn prorated_bps_survives_large_markets() {
+    fn position_proration_survives_large_markets() {
         let pool_total = 1_000 * LAMPORTS_PER_SOL;
         let base_micro_lynx = pool_total / LAMPORTS_TO_MICRO_LYNX_DENOMINATOR;
-        let position = 100 * LAMPORTS_PER_SOL;
-        let got = prorated_bps(base_micro_lynx, LYNX_PARTICIPANT_BPS, position, pool_total).unwrap();
-        // 10% of the pool, 85% participant share of 1e9 micro-LYNX.
+        let position = 100 * LAMPORTS_PER_SOL; // 10% of the pool
+        // Same order production uses: prorate emission to the position, then split.
+        let position_micro_lynx = mul_div(base_micro_lynx, position, pool_total).unwrap();
+        let got = bps(position_micro_lynx, LYNX_PARTICIPANT_BPS).unwrap();
+        // 85% participant share of this position's 10% (= 1e8 micro-LYNX) share.
         assert_eq!(got, 85_000_000);
     }
 

@@ -15,6 +15,41 @@ real de las suites de test.
 
 ---
 
+## 00-bis. Addendum 2026-07-22 — cierre de cobertura de tests + BUG-4 (emisión LYNX)
+
+Al escribir los tests de integración que faltaban (una instrucción a la vez,
+ejecutando el `.so` real vía BanksClient), un test empírico destapó un bug de
+severidad **ALTA** que la lectura estática de auditorías previas no había cazado:
+
+- **BUG-4 — `mint_lynx_distribution` sobre-emitía LYNX a treasury.** La emisión
+  se prorratea por posición (cada participante llama para su propia posición),
+  pero el "dust" se calculaba como `emisión_total_del_mercado − parte_asignada`.
+  Para cualquier posición menor que el pool entero, ese `dust` era **toda la
+  parte aún no emitida** (la de los demás participantes) y se acuñaba a treasury.
+  Es decir: cada participante fraccional minteaba la emisión completa del mercado
+  y volcaba el resto a treasury → **inflación de supply** proporcional al nº de
+  participantes. Evidencia: `mint_distribution_integration.rs` — una posición del
+  20 % hacía que treasury recibiera 8.000.000 µLYNX en vez de 0.
+  **Fix** (`lib.rs`, `mint_lynx_distribution`): prorratear primero la emisión a la
+  cuota de la posición (`mul_div(total, position, pool)`) y **después** partir
+  85/0/15; el dust queda acotado al redondeo real de esa cuota. Confirmado por
+  runtime test (caso único y caso 20 %) + `clippy -D warnings` = 0. El motor
+  off-chain del backend (`state.ts`) **no** tenía el bug (reparte en una sola
+  pasada al resolver). **Requiere re-upgrade del programa en devnet.**
+
+**Cobertura de tests on-chain ampliada a 71** (18 unit + 53 integración en 17
+binarios), 0 fallos, `clippy --all-targets -D warnings` = 0. Nuevos binarios de
+integración añadidos esta ronda: `lynx_limit_order`, `spot_sell_cancel`,
+`mint_distribution`, `governance_actions`, `dispute_and_admin_resolution`
+(además de `prediction_order`, `settlement`, `multisig_governance` de la ronda
+anterior). Instrucciones ahora cubiertas por test: las órdenes límite LYNX
+(execute/cancel), `cancel_spot_order_sell`, `mint_lynx_distribution`, todas las
+ramas de `execute_action` (AddSigner/RemoveSigner/SetThreshold/TransferAdmin +
+rechazo de ResolveMarketAdmin), `cancel_proposal`, `dispute_resolution` y
+`execute_resolve_market_admin`.
+
+---
+
 ## 00. Testing y verificación completados (para producción)
 
 Todo lo automatizable ejecutado y en verde:
