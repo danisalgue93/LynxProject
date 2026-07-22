@@ -819,8 +819,12 @@ export function createPersistence(): Persistence {
         email:                  r.email,
         passwordHash:           r.passwordHash,
         displayName:            r.displayName ?? undefined,
-        role:                   r.role as 'admin' | 'user',
-        authMethod:             r.authMethod as 'email' | 'wallet',
+        // La app usa 'admin'/'user' y 'email'/'wallet' en minusculas; Prisma
+        // almacena los enums Role/AuthMethod en MAYUSCULAS. Antes se casteaba
+        // sin convertir ('ADMIN' as 'admin'), asi que un usuario cargado desde
+        // la DB nunca pasaba los checks user.role === 'admin'.
+        role:                   (r.role === 'ADMIN' ? 'admin' : 'user') as 'admin' | 'user',
+        authMethod:             (r.authMethod === 'WALLET' ? 'wallet' : 'email') as 'email' | 'wallet',
         emailVerified:          r.emailVerified,
         walletAddress:          r.walletAddress ?? undefined,
         walletLinkedAt:         r.walletLinkedAt ? r.walletLinkedAt.getTime() : undefined,
@@ -835,6 +839,12 @@ export function createPersistence(): Persistence {
     // BE-H-08: Upsert a single user instead of rewriting the full user table.
     async saveAuthUser<T>(_userId: string, user: T) {
       const r = user as any;
+      // Espejo del mapeo de loadAuthUsers: la app maneja 'admin'/'wallet' en
+      // minusculas, pero los enums Prisma (Role/AuthMethod) son MAYUSCULAS.
+      // Escribir r.role directamente reventaba el upsert con "Invalid value
+      // for argument `role`. Expected Role." en el primer wallet-login.
+      const dbRole = (r.role === 'admin' ? 'ADMIN' : 'USER') as 'ADMIN' | 'USER';
+      const dbAuthMethod = (r.authMethod === 'wallet' ? 'WALLET' : 'EMAIL') as 'WALLET' | 'EMAIL';
       await prisma.user.upsert({
         where:  { id: r.id },
         create: {
@@ -842,8 +852,8 @@ export function createPersistence(): Persistence {
           email:                  r.email,
           passwordHash:           r.passwordHash ?? '',
           displayName:            r.displayName ?? null,
-          role:                   r.role ?? 'user',
-          authMethod:             r.authMethod ?? 'email',
+          role:                   dbRole,
+          authMethod:             dbAuthMethod,
           emailVerified:          r.emailVerified ?? false,
           walletAddress:          r.walletAddress ?? null,
           walletLinkedAt:         r.walletLinkedAt ? new Date(r.walletLinkedAt) : null,
@@ -857,8 +867,8 @@ export function createPersistence(): Persistence {
           email:                  r.email,
           passwordHash:           r.passwordHash ?? '',
           displayName:            r.displayName ?? null,
-          role:                   r.role ?? 'user',
-          authMethod:             r.authMethod ?? 'email',
+          role:                   dbRole,
+          authMethod:             dbAuthMethod,
           emailVerified:          r.emailVerified ?? false,
           walletAddress:          r.walletAddress ?? null,
           walletLinkedAt:         r.walletLinkedAt ? new Date(r.walletLinkedAt) : null,
