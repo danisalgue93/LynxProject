@@ -10,6 +10,7 @@ import http from 'http';
 
 async function startServer() {
   const app = express();
+  const isProduction = process.env.NODE_ENV === 'production';
   const PORT = Number(process.env.PORT || 3000);
   const BACKEND_URL = (process.env.BACKEND_URL || process.env.VITE_API_URL || 'http://127.0.0.1:4000').replace(/\/$/, '');
   const PROXY_TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS || 30_000);
@@ -26,7 +27,15 @@ async function startServer() {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "https://auth.magic.link"],
+        // In dev, Vite (middlewareMode below) injects the @vitejs/plugin-react
+        // react-refresh preamble as an INLINE <script> into index.html. With the
+        // strict production script-src that inline script is blocked by the CSP
+        // and the app renders a blank page ("@vitejs/plugin-react can't detect
+        // preamble"). 'unsafe-inline' is therefore allowed ONLY outside
+        // production; the production policy stays strict.
+        scriptSrc: isProduction
+          ? ["'self'", "https://auth.magic.link"]
+          : ["'self'", "'unsafe-inline'", "https://auth.magic.link"],
         connectSrc: [
           "'self'",
           "https://api.devnet.solana.com",
@@ -167,7 +176,7 @@ async function startServer() {
   app.use('/auth', proxyToBackend);
 
   // ── Static file serving ───────────────────────────────────────────────────────
-  if (process.env.NODE_ENV !== 'production') {
+  if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
