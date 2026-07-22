@@ -48,7 +48,11 @@ function loadEnvSecret(value: string | undefined): string | undefined {
 
 const RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
 const PROGRAM_ID = process.env.PROGRAM_ID ? new PublicKey(process.env.PROGRAM_ID) : null;
-const REFRESH_INTERVAL_MS = Number(process.env.CHAIN_INDEXER_INTERVAL_MS || 8_000);
+// 30s por defecto: el RPC publico de devnet limita getProgramAccounts por
+// metodo y por IP; a 8s con 6 llamadas por ciclo el indexador entraba en 429
+// permanente ("Too many requests for a specific RPC call"). Con un RPC propio
+// (Helius/QuickNode/Triton) puede bajarse via CHAIN_INDEXER_INTERVAL_MS.
+const REFRESH_INTERVAL_MS = Number(process.env.CHAIN_INDEXER_INTERVAL_MS || 30_000);
 const KEEPER_INTERVAL_MS = Number(process.env.CHAIN_KEEPER_INTERVAL_MS || 6_000);
 
 let connection: Connection | null = null;
@@ -62,7 +66,11 @@ function withRpcTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 15000
 }
 
 function getConnection(): Connection {
-  if (!connection) connection = new Connection(RPC_URL, 'confirmed');
+  // disableRetryOnRateLimit: el retry interno de web3.js ante 429 ("Retrying
+  // after Nms delay...") se apilaba encima de nuestro propio bucle periodico,
+  // multiplicando la presion sobre el RPC justo cuando ya estaba limitando.
+  // El indexador ya reintenta solo en el siguiente ciclo (con backoff abajo).
+  if (!connection) connection = new Connection(RPC_URL, { commitment: 'confirmed', disableRetryOnRateLimit: true });
   return connection;
 }
 
@@ -350,19 +358,31 @@ const duelsByPubkey = new Map<string, IndexedDuel>();
 const daoProposalsByPubkey = new Map<string, IndexedDaoProposal>();
 let lastRefreshError: string | null = null;
 let lastRefreshAt = 0;
+let refreshConsecutiveErrors = 0;
+let refreshPausedUntil = 0;
 
-async function refreshOnce() {
+async function refreshOnce(force = false) {
   if (!PROGRAM_ID) return;
+  // Backoff tras fallos (tipicamente 429 del RPC publico): saltarse ciclos en
+  // vez de seguir martilleando un endpoint que ya esta limitando. forceRefresh
+  // (tras una tx confirmada del cliente) puede saltarse la pausa.
+  if (!force && Date.now() < refreshPausedUntil) return;
   const conn = getConnection();
   try {
-    const [marketAccounts, orderAccounts, positionAccounts, spotOrderAccounts, duelAccounts, daoProposalAccounts] = await Promise.all([
-      conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.market) } }] }),
-      withRpcTimeout(conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.predictionOrder) } }] }), 'refresh:getProgramAccounts:predictionOrder'),
-      withRpcTimeout(conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.userPosition) } }] }), 'refresh:getProgramAccounts:userPosition'),
-      withRpcTimeout(conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.spotOrder) } }] }), 'refresh:getProgramAccounts:spotOrder'),
-      withRpcTimeout(conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.duel) } }] }), 'refresh:getProgramAccounts:duel'),
-      withRpcTimeout(conn.getProgramAccounts(PROGRAM_ID, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(ACCOUNT_DISC.daoProposal) } }] }), 'refresh:getProgramAccounts:daoProposal'),
-    ]);
+    // SECUENCIAL a proposito: getProgramAccounts tiene un limite por-metodo en
+    // el RPC publico de devnet; 6 llamadas simultaneas en Promise.all agotaban
+    // ese burst en cada ciclo y todas volvian con 429.
+    const gpa = (disc: Uint8Array, label: string) =>
+      withRpcTimeout(
+        conn.getProgramAccounts(PROGRAM_ID!, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(disc) } }] }),
+        `refresh:getProgramAccounts:${label}`
+      );
+    const marketAccounts = await gpa(ACCOUNT_DISC.market, 'market');
+    const orderAccounts = await gpa(ACCOUNT_DISC.predictionOrder, 'predictionOrder');
+    const positionAccounts = await gpa(ACCOUNT_DISC.userPosition, 'userPosition');
+    const spotOrderAccounts = await gpa(ACCOUNT_DISC.spotOrder, 'spotOrder');
+    const duelAccounts = await gpa(ACCOUNT_DISC.duel, 'duel');
+    const daoProposalAccounts = await gpa(ACCOUNT_DISC.daoProposal, 'daoProposal');
 
     marketsByPubkey.clear();
     for (const { pubkey, account } of marketAccounts) {
@@ -391,9 +411,15 @@ async function refreshOnce() {
 
     lastRefreshError = null;
     lastRefreshAt = Date.now();
+    refreshConsecutiveErrors = 0;
+    refreshPausedUntil = 0;
   } catch (err: any) {
     lastRefreshError = err?.message || String(err);
-    chainLog.error('refresh failed', { error: lastRefreshError });
+    refreshConsecutiveErrors++;
+    // Backoff exponencial acotado: 1 ciclo, 2, 4... hasta 4 min de pausa.
+    const backoffMs = Math.min(REFRESH_INTERVAL_MS * 2 ** (refreshConsecutiveErrors - 1), 240_000);
+    refreshPausedUntil = Date.now() + backoffMs;
+    chainLog.error('refresh failed', { error: lastRefreshError, consecutive: refreshConsecutiveErrors, backoffMs });
   }
 }
 
@@ -437,7 +463,7 @@ export function stopChainIndexer() {
 // Fuerza un refresco inmediato (usado por POST /api/onchain/sync tras una tx
 // confirmada del cliente, para no esperar al siguiente poll periodico).
 export async function forceRefresh() {
-  await refreshOnce();
+  await refreshOnce(true);
 }
 
 // Verificacion "en caliente" (no depende de la cache del indexador, que

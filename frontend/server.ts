@@ -23,6 +23,18 @@ async function startServer() {
   // Compression before everything else
   app.use(compression());
 
+  // In dev the SPA calls the backend DIRECTLY at VITE_API_URL (e.g.
+  // http://localhost:4000) instead of going through this server's /api proxy,
+  // so connect-src must allow that origin or every fetch is blocked by the CSP
+  // ("Refused to connect"). Both localhost and 127.0.0.1 spellings are allowed
+  // because CSP matches hosts literally. Production keeps the strict list.
+  const backendOrigin = new URL(BACKEND_URL).origin;
+  const devConnectSrc = [...new Set([
+    backendOrigin,
+    backendOrigin.replace('//localhost', '//127.0.0.1'),
+    backendOrigin.replace('//127.0.0.1', '//localhost'),
+  ])];
+
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
@@ -43,6 +55,7 @@ async function startServer() {
           "https://ipapi.co",
           "wss:",
           "ws:",
+          ...(isProduction ? [] : devConnectSrc),
         ],
         imgSrc: ["'self'", "data:", "https://res.cloudinary.com"],
         styleSrc: ["'self'", "'unsafe-inline'"],
