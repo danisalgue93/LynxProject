@@ -463,10 +463,10 @@ export function PortfolioView() {
               </div>
               
               <div className="space-y-3">
-                {portfolio.payments?.map((claim: any, i: number) => {
+                {portfolio.payments?.map((claim: any) => {
                   const isLynx = (claim.token || 'SOL') === 'LYNX';
                   return (
-                  <div key={i} className={cn(
+                  <div key={`${claim.date}-${claim.title}-${claim.token ?? 'SOL'}-${claim.amount}`} className={cn(
                     "glass-card rounded p-4 border flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all",
                     isLynx ? "border-[#9945FF]/20 bg-[#9945FF]/5" : "border-[#00FFD1]/20 bg-[#00FFD1]/5"
                   )}>
@@ -531,14 +531,14 @@ export function PortfolioView() {
               </div>
               
               <div className="space-y-2">
-                {portfolio.holdings?.map((holding: any, idx: number) => {
+                {portfolio.holdings?.map((holding: any) => {
                   const market = markets.find(m => m.id === holding.marketId);
                   const title = market ? market.title : t('portfolio.unknownMarket', 'Unknown Market (Loading...)');
                   const pnl = (holding.currentPrice - holding.entryPrice) * holding.amount;
                   const isProfit = pnl >= 0;
 
                   return (
-                    <div key={idx} className="glass-card rounded p-4 border border-[#1F1F23] flex items-center justify-between group hover:border-[#27272A] transition-all bg-[#0D0D0E]">
+                    <div key={`${holding.marketId}-${holding.position}`} className="glass-card rounded p-4 border border-[#1F1F23] flex items-center justify-between group hover:border-[#27272A] transition-all bg-[#0D0D0E]">
                       <div className="flex items-center gap-3 md:gap-4">
                         <div className="w-8 h-8 bg-[#141417] rounded flex items-center justify-center text-[#52525B] group-hover:text-[#00FFD1] transition-colors border border-[#27272A]">
                           <TrendingUp className="w-4 h-4" />
