@@ -57,6 +57,14 @@ export default defineConfig(({mode}) => {
             ],
             'vendor-react': ['react', 'react-dom', 'react-router-dom'],
             'vendor-charts': ['recharts'],
+            // Without this, the ~100 kB (gzip) motion animation library was
+            // inlined into whichever app chunk imported it first (CreateDuelModal
+            // shipped at 384 kB raw / 101 kB gzip because of it), so it got
+            // re-downloaded on every app-code change instead of being cached once.
+            // 'motion' is only the re-export shim; the actual gesture/projection
+            // code lives under node_modules/framer-motion, so both must be listed
+            // or the heavy submodules leak back into the app chunks.
+            'vendor-motion': ['motion', 'framer-motion'],
           },
         },
       },

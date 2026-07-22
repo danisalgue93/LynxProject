@@ -29,7 +29,6 @@
     "compression": "^1.7.5",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
-    "framer-motion": "^12.38.0",
     "helmet": "^8.1.0",
     "i18next": "^26.0.8",
     "i18next-browser-languagedetector": "^8.2.1",
