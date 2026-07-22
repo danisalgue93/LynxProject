@@ -8,6 +8,7 @@ import { X, Sword, Target, ChevronRight, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "@/src/lib/utils";
 import { useTranslation } from "react-i18next";
+import { useFocusTrap } from "@/src/hooks/useFocusTrap";
 
 interface CreateDuelModalProps {
   onClose: () => void;
@@ -16,6 +17,7 @@ interface CreateDuelModalProps {
 
 export function CreateDuelModal({ onClose, onSubmit }: CreateDuelModalProps) {
   const { t } = useTranslation();
+  const dialogRef = useFocusTrap<HTMLDivElement>(true, onClose);
   const { fetchMarkets, isLoading } = useProgram();
   const { executeTransaction } = useBlockchainTransaction();
   const [markets, setMarkets] = useState<Market[]>([]);
@@ -96,11 +98,17 @@ export function CreateDuelModal({ onClose, onSubmit }: CreateDuelModalProps) {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
+        aria-hidden="true"
         className="absolute inset-0 bg-[#0A0A0B]/95 backdrop-blur-md"
         onClick={onClose}
       />
 
       <motion.div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-duel-title"
+        tabIndex={-1}
         initial={{ opacity: 0, scale: 0.9, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.9, y: 20 }}
@@ -113,7 +121,7 @@ export function CreateDuelModal({ onClose, onSubmit }: CreateDuelModalProps) {
               <Sword className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-white tracking-tight uppercase">
+              <h2 id="create-duel-title" className="text-sm font-bold text-white tracking-tight uppercase">
                 {t("createDuel.title", "Forge 1v1 Duel")}
               </h2>
               <div className="text-[9px] text-[#52525B] font-bold uppercase tracking-widest">

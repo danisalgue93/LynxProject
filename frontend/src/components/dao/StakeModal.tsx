@@ -3,6 +3,7 @@ import { X, Loader2, AlertCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/src/lib/utils';
+import { useFocusTrap } from '@/src/hooks/useFocusTrap';
 
 interface Props {
   onClose: () => void;
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export function StakeModal({ onClose, onSubmit, defaultAmount = 1 }: Props) {
+  const dialogRef = useFocusTrap<HTMLDivElement>(true, onClose);
   const { t } = useTranslation();
   const [amount, setAmount] = useState<number>(defaultAmount);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -40,12 +42,12 @@ export function StakeModal({ onClose, onSubmit, defaultAmount = 1 }: Props) {
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 text-white">
-      <motion.div className="absolute inset-0 bg-[#0A0A0B]/95 backdrop-blur-md" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
+      <motion.div aria-hidden="true" className="absolute inset-0 bg-[#0A0A0B]/95 backdrop-blur-md" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
 
-      <motion.div initial={{ opacity: 0, scale: 0.98, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 12 }} className="relative w-full max-w-md bg-[#0D0D0E] border border-[#1F1F23] rounded-xl overflow-hidden shadow-2xl">
+      <motion.div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="stake-modal-title" tabIndex={-1} initial={{ opacity: 0, scale: 0.98, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 12 }} className="relative w-full max-w-md bg-[#0D0D0E] border border-[#1F1F23] rounded-xl overflow-hidden shadow-2xl">
         <div className="p-4 border-b border-[#1F1F23] flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-bold text-white uppercase tracking-tight">{t('governance.stakeLynx', 'Stake $LYNX')}</h3>
+            <h3 id="stake-modal-title" className="text-sm font-bold text-white uppercase tracking-tight">{t('governance.stakeLynx', 'Stake $LYNX')}</h3>
             <div className="text-[10px] text-[#71717A] font-bold uppercase tracking-widest">{t('governance.stakeDesc', 'Stake tokens to participate in governance')}</div>
           </div>
           <button type="button" aria-label={t('common.close', 'Close')} onClick={onClose} className="p-2 text-[#52525B] hover:text-white"><X className="w-5 h-5" /></button>

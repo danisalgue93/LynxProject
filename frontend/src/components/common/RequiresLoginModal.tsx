@@ -2,6 +2,7 @@ import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { LogIn, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 interface RequiresLoginModalProps {
   isOpen: boolean;
@@ -11,6 +12,7 @@ interface RequiresLoginModalProps {
 
 export function RequiresLoginModal({ isOpen, onClose, action }: RequiresLoginModalProps) {
   const { t } = useTranslation();
+  const dialogRef = useFocusTrap<HTMLDivElement>(isOpen, onClose);
 
   const handleLogin = () => {
     window.dispatchEvent(new CustomEvent('open-auth-modal', { detail: { mode: 'login' } }));
@@ -26,10 +28,16 @@ export function RequiresLoginModal({ isOpen, onClose, action }: RequiresLoginMod
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
+            aria-hidden="true"
             className="fixed inset-0 bg-black/55 backdrop-blur-sm z-[100]"
           />
 
           <motion.div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="requires-login-title"
+            tabIndex={-1}
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -50,7 +58,7 @@ export function RequiresLoginModal({ isOpen, onClose, action }: RequiresLoginMod
                   <LogIn className="w-8 h-8 text-black" />
                 </div>
 
-                <h2 className="text-2xl font-bold text-white mb-3">{t('auth.loginRequiredTitle', 'Sign in required')}</h2>
+                <h2 id="requires-login-title" className="text-2xl font-bold text-white mb-3">{t('auth.loginRequiredTitle', 'Sign in required')}</h2>
                 <p className="text-[#A1A1AA] mb-8">
                   {t('auth.loginRequiredBody', 'You need an account to {{action}}.', {
                     action: action || t('auth.thisAction', 'continue'),

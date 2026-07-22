@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Loader2, ShieldCheck } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
+import { useFocusTrap } from '@/src/hooks/useFocusTrap';
 
 type CreateMarketModalProps = {
   onClose: () => void;
@@ -19,6 +20,7 @@ type CreateMarketModalProps = {
 
 export function CreateMarketModal({ onClose, onSubmit }: CreateMarketModalProps) {
   const { t } = useTranslation();
+  const dialogRef = useFocusTrap<HTMLDivElement>(true, onClose);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('Sports');
@@ -74,15 +76,15 @@ export function CreateMarketModal({ onClose, onSubmit }: CreateMarketModalProps)
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 text-white">
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <motion.div initial={{ opacity: 0, y: 24, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 24, scale: 0.98 }} className="relative w-full max-w-xl bg-[#0D0D0E] border border-[#27272A] rounded-xl shadow-2xl overflow-hidden">
+      <motion.div aria-hidden="true" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <motion.div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="create-market-title" tabIndex={-1} initial={{ opacity: 0, y: 24, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 24, scale: 0.98 }} className="relative w-full max-w-xl bg-[#0D0D0E] border border-[#27272A] rounded-xl shadow-2xl overflow-hidden">
         <div className="p-5 border-b border-[#1F1F23] flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded bg-[#00FFD1]/10 border border-[#00FFD1]/20 text-[#00FFD1] flex items-center justify-center">
               <ShieldCheck className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-sm font-black uppercase tracking-widest">{t('createMarket.title', 'Create Market')}</h2>
+              <h2 id="create-market-title" className="text-sm font-black uppercase tracking-widest">{t('createMarket.title', 'Create Market')}</h2>
               <p className="text-[10px] text-[#71717A] uppercase tracking-widest">{t('createMarket.subtitle', 'Admin only + wallet signature')}</p>
             </div>
           </div>

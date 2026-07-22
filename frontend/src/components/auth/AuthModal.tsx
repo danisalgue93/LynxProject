@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "@/src/context/AuthContext";
+import { useFocusTrap } from "@/src/hooks/useFocusTrap";
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -25,6 +26,7 @@ function bytesToBase64(bytes: Uint8Array) {
 
 export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", onLoginSuccess }: AuthModalProps) {
   const { t } = useTranslation();
+  const dialogRef = useFocusTrap<HTMLDivElement>(isOpen, onClose);
   const { setVisible } = useWalletModal();
   const { connected, publicKey, signMessage } = useWallet();
   const {
@@ -225,7 +227,14 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/65 backdrop-blur-sm">
-      <div className="relative w-full max-w-md bg-[#0D0D0E] border border-[#1F1F23] rounded-xl shadow-2xl overflow-hidden">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-modal-title"
+        tabIndex={-1}
+        className="relative w-full max-w-md bg-[#0D0D0E] border border-[#1F1F23] rounded-xl shadow-2xl overflow-hidden"
+      >
         <button
           type="button"
           aria-label={t("common.close", "Close")}
@@ -244,7 +253,7 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
                 <Wallet className="w-6 h-6 text-[#00FFD1]" />
               )}
             </div>
-            <h2 className="text-xl md:text-2xl font-bold text-white mb-2">{title}</h2>
+            <h2 id="auth-modal-title" className="text-xl md:text-2xl font-bold text-white mb-2">{title}</h2>
             {mode !== 'change' && (
               <p className="text-xs text-[#A1A1AA]">
                 {t("auth.modalSubtitle", "Use a wallet first, or use email and password with an internal managed wallet.")}

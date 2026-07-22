@@ -19,6 +19,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "@/src/lib/utils";
 import { useProgram } from "@/src/hooks/useProgram";
+import { useFocusTrap } from "@/src/hooks/useFocusTrap";
 import { useBlockchainTransaction } from "@/src/hooks/useBlockchainTransaction";
 import { useToast } from "@/src/context/ToastContext";
 import { apiUrl } from "@/src/lib/api";
@@ -159,6 +160,7 @@ export function MarketDetail({
   onHostDuel,
 }: MarketDetailProps) {
   const { t } = useTranslation();
+  const dialogRef = useFocusTrap<HTMLDivElement>(true, onClose);
   const { fetchDuels, executeTrade, fetchPositions, claimPosition } =
     useProgram();
   const { executeTransaction } = useBlockchainTransaction();
@@ -361,11 +363,17 @@ export function MarketDetail({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
+        aria-hidden="true"
         className="absolute inset-0 bg-[#0A0A0B]/90 backdrop-blur-sm"
         onClick={onClose}
       />
 
       <motion.div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="market-detail-title"
+        tabIndex={-1}
         initial={{ opacity: 0, y: 100 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: 100 }}
@@ -390,7 +398,7 @@ export function MarketDetail({
                 {t("marketDetail.oracle", "ORACLE: SWITCHBOARD")}
               </span>
             </div>
-            <h1 className="text-lg md:text-4xl font-bold tracking-tight text-white mb-4 leading-tight">
+            <h1 id="market-detail-title" className="text-lg md:text-4xl font-bold tracking-tight text-white mb-4 leading-tight">
               {market.title}
             </h1>
 

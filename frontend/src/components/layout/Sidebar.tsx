@@ -27,9 +27,12 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, onClose }: SidebarPro
 
   return (
     <>
-      {/* Mobile Overlay */}
+      {/* Mobile Overlay — a real button so it's keyboard-activatable (Enter/Space)
+          and announced as "Close menu", not an inert clickable div. */}
       {isOpen && (
-        <div 
+        <button
+          type="button"
+          aria-label={t('nav.closeMenu', 'Close menu')}
           className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] lg:hidden"
           onClick={onClose}
         />

@@ -88,7 +88,12 @@ export function NotificationsPopover({ isOpen, onClose, wallet, notifications, s
 
   return (
     <>
-      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <button
+        type="button"
+        aria-label={t('common.close', 'Close')}
+        className="fixed inset-0 z-40"
+        onClick={onClose}
+      />
       <div className="fixed left-4 right-4 top-16 sm:absolute sm:inset-auto sm:top-12 sm:-right-2 md:-right-4 sm:w-[380px] bg-[#0D0D0E] border border-[#27272A] rounded-lg shadow-2xl z-50 flex flex-col max-h-[calc(100vh-80px)] sm:max-h-[80vh] overflow-hidden">
         <div className="p-4 border-b border-[#27272A] flex items-center justify-between bg-[#141417]">
           <div className="flex items-center gap-2">
@@ -116,9 +121,17 @@ export function NotificationsPopover({ isOpen, onClose, wallet, notifications, s
             </div>
           ) : (
             notifications.map((notification) => (
-              <div 
+              <div
                 key={notification.id}
+                role="button"
+                tabIndex={0}
                 onClick={() => handleMarkRead(notification.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleMarkRead(notification.id);
+                  }
+                }}
                 className={cn(
                   "p-3 rounded-lg mb-1 flex items-start gap-3 cursor-pointer transition-colors relative group",
                   notification.read ? "hover:bg-[#18181B]" : "bg-[#18181B]/50 hover:bg-[#18181B]",

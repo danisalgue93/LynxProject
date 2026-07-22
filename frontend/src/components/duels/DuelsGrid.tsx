@@ -99,8 +99,17 @@ export function DuelsGrid({ onCreateDuel, readOnly = false }: DuelsGridProps) {
           ))}
           
           {/* Invitation card */}
-          <div 
+          <div
+            role="button"
+            tabIndex={0}
+            aria-label={t('duels.hostActive', 'Host active Duel')}
             onClick={onCreateDuel}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onCreateDuel?.();
+              }
+            }}
             className="glass-card rounded p-6 border-dashed border-[#1F1F23] flex flex-col items-center justify-center text-center group cursor-pointer hover:border-[#00FFD1]/30 transition-all min-h-[300px] bg-[#0A0A0B]"
           >
             <div className="w-12 h-12 rounded bg-[#18181B] flex items-center justify-center mb-4 group-hover:scale-110 transition-transform border border-[#27272A]">

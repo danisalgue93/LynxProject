@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/src/lib/utils';
 import { useToast } from '@/src/context/ToastContext';
+import { useFocusTrap } from '@/src/hooks/useFocusTrap';
 
 interface Props {
   onClose: () => void;
@@ -12,6 +13,7 @@ interface Props {
 
 export function CreateProposalModal({ onClose, onSubmit }: Props) {
   const { t } = useTranslation();
+  const dialogRef = useFocusTrap<HTMLDivElement>(true, onClose);
   const { addToast } = useToast();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -37,16 +39,16 @@ export function CreateProposalModal({ onClose, onSubmit }: Props) {
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 text-white">
-      <motion.div className="absolute inset-0 bg-[#0A0A0B]/95 backdrop-blur-md" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
+      <motion.div aria-hidden="true" className="absolute inset-0 bg-[#0A0A0B]/95 backdrop-blur-md" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
 
-      <motion.div initial={{ opacity: 0, scale: 0.98, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 12 }} className="relative w-full max-w-2xl bg-[#0D0D0E] border border-[#1F1F23] rounded-xl overflow-hidden shadow-2xl">
+      <motion.div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="create-proposal-title" tabIndex={-1} initial={{ opacity: 0, scale: 0.98, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 12 }} className="relative w-full max-w-2xl bg-[#0D0D0E] border border-[#1F1F23] rounded-xl overflow-hidden shadow-2xl">
         <div className="p-4 border-b border-[#1F1F23] flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded bg-[#00FFD1]/10 flex items-center justify-center border border-[#00FFD1]/20 text-[#00FFD1]">
               <PlusCircle className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-white uppercase tracking-tight">{t('governance.createProposal', 'Create Proposal')}</h3>
+              <h3 id="create-proposal-title" className="text-sm font-bold text-white uppercase tracking-tight">{t('governance.createProposal', 'Create Proposal')}</h3>
               <div className="text-[10px] text-[#71717A] font-bold uppercase tracking-widest">{t('governance.createProposalDesc', 'Propose a change to the protocol')}</div>
             </div>
           </div>

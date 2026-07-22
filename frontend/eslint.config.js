@@ -2,6 +2,7 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import globals from 'globals';
 import reactHooks from 'eslint-plugin-react-hooks';
+import jsxA11y from 'eslint-plugin-jsx-a11y';
 
 // Syntactic (non-type-checked) recommended rules plus the React Hooks rules,
 // which catch real defects: hooks called conditionally and missing/incorrect
@@ -11,6 +12,7 @@ export default tseslint.config(
   { ignores: ['dist/', 'node_modules/', 'coverage/', '*.config.js', '*.config.ts', 'server.ts', 'empty-module.js'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  jsxA11y.flatConfigs.recommended,
   {
     files: ['**/*.{ts,tsx}'],
     plugins: { 'react-hooks': reactHooks },
