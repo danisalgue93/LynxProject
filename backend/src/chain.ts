@@ -360,13 +360,21 @@ let lastRefreshError: string | null = null;
 let lastRefreshAt = 0;
 let refreshConsecutiveErrors = 0;
 let refreshPausedUntil = 0;
+// Re-entrancy guard: one refresh makes 6 SEQUENTIAL getProgramAccounts calls,
+// each with a 15s timeout, so a slow RPC can make a cycle outlast
+// REFRESH_INTERVAL_MS. Without this, setInterval would stack concurrent
+// refreshes that hammer the very RPC that is already struggling (and race each
+// other while rebuilding the same Maps).
+let refreshRunning = false;
 
 async function refreshOnce(force = false) {
   if (!PROGRAM_ID) return;
+  if (refreshRunning) return;
   // Backoff tras fallos (tipicamente 429 del RPC publico): saltarse ciclos en
   // vez de seguir martilleando un endpoint que ya esta limitando. forceRefresh
   // (tras una tx confirmada del cliente) puede saltarse la pausa.
   if (!force && Date.now() < refreshPausedUntil) return;
+  refreshRunning = true;
   try {
     // Inside the try: `new Connection(...)` throws on a malformed
     // SOLANA_RPC_URL, and this function must never reject — forceRefresh() is
@@ -424,6 +432,8 @@ async function refreshOnce(force = false) {
     const backoffMs = Math.min(REFRESH_INTERVAL_MS * 2 ** (refreshConsecutiveErrors - 1), 240_000);
     refreshPausedUntil = Date.now() + backoffMs;
     chainLog.error('refresh failed', { error: lastRefreshError, consecutive: refreshConsecutiveErrors, backoffMs });
+  } finally {
+    refreshRunning = false;
   }
 }
 
@@ -600,11 +610,35 @@ async function getConfigInfo(conn: Connection): Promise<{ lynxMint: PublicKey; t
   return cachedConfigInfo;
 }
 
+// Re-entrancy guard. The keeper interval fires every KEEPER_INTERVAL_MS, but a
+// single run walks every open order / duel / proposal doing SEQUENTIAL
+// sendAndConfirmTransaction calls, which routinely take longer than the
+// interval. Without this flag setInterval would start a second (and third…)
+// concurrent run that competes with the first — the same keeper racing itself,
+// submitting duplicate transactions for the same order.
+let keeperRunning = false;
+
 export async function runKeeperOnce() {
+  if (keeperRunning) {
+    chainLog.warn('keeper tick skipped — previous run still in flight');
+    return;
+  }
   if (Date.now() < keeperPausedUntil) return;
   if (!PROGRAM_ID) return;
   const keeper = getKeeperKeypair();
   if (!keeper) return;
+  keeperRunning = true;
+  try {
+    await runKeeperCycle(keeper);
+  } finally {
+    keeperRunning = false;
+  }
+}
+
+async function runKeeperCycle(keeper: Keypair) {
+  // Re-asserted here (not just in the caller) so PROGRAM_ID narrows to non-null
+  // for the PDA derivations below.
+  if (!PROGRAM_ID) return;
   const conn = getConnection();
   const now = Math.floor(Date.now() / 1000);
 
@@ -682,6 +716,11 @@ export async function runKeeperOnce() {
       const tx = new Transaction().add(ix);
       tx.feePayer = keeper.publicKey;
       const signature = await sendAndConfirmTransaction(conn, tx, [keeper], { commitment: 'confirmed' });
+      // Optimistically reflect the fill in the local index. The index is only
+      // rebuilt every REFRESH_INTERVAL_MS, so without this the next keeper ticks
+      // would keep re-selecting this same (already Filled) order and rebuilding
+      // a transaction the program is guaranteed to reject.
+      order.status = 'Filled';
       chainLog.info('keeper filled order', { order: order.pubkey, signature });
     } catch (err: any) {
       // Fallos individuales de una orden (p.ej. alguien mas la ejecuto primero,
@@ -770,6 +809,10 @@ async function settleReadyDuels(keeper: Keypair, conn: Connection) {
       instructions.forEach((ix) => tx.add(ix));
       tx.feePayer = keeper.publicKey;
       const signature = await sendAndConfirmTransaction(conn, tx, [keeper], { commitment: 'confirmed' });
+      // Optimistic local update: the index is only rebuilt every
+      // REFRESH_INTERVAL_MS, so without this every keeper tick until the next
+      // refresh would re-settle this same already-resolved duel.
+      d.status = 'Resolved';
       chainLog.info('keeper settled duel', { duel: d.pubkey, duelType: d.duelType, signature });
     } catch (err: any) {
       chainLog.warn('keeper failed to settle duel', { duel: d.pubkey, error: err?.message });
@@ -795,6 +838,10 @@ async function finalizeReadyDaoProposals(keeper: Keypair, conn: Connection) {
       const tx = new Transaction().add(ix);
       tx.feePayer = keeper.publicKey;
       const signature = await sendAndConfirmTransaction(conn, tx, [keeper], { commitment: 'confirmed' });
+      // Optimistic local update (same reason as the order/duel cranks): mirror
+      // the program's majority rule so this proposal isn't re-finalized on every
+      // tick until the index is rebuilt.
+      p.status = BigInt(p.votesYes) > BigInt(p.votesNo) ? 'Passed' : 'Rejected';
       chainLog.info('keeper finalized dao proposal', { proposal: p.pubkey, signature });
     } catch (err: any) {
       chainLog.warn('keeper failed to finalize dao proposal', { proposal: p.pubkey, error: err?.message });
@@ -835,6 +882,7 @@ async function matchSpotOrdersOnce(keeper: Keypair, conn: Connection) {
     if (BigInt(buy.priceScaled) < BigInt(sell.priceScaled)) break; // ya no cruzan, ordenados por precio
 
     const fill = buyRemaining < sellRemaining ? buyRemaining : sellRemaining;
+    let matched = false;
     try {
       const { lynxMint, treasury } = await getConfigInfo(conn);
       const buyOwner = new PublicKey(buy.owner);
@@ -866,14 +914,25 @@ async function matchSpotOrdersOnce(keeper: Keypair, conn: Connection) {
       const tx = new Transaction().add(ix);
       tx.feePayer = keeper.publicKey;
       const signature = await sendAndConfirmTransaction(conn, tx, [keeper], { commitment: 'confirmed' });
+      matched = true;
       chainLog.info('keeper matched spot orders', { buy: buy.pubkey, sell: sell.pubkey, fill: fill.toString(), signature });
     } catch (err: any) {
       chainLog.warn('keeper failed to match spot orders', { buy: buy.pubkey, sell: sell.pubkey, error: err?.message });
     }
 
-    remaining.set(buy.pubkey, buyRemaining - fill);
-    remaining.set(sell.pubkey, sellRemaining - fill);
-    if (remaining.get(buy.pubkey) === 0n) i++;
-    if (remaining.get(sell.pubkey) === 0n) j++;
+    if (matched) {
+      remaining.set(buy.pubkey, buyRemaining - fill);
+      remaining.set(sell.pubkey, sellRemaining - fill);
+      if (remaining.get(buy.pubkey) === 0n) i++;
+      if (remaining.get(sell.pubkey) === 0n) j++;
+    } else {
+      // The fill did NOT happen on-chain. Previously the decrements below ran
+      // unconditionally, so a rejected match still consumed local remaining
+      // amounts and advanced the cursors — corrupting this pass's bookkeeping
+      // and skipping orders that are in fact still fully open. Leave the amounts
+      // untouched and step past this buy so the loop still makes progress
+      // instead of spinning on the same failing pair forever.
+      i++;
+    }
   }
 }
