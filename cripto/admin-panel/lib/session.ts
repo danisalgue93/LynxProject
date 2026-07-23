@@ -7,7 +7,22 @@ export type AdminSession = {
   adminWallet?: string;
   loginAt?: number;
   activityAt?: number;
+  // First-factor (password) proof, set by request-otp and required by verify-otp
+  // so the TOTP secret alone cannot mint an admin session (audit cripto-H1).
+  preAuth?: boolean;
+  preAuthAt?: number;
 };
+
+// Pre-auth (password-verified, awaiting TOTP) validity window.
+export const PRE_AUTH_TTL_MS = 5 * 60 * 1000;
+
+// audit cripto-H2: the session cookie's `secure` flag must NOT silently depend
+// on NODE_ENV — a deploy that forgets to set NODE_ENV=production would drop
+// `secure` and allow the admin cookie over plain HTTP. Default to secure ALWAYS;
+// only an explicit ADMIN_COOKIE_SECURE=false (for local http dev) turns it off.
+function cookieSecure(): boolean {
+  return process.env.ADMIN_COOKIE_SECURE !== 'false';
+}
 
 function sessionPassword() {
   const value = process.env.SESSION_SECRET;
@@ -26,7 +41,7 @@ export const sessionOptions: SessionOptions = {
   cookieOptions: {
     httpOnly: true,
     sameSite: 'strict',
-    secure: process.env.NODE_ENV === 'production',
+    secure: cookieSecure(),
     maxAge: 60 * 60,
   },
 };

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit } from '@/lib/rate-limit';
 import { auditLog, clientKey, getAdminPasswordHash, notifyRateLimitHit, verifySecret } from '@/lib/security';
 import { isTotpConfigured } from '@/lib/totp';
+import { getSession } from '@/lib/session';
 
 /**
  * First factor: the admin password.
@@ -53,6 +54,19 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+
+  // Issue a short-lived first-factor proof (audit cripto-H1): verify-otp will
+  // require this before it will create the admin session, so possession of the
+  // TOTP secret alone is not enough to log in — the password must have been
+  // verified in the same sequence. Any pre-existing admin flag is cleared so this
+  // cookie only ever represents "password ok, awaiting TOTP".
+  const session = await getSession();
+  await session.destroy();
+  const preAuthSession = await getSession();
+  preAuthSession.admin = false;
+  preAuthSession.preAuth = true;
+  preAuthSession.preAuthAt = Date.now();
+  await preAuthSession.save();
 
   auditLog('login.password_ok', { key });
   return NextResponse.json({ ok: true, factor: 'totp' });

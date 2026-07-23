@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { rateLimit } from '@/lib/rate-limit';
 import { auditLog, clientKey, notifyRateLimitHit } from '@/lib/security';
-import { getSession } from '@/lib/session';
+import { getSession, PRE_AUTH_TTL_MS } from '@/lib/session';
 import { verifyTotp, isTotpConfigured } from '@/lib/totp';
 
 /**
@@ -48,6 +48,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // First factor must have been proven in THIS login sequence (audit cripto-H1):
+  // request-otp sets a short-lived preAuth flag after the password check. Without
+  // it, a leaked TOTP secret alone would be enough to enter the panel.
+  const preAuthSession = await getSession();
+  const preAuthOk =
+    preAuthSession.preAuth === true &&
+    typeof preAuthSession.preAuthAt === 'number' &&
+    Date.now() - preAuthSession.preAuthAt < PRE_AUTH_TTL_MS;
+  if (!preAuthOk) {
+    await preAuthSession.destroy();
+    auditLog('login.failed', { key, factor: 'totp', reason: 'missing_or_expired_password_factor' });
+    return NextResponse.json({ error: 'Password step required first' }, { status: 401 });
+  }
+
   // Consumes the matching counter, so a captured code cannot be replayed within
   // its remaining validity window (see verifyTotp).
   if (!verifyTotp(process.env.ADMIN_TOTP_SECRET!, otp)) {
@@ -56,7 +70,8 @@ export async function POST(req: NextRequest) {
   }
 
   // AP-10: rotate the session on login — destroy any existing one first so a
-  // pre-set cookie cannot be fixated onto the authenticated session.
+  // pre-set cookie (including the preAuth one) cannot be fixated onto the
+  // authenticated session.
   const oldSession = await getSession();
   await oldSession.destroy();
 
