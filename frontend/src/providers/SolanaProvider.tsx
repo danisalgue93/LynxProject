@@ -1,7 +1,13 @@
 import React, { useMemo } from 'react';
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react';
 import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
-import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
+// Standalone per-wallet adapter packages instead of @solana/wallet-adapter-wallets:
+// only Phantom + Solflare are used, but the kitchen-sink package pulls in dozens
+// of other wallets (Keystone, Particle, WalletConnect/Reown…) whose transitive
+// deps accounted for most of the npm-audit high/moderate advisories and bloated
+// the bundle (audit frontend-2).
+import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom';
+import { SolflareWalletAdapter } from '@solana/wallet-adapter-solflare';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import { clusterApiUrl } from '@solana/web3.js';
 import '@solana/wallet-adapter-react-ui/styles.css';
