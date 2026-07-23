@@ -19,6 +19,16 @@ export interface RedisLike {
   get(key: string): Promise<string | null>;
   exists(key: string): Promise<number>;
   del(key: string): Promise<number>;
+  // Used for the distributed lock's atomic compare-and-delete (see
+  // releaseLock in server.ts). Declared here so call sites don't need an
+  // `as any` cast to reach it.
+  eval(script: string, numKeys: number, ...args: (string | number)[]): Promise<unknown>;
+  // Daily credit counters (creditApprovals.ts).
+  incrbyfloat(key: string, increment: number): Promise<string>;
+  pexpireat(key: string, millisecondsTimestamp: number): Promise<number>;
+  // Cursor-based iteration. Preferred over KEYS, which is O(N) and blocks the
+  // whole Redis server for the duration of the scan.
+  scan(cursor: string, ...args: (string | number)[]): Promise<[string, string[]]>;
 }
 
 const RedisClient = Redis as unknown as new (

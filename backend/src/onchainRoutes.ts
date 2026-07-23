@@ -103,6 +103,14 @@ onchainRouter.post('/api/onchain/sync', async (_req, res) => {
       return;
     }
   }
-  await forceRefresh();
-  res.json({ ok: true });
+  // Express 4 does not catch rejections from async handlers, and this router is
+  // mounted without the asyncRoute wrapper server.ts uses — an unhandled
+  // rejection here would leave the request hanging with no response.
+  try {
+    await forceRefresh();
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[onchain] forced refresh failed:', err instanceof Error ? err.message : err);
+    res.status(503).json({ error: 'On-chain refresh unavailable' });
+  }
 });

@@ -73,7 +73,7 @@ async function releaseLock(key: string): Promise<void> {
   if (!token) return;
   if (redis) {
     try {
-      await (redis as any).eval(RELEASE_LOCK_LUA, 1, `lock:${key}`, token);
+      await redis.eval(RELEASE_LOCK_LUA, 1, `lock:${key}`, token);
       return;
     } catch (err) {
       console.error('[distributed-lock] redis error on release:', err instanceof Error ? err.message : err);

@@ -21,12 +21,30 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
-// Secrets are required in production (server.ts's start() already throws
-// before listen() if JWT_SECRET / REFRESH_SECRET are missing in
-// NODE_ENV=production). These fallbacks only matter for local dev/tests,
-// where no .env file is guaranteed to exist.
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-secret-change-in-production';
-const REFRESH_SECRET = process.env.REFRESH_SECRET || 'dev-refresh-secret-change-in-production';
+// Secrets are required in production (server.ts's start() also throws before
+// listen() if JWT_SECRET / REFRESH_SECRET are missing when NODE_ENV=production).
+//
+// The dev fallbacks below are hardcoded and therefore PUBLIC — anyone reading
+// this repo can forge tokens signed with them. They are only acceptable for
+// local development (`npm run dev`, which sets no NODE_ENV) and the test suite.
+// Previously they applied to ANY non-production value, so a deployment running
+// with NODE_ENV=staging/preprod silently signed real sessions with a published
+// secret *and* skipped start()'s required-vars check. Fail loudly instead.
+const SAFE_FALLBACK_ENVS = new Set([undefined, '', 'development', 'test']);
+
+function requireSecret(name: 'JWT_SECRET' | 'REFRESH_SECRET', devFallback: string): string {
+  const configured = process.env[name];
+  if (configured) return configured;
+  if (SAFE_FALLBACK_ENVS.has(process.env.NODE_ENV)) return devFallback;
+  throw new Error(
+    `Missing required env var: ${name}. It only falls back to a built-in development ` +
+    `value when NODE_ENV is unset, "development" or "test" — never for NODE_ENV=` +
+    `"${process.env.NODE_ENV}", where that public constant would sign real sessions.`
+  );
+}
+
+const JWT_SECRET = requireSecret('JWT_SECRET', 'dev-jwt-secret-change-in-production');
+const REFRESH_SECRET = requireSecret('REFRESH_SECRET', 'dev-refresh-secret-change-in-production');
 
 // jsonwebtoken's `expiresIn` option wants a number of seconds (or a
 // template-literal "StringValue" type like `15m`/`7d` that's awkward to
@@ -125,6 +143,8 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 export function extractToken(authHeader: string | undefined): string | null {
   if (!authHeader) return null;
   const [scheme, token] = authHeader.split(' ');
-  if (scheme !== 'Bearer' || !token) return null;
+  // RFC 7235: the auth-scheme token is case-insensitive, so a client sending
+  // "bearer <token>" is valid and must not be rejected as unauthenticated.
+  if (!scheme || scheme.toLowerCase() !== 'bearer' || !token) return null;
   return token;
 }

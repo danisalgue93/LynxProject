@@ -367,8 +367,12 @@ async function refreshOnce(force = false) {
   // vez de seguir martilleando un endpoint que ya esta limitando. forceRefresh
   // (tras una tx confirmada del cliente) puede saltarse la pausa.
   if (!force && Date.now() < refreshPausedUntil) return;
-  const conn = getConnection();
   try {
+    // Inside the try: `new Connection(...)` throws on a malformed
+    // SOLANA_RPC_URL, and this function must never reject — forceRefresh() is
+    // awaited by the POST /api/onchain/sync route, and an Express 4 async
+    // handler that rejects never sends a response (the request just hangs).
+    const conn = getConnection();
     // SECUENCIAL a proposito: getProgramAccounts tiene un limite por-metodo en
     // el RPC publico de devnet; 6 llamadas simultaneas en Promise.all agotaban
     // ese burst en cada ciclo y todas volvian con 429.

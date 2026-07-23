@@ -47,7 +47,7 @@ function baseTemplate(title: string, bodyHtml: string): string {
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>${title}</title>
+<title>${escapeHtml(title)}</title>
 <style>
   body{margin:0;padding:0;background:#0A0A0B;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#E4E4E7;}
   .wrap{max-width:520px;margin:40px auto;padding:0 16px;}
@@ -106,8 +106,10 @@ async function sendWithRetry(
       }
     }
   }
-  // Surface the error but don't crash the request — email delivery failure
-  // must never block auth operations from completing.
+  // Rethrow after exhausting retries. Email delivery must never block an auth
+  // operation, so CALLERS invoke these helpers fire-and-forget with .catch()
+  // (see the register / request-password-reset routes) — the rejection is
+  // logged there, not turned into a failed HTTP response.
   throw lastError;
 }
 

@@ -114,15 +114,10 @@ export async function checkAndRecordDailyCredit(wallet: string, currency: 'SOL' 
   }
 
   const redisKey = `${DAILY_CREDIT_REDIS_PREFIX}${key}`;
-  const compatibleRedis = redis as unknown as {
-    get(key: string): Promise<string | null>;
-    incrbyfloat(key: string, increment: number): Promise<string>;
-    pexpireat(key: string, millisecondsTimestamp: number): Promise<number>;
-  };
 
   if (dryRun) {
     // Solo lee el total actual sin consumir cupo (feedback temprano en propose).
-    const raw = await compatibleRedis.get(redisKey);
+    const raw = await redis.get(redisKey);
     const currentTotal = raw ? parseFloat(raw) : 0;
     if (currentTotal + amount > dailyLimit) throw buildDailyLimitError(wallet, currency, currentTotal, dailyLimit);
     return;
@@ -132,12 +127,17 @@ export async function checkAndRecordDailyCredit(wallet: string, currency: 'SOL' 
   // el incremento y rechaza. Esto evita la ventana de carrera de un GET+SET
   // separado entre instancias (que es el mismo problema que tenia el Map en
   // memoria, solo que entre procesos en vez de entre requests).
-  const newTotal = parseFloat(await compatibleRedis.incrbyfloat(redisKey, amount));
+  const newTotal = parseFloat(await redis.incrbyfloat(redisKey, amount));
+  // Set the midnight expiry IMMEDIATELY after the counter exists, and before any
+  // early return. Previously pexpireat only ran on the success path, so a
+  // rejected (over-limit) credit — or a crash between the two calls — left the
+  // key with NO TTL: the daily counter for that wallet then never reset and
+  // silently blocked every legitimate credit from then on.
+  await redis.pexpireat(redisKey, getNextMidnightEpochMs()).catch(() => {});
   if (newTotal > dailyLimit) {
-    await compatibleRedis.incrbyfloat(redisKey, -amount);
+    await redis.incrbyfloat(redisKey, -amount);
     throw buildDailyLimitError(wallet, currency, newTotal - amount, dailyLimit);
   }
-  await compatibleRedis.pexpireat(redisKey, getNextMidnightEpochMs());
   console.log(`[creditApprovals] BE-19: Daily credit tracker (redis): ${key} = ${newTotal}/${dailyLimit}`);
 }
 
@@ -145,6 +145,26 @@ export async function checkAndRecordDailyCredit(wallet: string, currency: 'SOL' 
 
 const CREDIT_REDIS_PREFIX = 'credit_approval:';
 const RESOLUTION_REDIS_PREFIX = 'market_resolution:';
+
+/**
+ * Cursor-based key iteration.
+ *
+ * These loaders previously used `KEYS <prefix>*`, which is O(N) over the WHOLE
+ * keyspace and blocks the Redis server for the entire scan — on a shared Redis
+ * that stalls every other client (rate limiting, locks, sessions). SCAN walks
+ * the keyspace in small batches instead, so boot never blocks the server.
+ */
+async function scanKeys(pattern: string): Promise<string[]> {
+  if (!redis) return [];
+  const found: string[] = [];
+  let cursor = '0';
+  do {
+    const [nextCursor, batch] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+    found.push(...batch);
+    cursor = nextCursor;
+  } while (cursor !== '0');
+  return found;
+}
 
 // In-memory fallback for when Redis is not available (same as before)
 const requests = new Map<string, CreditRequest>();
@@ -184,12 +204,11 @@ function purgeExpired() {
 export async function loadPendingCreditApprovalsFromRedis(): Promise<void> {
   if (!redis) return;
   try {
-    const compatibleRedis = redis as unknown as { keys(pattern: string): Promise<string[]>; get(key: string): Promise<string | null> };
-    const keys = await compatibleRedis.keys(`${CREDIT_REDIS_PREFIX}*`);
+    const keys = await scanKeys(`${CREDIT_REDIS_PREFIX}*`);
     let loaded = 0;
     for (const key of keys) {
       try {
-        const raw = await compatibleRedis.get(key);
+        const raw = await redis.get(key);
         if (raw) {
           const req = JSON.parse(raw) as CreditRequest;
           if (!req.executed && req.expiresAt > Date.now()) {
@@ -343,12 +362,11 @@ function purgeExpiredResolutions() {
 export async function loadPendingMarketResolutionsFromRedis(): Promise<void> {
   if (!redis) return;
   try {
-    const compatibleRedis = redis as unknown as { keys(pattern: string): Promise<string[]>; get(key: string): Promise<string | null> };
-    const keys = await compatibleRedis.keys(`${RESOLUTION_REDIS_PREFIX}*`);
+    const keys = await scanKeys(`${RESOLUTION_REDIS_PREFIX}*`);
     let loaded = 0;
     for (const key of keys) {
       try {
-        const raw = await compatibleRedis.get(key);
+        const raw = await redis.get(key);
         if (raw) {
           const req = JSON.parse(raw) as MarketResolutionRequest;
           if (!req.executed && req.expiresAt > Date.now()) {
