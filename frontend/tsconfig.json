@@ -23,7 +23,8 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "strict": true,
-    "noUnusedLocals": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noImplicitAny": true,
     "types": ["node", "vitest/globals", "@testing-library/jest-dom"]
   }

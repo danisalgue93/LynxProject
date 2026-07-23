@@ -1,4 +1,3 @@
-import React from 'react';
 import { LayoutGrid, Sword, BarChart3, Wallet, Vote, Info } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { useTranslation } from 'react-i18next';

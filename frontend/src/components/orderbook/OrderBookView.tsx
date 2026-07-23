@@ -1,12 +1,13 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { getErrorMessage } from '@/src/lib/errors';
+import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { BarChart3, TrendingUp, ArrowUpDown, Loader2, Coins, Maximize2, Minimize2, ChevronUp, ChevronDown, X as XIcon } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { useTranslation } from 'react-i18next';
-import { useProgram } from '@/src/hooks/useProgram';
+import { useProgram, type OrderBookEntry, type OrderBook } from '@/src/hooks/useProgram';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { eventBus } from '@/src/lib/eventBus';
-import { Market, Position } from '@/src/types';
+import { Market, Position, Candle } from '@/src/types';
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Line, LineChart, type TooltipValueType } from 'recharts';
 import { apiUrl } from '@/src/lib/api';
 import { getManagedWalletAddress, useManagedAuthSession } from '@/src/lib/auth';
@@ -14,7 +15,7 @@ import { useToast } from '@/src/context/ToastContext';
 
 function MarketChart({ isLynxSol, market, chartType = 'line', chartRange = '1M', chartInterval = '1D', chartSize }: { isLynxSol: boolean; market: Market | null; chartType?: 'line' | 'candle'; chartRange?: string; chartInterval?: string; chartSize?: 'minimized' | 'normal' | 'expanded' }) {
   const { t } = useTranslation();
-  const [tokenData, setTokenData] = useState<any[]>([]);
+  const [tokenData, setTokenData] = useState<Array<Candle & { price: number }>>([]);
 
   useEffect(() => {
     if (!isLynxSol) return;
@@ -37,7 +38,7 @@ function MarketChart({ isLynxSol, market, chartType = 'line', chartRange = '1M',
         const data = await res.json();
         
         if (data && data.length > 0) {
-          const formatted = data.map((d: any) => ({
+          const formatted = (data as Candle[]).map((d) => ({
              time: d.time,
              price: d.close,
              open: d.open,
@@ -219,8 +220,8 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
   const managedSession = useManagedAuthSession();
   const myWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession) || '';
   const { fetchMarkets, executeTrade, executeLynxOrder, fetchOrderBook, cancelOrder, isLoading } = useProgram();
-  const getOrderbookErrorMessage = (err: any, fallback: string) => {
-    const message = typeof err === 'string' ? err : err?.message || fallback;
+  const getOrderbookErrorMessage = (err: unknown, fallback: string) => {
+    const message = getErrorMessage(err) || fallback;
     if (typeof message !== 'string') return fallback;
     if (message.includes('Insufficient SOL balance')) {
       return t('orderbook.insufficientSol', 'Not enough SOL to complete this order.');
@@ -237,8 +238,8 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
     return message;
   };
   const [markets, setMarkets] = useState<Market[]>([]);
-  const [lynxOrderBook, setLynxOrderBook] = useState<any>(null);
-  const [predictionOrderBook, setPredictionOrderBook] = useState<any>(null);
+  const [lynxOrderBook, setLynxOrderBook] = useState<OrderBook | null>(null);
+  const [predictionOrderBook, setPredictionOrderBook] = useState<OrderBook | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   
   // 'lynx-sol' is the special native token market
@@ -352,9 +353,9 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
         type: 'success',
         message: t('orderbook.orderSuccess', 'Order executed successfully.'),
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
-      const rawMessage = typeof err === 'string' ? err : err?.message;
+      const rawMessage = getErrorMessage(err);
       const msg = getOrderbookErrorMessage(err, t('orderbook.orderFailed', 'Order failed'));
       // Show contextual inline error and a single toast for visibility
       setTradeError(msg);
@@ -393,9 +394,9 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
         type: 'success',
         message: t('orderbook.orderSuccess', 'Order executed successfully.'),
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
-      const rawMessage = typeof err === 'string' ? err : err?.message;
+      const rawMessage = getErrorMessage(err);
       const msg = getOrderbookErrorMessage(err, t('orderbook.orderFailed', 'Order failed'));
       setTradeError(msg);
       setTradeErrorIsInsufficientSol(typeof rawMessage === 'string' && rawMessage.includes('Insufficient SOL balance'));
@@ -417,11 +418,11 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
 
   // My open orders (filter both bids and asks by wallet)
   const allOpenOrders = [...(lynxOrderBook?.bids || []), ...(lynxOrderBook?.asks || [])]
-    .filter((o: any) => o.owner === myWallet && o.status !== 'FILLED' && o.status !== 'CANCELLED');
+    .filter((o) => o.owner === myWallet && o.status !== 'FILLED' && o.status !== 'CANCELLED');
   const predOpenOrders = [...(predictionOrderBook?.bids || []), ...(predictionOrderBook?.asks || [])]
-    .filter((o: any) => o.owner === myWallet && o.status !== 'FILLED' && o.status !== 'CANCELLED');
+    .filter((o) => o.owner === myWallet && o.status !== 'FILLED' && o.status !== 'CANCELLED');
 
-  const handleCancelOrder = async (order: any) => {
+  const handleCancelOrder = async (order: OrderBookEntry) => {
     const orderId = typeof order === 'string' ? order : order?.id;
     if (readOnly) {
       onAuthRequired?.(t('orderbook.actionCancelOrder', 'cancel orders'));
@@ -435,7 +436,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
         message: t('orderbook.cancelSuccess', 'Order cancelled successfully.'),
       });
       // Orderbook will refresh via socket event
-    } catch (err: any) {
+    } catch (err) {
       console.error('Cancel order failed', err);
       addToast({
         type: 'error',
@@ -698,7 +699,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                     {isLynxSol ? (
                       lynxAsks.length === 0 ? (
                         <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">{t('orderbook.noAsks', 'No asks')}</div>
-                      ) : lynxAsks.map((order: any, i: number) => (
+                      ) : lynxAsks.map((order, i) => (
                         <button 
                           key={`ask-${i}`} 
                           onClick={() => setLynxPrice(Number(order.price).toFixed(4))}
@@ -711,7 +712,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                     ) : (
                       predAsks.length === 0 ? (
                         <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">{t('orderbook.noAsks', 'No asks')}</div>
-                      ) : predAsks.map((order: any, i: number) => (
+                      ) : predAsks.map((order, i) => (
                         <button 
                           key={`ask-${i}`} 
                           onClick={() => setPredPrice(Number(order.price).toFixed(3))}
@@ -740,7 +741,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                     {isLynxSol ? (
                       lynxBids.length === 0 ? (
                         <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">{t('orderbook.noBids', 'No bids')}</div>
-                      ) : lynxBids.map((order: any, i: number) => (
+                      ) : lynxBids.map((order, i) => (
                         <button 
                           key={`bid-${i}`} 
                           onClick={() => setLynxPrice(Number(order.price).toFixed(4))}
@@ -753,7 +754,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                     ) : (
                       predBids.length === 0 ? (
                         <div className="p-2 text-center text-[#52525B] uppercase text-[9px] font-bold">{t('orderbook.noBids', 'No bids')}</div>
-                      ) : predBids.map((order: any, i: number) => (
+                      ) : predBids.map((order, i) => (
                         <button 
                           key={`bid-${i}`} 
                           onClick={() => setPredPrice(Number(order.price).toFixed(3))}
@@ -985,7 +986,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
               <span className="text-[10px] text-[#52525B] font-bold">{allOpenOrders.length} active</span>
             </div>
             <div className="divide-y divide-[#1F1F23]">
-              {allOpenOrders.map((order: any) => {
+              {allOpenOrders.map((order) => {
                 const isBuy = order.side === 'BUY';
                 const isPartial = order.status === 'PARTIAL_FILLED';
                 return (
@@ -1041,7 +1042,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
               <span className="text-[10px] text-[#52525B] font-bold">{predOpenOrders.length} active</span>
             </div>
             <div className="divide-y divide-[#1F1F23]">
-              {predOpenOrders.map((order: any) => {
+              {predOpenOrders.map((order) => {
                 const isNegative = order.position === Position.NO || order.position === Position.B;
                 const isDraw = order.position === Position.DRAW;
                 const positionLabel = isDraw

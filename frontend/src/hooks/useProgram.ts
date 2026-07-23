@@ -1,5 +1,6 @@
+import { getErrorMessage } from '@/src/lib/errors';
 import { useState, useCallback, useRef } from 'react';
-import { Market, Duel, Proposal, Portfolio, Position } from '../types';
+import { Market, Duel, Proposal, Portfolio, Position, DaoStats } from '../types';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { PublicKey } from '@solana/web3.js';
 import { apiFetch } from '../lib/api';
@@ -145,10 +146,18 @@ export interface OrderBookEntry {
   amount: number;
   price: number;
   createdAt: number;
+  /** Unfilled remainder for partially-matched orders. */
+  remaining?: number;
+  status?: 'OPEN' | 'FILLED' | 'CANCELLED' | string;
   onChain?: boolean;
   onChainOrderPubkey?: string;
   onChainMarket?: string;
   currency?: 'SOL' | 'LYNX';
+}
+
+export interface OrderBook {
+  bids: OrderBookEntry[];
+  asks: OrderBookEntry[];
 }
 
 export interface PositionEntry {
@@ -159,6 +168,7 @@ export interface PositionEntry {
   avgPrice: number;
   currency: 'SOL' | 'LYNX';
   outcome?: string;
+  claimed?: boolean;
   onChainMarket?: string;
   estimatedPayout?: number;
   status?: string;
@@ -280,9 +290,9 @@ export function useProgram() {
     try {
       const response = await apiFetch<{ data: Market[]; total: number; limit: number; offset: number }>('/api/markets?limit=200');
       return response.data;
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error fetching markets:', err);
-      setError(err.message || 'Failed to fetch markets');
+      setError(getErrorMessage(err) || 'Failed to fetch markets');
       return [];
     } finally {
       endOp(opId);
@@ -398,7 +408,7 @@ export function useProgram() {
   const fetchOrderBook = useCallback(async (pair = 'LYNX/SOL', marketId?: string) => {
     const params = new URLSearchParams({ pair });
     if (marketId) params.set('marketId', marketId);
-    return await apiFetch<OrderBookEntry[]>(`/api/orderbook?${params.toString()}`);
+    return await apiFetch<OrderBook>(`/api/orderbook?${params.toString()}`);
   }, []);
 
   // Fetch duels from backend
@@ -413,7 +423,7 @@ export function useProgram() {
       } catch { /* on-chain index unavailable — fall through to legacy */ }
       const response = await apiFetch<{ data: Duel[]; total: number; limit: number; offset: number }>('/api/duels?limit=200');
       return response.data;
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to fetch duels', err);
       return [];
     } finally {
@@ -511,8 +521,8 @@ export function useProgram() {
     try {
       const currentWallet = requireWallet();
       return await apiFetch<Portfolio>(`/api/portfolio?wallet=${encodeURIComponent(currentWallet)}`);
-    } catch (err: any) {
-      setError(err.message || 'Failed to fetch portfolio');
+    } catch (err) {
+      setError(getErrorMessage(err) || 'Failed to fetch portfolio');
       return {
         solBalance: 0,
         lynxBalance: 0,
@@ -539,8 +549,8 @@ export function useProgram() {
         if (res?.data?.length) return res.data.map(mapOnChainProposal);
       } catch { /* on-chain index unavailable — fall through to legacy */ }
       return await apiFetch<Proposal[]>('/api/proposals');
-    } catch (err: any) {
-      setError(err.message || 'Failed to fetch proposals');
+    } catch (err) {
+      setError(getErrorMessage(err) || 'Failed to fetch proposals');
       return [];
     } finally {
       endOp(opId);
@@ -564,8 +574,8 @@ export function useProgram() {
         method: 'POST',
         body: JSON.stringify(input)
       });
-    } catch (err: any) {
-      setError(err.message || 'Failed to create proposal');
+    } catch (err) {
+      setError(getErrorMessage(err) || 'Failed to create proposal');
       throw err;
     } finally {
       endOp(opId);
@@ -573,13 +583,13 @@ export function useProgram() {
   }, [publicKey, signAndSendOnChain, startOp, endOp]);
 
   // Fetch DAO Stats
-  const fetchDaoStats = useCallback(async (): Promise<any> => {
+  const fetchDaoStats = useCallback(async (): Promise<DaoStats | null> => {
     const opId = `fetchDaoStats-${Date.now()}`;
     startOp(opId);
     try {
-       return await apiFetch('/api/daostats');
-    } catch (err: any) {
-       setError(err.message || 'Failed to fetch DAO stats');
+       return await apiFetch<DaoStats>('/api/daostats');
+    } catch (err) {
+       setError(getErrorMessage(err) || 'Failed to fetch DAO stats');
        return null;
     } finally {
        endOp(opId);
@@ -840,7 +850,7 @@ export function useProgram() {
     try {
       const currentWallet = requireWallet();
       return await apiFetch(`/api/transactions?wallet=${encodeURIComponent(currentWallet)}`);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to fetch transactions', err);
       return [];
     }
@@ -851,7 +861,7 @@ export function useProgram() {
     try {
       const currentWallet = requireWallet();
       return await apiFetch<PositionEntry[]>(`/api/positions?wallet=${encodeURIComponent(currentWallet)}`);
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to fetch positions', err);
       return [];
     }

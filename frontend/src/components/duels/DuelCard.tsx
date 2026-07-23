@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Duel, DuelStatus, Market, Position } from '@/src/types';
 import { formatSOL, cn } from '@/src/lib/utils';
 import { Sword, User, ArrowRight, Shield, X } from 'lucide-react';

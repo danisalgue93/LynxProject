@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { getErrorMessage } from '@/src/lib/errors';
+import { useState } from 'react';
 import { Trophy, Coins, Info } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/src/lib/utils';
@@ -42,11 +43,11 @@ export function NotificationsPopover({ isOpen, onClose, wallet, notifications, s
         body: JSON.stringify({ wallet })
       });
       setNotifications(data.map(n => ({ ...n, timestamp: new Date(n.timestamp || Date.now()) })));
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to mark notifications read', err);
       addToast({
         type: 'error',
-        message: err?.message || t('notifications.markReadFailed', 'Failed to update notifications'),
+        message: getErrorMessage(err) || t('notifications.markReadFailed', 'Failed to update notifications'),
       });
     } finally {
       setIsActionLoading(false);
@@ -62,11 +63,11 @@ export function NotificationsPopover({ isOpen, onClose, wallet, notifications, s
         body: JSON.stringify({ wallet, id })
       });
       setNotifications(data.map(n => ({ ...n, timestamp: new Date(n.timestamp || Date.now()) })));
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to mark notification read', err);
       addToast({
         type: 'error',
-        message: err?.message || t('notifications.markReadFailed', 'Failed to update notifications'),
+        message: getErrorMessage(err) || t('notifications.markReadFailed', 'Failed to update notifications'),
       });
     } finally {
       setIsActionLoading(false);

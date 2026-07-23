@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@/src/lib/errors';
 import { useToast } from '@/src/context/ToastContext';
 
 /**
@@ -54,11 +55,11 @@ export function useBlockchainTransaction() {
       });
 
       return txHash;
-    } catch (error: any) {
+    } catch (error) {
       console.error('Transaction error:', error);
       removeToast(toastId);
       const message =
-        typeof error === 'string' ? error : error?.message || errorMessage;
+        typeof error === 'string' ? error : getErrorMessage(error) || errorMessage;
       if (!suppressErrorToast) {
         addToast({
           type: 'error',

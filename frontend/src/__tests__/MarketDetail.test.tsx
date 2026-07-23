@@ -1,3 +1,4 @@
+import type React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { createElement } from 'react';
@@ -9,7 +10,7 @@ import type { Market } from '@/src/types';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (_key: string, fallback: string, _opts?: any) => fallback,
+    t: (_key: string, fallback: string, _opts?: unknown) => fallback,
   }),
 }));
 
@@ -25,6 +26,12 @@ const defaultUseProgram = () => ({
   isLoading: false,
   error: null,
 });
+
+// MarketDetail only touches the subset above; this contains the cast up to the
+// full hook shape in ONE place instead of an `as any` at every mock call site.
+type UseProgramReturn = ReturnType<(typeof import('@/src/hooks/useProgram'))['useProgram']>;
+const mockProgramOverride = (partial: ReturnType<typeof defaultUseProgram>) =>
+  partial as unknown as UseProgramReturn;
 
 vi.mock('@/src/hooks/useProgram', () => ({
   useProgram: vi.fn(() => defaultUseProgram()),
@@ -48,16 +55,16 @@ vi.mock('@/src/lib/api', () => ({
 vi.mock('motion/react', () => ({
   motion: new Proxy({}, {
     get: (_target, tag: string) => {
-      return ({ children, ...props }: any) => createElement(tag, props, children);
+      return ({ children, ...props }: { children?: React.ReactNode } & Record<string, unknown>) => createElement(tag, props, children);
     },
   }),
-  AnimatePresence: ({ children }: any) => children,
+  AnimatePresence: ({ children }: { children?: React.ReactNode }) => children,
 }));
 
 global.fetch = vi.fn().mockResolvedValue({
   ok: true,
   json: async () => [],
-} as any);
+} as unknown as Response);
 
 // ── fixture ──────────────────────────────────────────────────────────────────
 
@@ -84,7 +91,7 @@ describe('MarketDetail', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    (global.fetch as any).mockResolvedValue({ ok: true, json: async () => [] });
+    vi.mocked(global.fetch).mockResolvedValue({ ok: true, json: async () => [] } as unknown as Response);
   });
 
   it('renders the market title', () => {
@@ -146,14 +153,14 @@ describe('MarketDetail', () => {
     const mockFetchPositions = vi.fn().mockResolvedValue([
       { id: 'pos-1', marketId: 'market-1', position: Position.YES, claimed: false },
     ]);
-    (useProgram as any).mockReturnValueOnce({
+    vi.mocked(useProgram).mockReturnValueOnce(mockProgramOverride({
       fetchDuels: vi.fn().mockResolvedValue([]),
       executeTrade: vi.fn(),
       fetchPositions: mockFetchPositions,
       claimPosition: vi.fn(),
       isLoading: false,
       error: null,
-    });
+    }));
 
     const resolvedMarket = makeMarket({
       status: MarketStatus.RESOLVED,

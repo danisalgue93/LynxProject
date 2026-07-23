@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { DuelCard } from './DuelCard';
 import { Duel } from '@/src/types';
 import { useProgram } from '@/src/hooks/useProgram';

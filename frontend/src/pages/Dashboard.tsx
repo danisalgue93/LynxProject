@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import { getErrorMessage } from '@/src/lib/errors';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Sidebar } from '../components/layout/Sidebar';
@@ -23,7 +24,7 @@ import { Market } from '../types';
 import { useProgram } from '../hooks/useProgram';
 import { eventBus, type AppEventName, type AppEvents } from '../lib/eventBus';
 import { API_BASE_URL, getAccessToken } from '../lib/api';
-import { io } from 'socket.io-client';
+import { io, type Socket } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { getManagedWalletAddress, useManagedAuthSession } from '../lib/auth';
@@ -41,10 +42,9 @@ export function Dashboard() {
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
   const [isCreateDuelOpen, setIsCreateDuelOpen] = useState(false);
   const [isCreateMarketOpen, setIsCreateMarketOpen] = useState(false);
-  const [, setMarketSummary] = useState({ markets: 0, volume: 0 });
-  const { fetchMarkets, createDuel, createMarket } = useProgram();
+  const { createDuel, createMarket } = useProgram();
   const activeWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession);
-  const socketRef = useRef<any>(null);
+  const socketRef = useRef<Socket | null>(null);
   const governanceReadOnly = !isAuthenticated || !activeWallet;
 
   useEffect(() => {
@@ -73,6 +73,11 @@ export function Dashboard() {
     } catch (err) {
       console.error('Socket init failed', err);
     }
+    // Mount-only ON PURPOSE: the socket connects once per Dashboard mount, and
+    // wallet changes are handled by the follow-up effect below re-emitting
+    // `identify` — depending on activeWallet here would tear down and reconnect
+    // the socket on every wallet switch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -95,22 +100,6 @@ export function Dashboard() {
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
   const closeSidebar = () => setIsSidebarOpen(false);
-
-  useEffect(() => {
-    const refresh = async () => {
-      const markets = await fetchMarkets();
-      setMarketSummary({
-        markets: markets.length,
-        volume: markets.reduce((sum, market) => sum + (market.poolAmount || 0), 0)
-      });
-    };
-    refresh();
-    const onMarketsChanged = () => { refresh(); };
-    const offCreated = eventBus.on('market:created', onMarketsChanged);
-    const offUpdated = eventBus.on('market:updated', onMarketsChanged);
-    return () => { offCreated(); offUpdated(); };
-  }, [fetchMarkets]);
-
 
   const handleLogout = () => {
     logout();
@@ -251,11 +240,11 @@ export function Dashboard() {
                 // created on-chain (SOL) when the market lives on-chain.
                 await createDuel({ ...data, onChainMarket: selectedMarket?.onChainMarket });
                 setIsCreateDuelOpen(false);
-              } catch (e: any) {
+              } catch (e) {
                 console.error(e);
                 addToast({
                   type: 'error',
-                  message: e?.message || t('duels.createFailed', 'Failed to create duel'),
+                  message: getErrorMessage(e) || t('duels.createFailed', 'Failed to create duel'),
                 });
               }
             }}

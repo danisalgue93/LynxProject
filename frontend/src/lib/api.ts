@@ -109,8 +109,8 @@ export async function apiFetch<T>(
       throw new Error(data?.error || `Request failed with ${response.status}`);
     }
     return data as T;
-  } catch (err: any) {
-    if (err?.name === 'AbortError') {
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
       throw new Error('Request timed out. Please check your connection and try again.', { cause: err });
     }
     throw err;

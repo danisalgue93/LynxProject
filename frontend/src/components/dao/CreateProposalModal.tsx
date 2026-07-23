@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { getErrorMessage } from '@/src/lib/errors';
+import { useState } from 'react';
 import { X, PlusCircle, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
@@ -26,11 +27,11 @@ export function CreateProposalModal({ onClose, onSubmit }: Props) {
     try {
       await onSubmit({ title: title.trim(), description: description.trim(), category: category.trim() });
       onClose();
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
       addToast({
         type: 'error',
-        message: e?.message || t('governance.createProposalFailed', 'Failed to create proposal'),
+        message: getErrorMessage(e) || t('governance.createProposalFailed', 'Failed to create proposal'),
       });
     } finally {
       setIsSubmitting(false);

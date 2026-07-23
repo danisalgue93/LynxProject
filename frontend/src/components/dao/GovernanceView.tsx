@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { type DaoStats } from '@/src/types';
+import { getErrorMessage } from '@/src/lib/errors';
+import { useState, useEffect } from 'react';
 import { Vote, Users, MessageSquare, CheckCircle2, Clock, PlusCircle, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/src/lib/utils';
@@ -27,7 +29,7 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
   const { addToast } = useToast();
   const { isAdmin } = useAuth();
   const [proposals, setProposals] = useState<Proposal[]>([]);
-  const [stats, setStats] = useState<any>(null);
+  const [stats, setStats] = useState<DaoStats | null>(null);
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [isPendingAct, setIsPendingAct] = useState(false);
   const [votedProposalIds, setVotedProposalIds] = useState<Set<string>>(() => new Set());
@@ -66,9 +68,9 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
       const [proposalsData, statsData] = await Promise.all([fetchProposals(), fetchDaoStats()]);
       setProposals(proposalsData);
       setStats(statsData);
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
-      const msg: string = e?.message || '';
+      const msg: string = getErrorMessage(e) || '';
       if (msg.includes('already voted') || msg.includes('already_voted')) {
         // Mark as voted so buttons disable immediately
         setVotedProposalIds((prev) => new Set(prev).add(proposalId));
@@ -107,7 +109,7 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
       );
       const statsData = await fetchDaoStats();
       setStats(statsData);
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
       // Re-throw so StakeModal.handleSubmit catches it and shows the inline error.
       // Do NOT call addToast here — StakeModal is responsible for the error display.
@@ -141,9 +143,9 @@ export function GovernanceView({ readOnly = false }: { readOnly?: boolean }) {
       setProposals(proposalsData);
       setStats(statsData);
       setShowCreateModal(false);
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
-      addToast({ type: 'error', message: e?.message || t('governance.createProposalFailed', 'Failed to create proposal') });
+      addToast({ type: 'error', message: getErrorMessage(e) || t('governance.createProposalFailed', 'Failed to create proposal') });
     } finally {
       setIsPendingAct(false);
     }

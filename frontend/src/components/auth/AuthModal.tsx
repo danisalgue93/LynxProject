@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@/src/lib/errors';
 import React, { useEffect, useState, useRef } from "react";
 import { X, Mail, Wallet, Loader2, KeyRound } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -93,8 +94,8 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
         await loginWithWallet(publicKey.toBase58(), message, bytesToBase64(signatureBytes));
         onLoginSuccess?.();
         onClose();
-      } catch (err: any) {
-        setError(err?.message || t("auth.walletLoginFailed", "Wallet login failed"));
+      } catch (err) {
+        setError(getErrorMessage(err) || t("auth.walletLoginFailed", "Wallet login failed"));
       } finally {
         setIsSubmitting(false);
         setWalletLoginRequested(false);
@@ -133,8 +134,8 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
       const signatureBytes = await signMessage(new TextEncoder().encode(message));
       await loginWithWallet(publicKey.toBase58(), message, bytesToBase64(signatureBytes));
       complete();
-    } catch (err: any) {
-      setError(err?.message || t("auth.walletLoginFailed", "Wallet login failed"));
+    } catch (err) {
+      setError(getErrorMessage(err) || t("auth.walletLoginFailed", "Wallet login failed"));
     } finally {
       setIsSubmitting(false);
       setWalletLoginRequested(false);
@@ -203,8 +204,8 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
         setNewPassword("");
         setConfirmPassword("");
       }
-    } catch (err: any) {
-      const message = err?.message || t("auth.authFailed", "Authentication failed");
+    } catch (err) {
+      const message = getErrorMessage(err) || t("auth.authFailed", "Authentication failed");
       if (typeof message === 'string' && message.includes('Invalid email or password')) {
         setError(t('auth.invalidEmailOrPassword', 'Invalid email or password'));
       } else {

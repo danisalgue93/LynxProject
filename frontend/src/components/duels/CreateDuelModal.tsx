@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo } from 'react';
 import { CreateDuelParams } from '@/src/hooks/useProgram';
 import { Market, Position } from "@/src/types";
 import { useProgram } from "@/src/hooks/useProgram";

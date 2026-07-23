@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { MarketCard } from './MarketCard';
 import { Market } from '@/src/types';
 import { useProgram } from '@/src/hooks/useProgram';

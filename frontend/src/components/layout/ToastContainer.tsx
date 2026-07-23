@@ -1,4 +1,3 @@
-import React from 'react';
 import { X, CheckCircle2, AlertCircle, Info, Loader } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useToast } from '@/src/context/ToastContext';

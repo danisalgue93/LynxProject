@@ -46,8 +46,8 @@ async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = AUT
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...init, signal: controller.signal });
-  } catch (err: any) {
-    if (err?.name === 'AbortError') {
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
       throw new Error('Request timed out. Please check your connection and try again.', { cause: err });
     }
     throw err;
@@ -67,7 +67,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const rememberUser = (nextUser: AuthUser) => {
+  // Memoized so their identities are stable across renders: they participate in
+  // hook dependency arrays below (and in the context value), and unstable
+  // closures here would either re-run effects on every render or force
+  // exhaustive-deps suppressions.
+  const rememberUser = useCallback((nextUser: AuthUser) => {
     setUser(nextUser);
     // Only store minimal data needed for UI state - reload sensitive data from backend
     localStorage.setItem(STORAGE_KEY_USER, JSON.stringify({
@@ -86,9 +90,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } else {
       clearManagedAuthSession();
     }
-  };
+  }, []);
 
-  const clearSession = () => {
+  const clearSession = useCallback(() => {
     setUser(null);
     setToken(null);
     clearAccessToken();
@@ -96,15 +100,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem(LEGACY_STORAGE_KEY_TOKEN);
     localStorage.removeItem(LEGACY_STORAGE_KEY_REFRESH);
     clearManagedAuthSession();
-  };
+  }, []);
 
-  const applySession = (data: { user: AuthUser; token: string }) => {
+  const applySession = useCallback((data: { user: AuthUser; token: string }) => {
     setToken(data.token);
     setAccessToken(data.token);
     rememberUser(data.user);
-  };
+  }, [rememberUser]);
 
-  const refreshUser = async () => {
+  const refreshUser = useCallback(async () => {
     try {
       const response = await fetchWithTimeout(apiUrl('/auth/refresh'), {
         method: 'POST',
@@ -119,7 +123,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       clearSession();
     }
-  };
+  }, [applySession, clearSession]);
 
   useEffect(() => {
     localStorage.removeItem(LEGACY_STORAGE_KEY_TOKEN);
@@ -134,8 +138,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    // refreshUser is memoized with stable deps, so this still runs exactly once.
     refreshUser().finally(() => setIsLoading(false));
-  }, []);
+  }, [refreshUser]);
 
   const login = async (email: string, password: string) => {
     const response = await fetchWithTimeout(apiUrl('/auth/login'), {
@@ -185,7 +190,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     applySession(await response.json());
-  }, []);
+  }, [applySession]);
 
   const requestPasswordReset = async (email: string) => {
     const response = await fetchWithTimeout(apiUrl('/auth/request-password-reset'), {

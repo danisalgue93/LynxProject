@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from "react";
-import { Market, Position, Duel } from "@/src/types";
+import { getErrorMessage } from '@/src/lib/errors';
+import { useState, useEffect } from 'react';
+import { Market, Position, Duel, Candle } from "@/src/types";
 import {
   Area,
   AreaChart,
@@ -40,7 +41,7 @@ function MiniMarketChart({
   market: Market;
 }) {
   const { t } = useTranslation();
-  const [historicalData, setHistoricalData] = useState<any[]>([]);
+  const [historicalData, setHistoricalData] = useState<Array<{ time: number; YES: number; NO: number; DRAW: number }>>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,7 +51,7 @@ function MiniMarketChart({
         if (!response.ok) throw new Error('Failed to fetch chart data');
         const candles = await response.json();
         if (!cancelled && Array.isArray(candles)) {
-          setHistoricalData(candles.map((candle: any) => {
+          setHistoricalData((candles as Candle[]).map((candle) => {
             const yes = Math.max(0, Math.min(100, Number(candle.close) * 100));
             return {
               time: candle.time,
@@ -188,7 +189,7 @@ export function MarketDetail({
     if (market.status === "RESOLVED" && market.result) {
       fetchPositions().then((positions) => {
         const winPos = positions.find(
-          (p: any) =>
+          (p) =>
             p.marketId === market.id &&
             !p.claimed &&
             (p.position === market.result ||
@@ -244,11 +245,11 @@ export function MarketDetail({
           explorerUrl: (txHash) => getTxExplorerUrl(txHash),
         },
       );
-    } catch (err: any) {
+    } catch (err) {
       console.error("Quick bet failed", err);
       addToast({
         type: "error",
-        message: err?.message || t("marketDetail.tradeFailed", "Trade failed"),
+        message: getErrorMessage(err) || t("marketDetail.tradeFailed", "Trade failed"),
       });
     } finally {
       setIsPending(false);
@@ -280,11 +281,11 @@ export function MarketDetail({
           explorerUrl: (txHash) => getTxExplorerUrl(txHash),
         },
       );
-    } catch (err: any) {
+    } catch (err) {
       console.error("Claim failed", err);
       addToast({
         type: "error",
-        message: err?.message || t("marketDetail.claimFailed", "Failed to claim position"),
+        message: getErrorMessage(err) || t("marketDetail.claimFailed", "Failed to claim position"),
       });
     } finally {
       setIsClaiming(false);

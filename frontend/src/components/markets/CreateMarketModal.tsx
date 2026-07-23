@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { getErrorMessage } from '@/src/lib/errors';
+import { useState } from 'react';
 import { X, Loader2, ShieldCheck } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
@@ -67,8 +68,8 @@ export function CreateMarketModal({ onClose, onSubmit }: CreateMarketModalProps)
         resolveAt,
       });
       onClose();
-    } catch (err: any) {
-      setError(err.message || t('createMarket.errorGeneric', 'Could not create the market.'));
+    } catch (err) {
+      setError(getErrorMessage(err) || t('createMarket.errorGeneric', 'Could not create the market.'));
     } finally {
       setIsSubmitting(false);
     }

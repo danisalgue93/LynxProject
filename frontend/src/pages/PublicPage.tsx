@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Sidebar } from '../components/layout/Sidebar';
@@ -18,14 +18,10 @@ import { Market } from '../types';
 import { useProgram } from '../hooks/useProgram';
 import { eventBus } from '../lib/eventBus';
 import { useTranslation } from 'react-i18next';
-import { useWallet } from '@solana/wallet-adapter-react';
-import { getManagedWalletAddress, useManagedAuthSession } from '../lib/auth';
 
 export function PublicPage() {
   const { t } = useTranslation();
   const { isAuthenticated } = useAuth();
-  const { publicKey } = useWallet();
-  const managedSession = useManagedAuthSession();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('markets');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -33,23 +29,13 @@ export function PublicPage() {
   const [isCreateDuelOpen, setIsCreateDuelOpen] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginModalAction, setLoginModalAction] = useState('');
-  const [, setMarketSummary] = useState({ markets: 0, volume: 0 });
-  const { fetchMarkets, createDuel } = useProgram();
-  const activeWallet = publicKey?.toBase58() || getManagedWalletAddress(managedSession);
+  const { createDuel } = useProgram();
 
-  const socketRef = useRef<any>(null);
-
-  useEffect(() => {
-    // Public page does not connect to socket to avoid receiving private events.
-    // Authenticated users can access real-time data via the Dashboard.
-  }, []);
-
-  // Re-identify when wallet changes without reconnecting the socket
-  useEffect(() => {
-    if (activeWallet && socketRef.current?.connected) {
-      socketRef.current.emit('identify', activeWallet);
-    }
-  }, [activeWallet]);
+  // The public page deliberately does NOT open a websocket (it would receive
+  // private events); real-time data is Dashboard-only. The socketRef and its
+  // "re-identify" effect that used to live here were dead code — the ref was
+  // never assigned — and were removed together with the marketSummary state,
+  // which was written by a fetch loop but never read by anything.
 
   // Toasts for transactions
   const [txToasts, setTxToasts] = useState<Array<{ id: string; signature: string; link: string; wallet?: string }>>([]);
@@ -73,21 +59,6 @@ export function PublicPage() {
       }
     });
   }, []);
-
-  useEffect(() => {
-    const refresh = async () => {
-      const markets = await fetchMarkets();
-      setMarketSummary({
-        markets: markets.length,
-        volume: markets.reduce((sum, market) => sum + (market.poolAmount || 0), 0)
-      });
-    };
-    refresh();
-    const onMarketsChanged = () => { refresh(); };
-    const offCreated = eventBus.on('market:created', onMarketsChanged);
-    const offUpdated = eventBus.on('market:updated', onMarketsChanged);
-    return () => { offCreated(); offUpdated(); };
-  }, [fetchMarkets]);
 
   const handleActionClick = (action: string) => {
     if (!isAuthenticated) {

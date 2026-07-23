@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { getErrorMessage } from '@/src/lib/errors';
+import { useState } from 'react';
 import { X, Loader2, AlertCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
@@ -26,10 +27,10 @@ export function StakeModal({ onClose, onSubmit, defaultAmount = 1 }: Props) {
     try {
       await onSubmit(amount);
       onClose();
-    } catch (e: any) {
+    } catch (e) {
       // Show the error inline above the button — no toast here; caller is responsible
       // for suppressing its own toasts so we don't get duplicates.
-      const msg: string = e?.message || t('governance.stakeFailed', 'Failed to stake LYNX');
+      const msg: string = getErrorMessage(e) || t('governance.stakeFailed', 'Failed to stake LYNX');
       // Humanise the "Insufficient LYNX balance" backend message
       const display = (msg.includes('Insufficient LYNX') || msg.includes('insufficient_lynx'))
         ? t('portfolio.insufficientLynxBalance', 'Not enough LYNX to complete this transaction.')

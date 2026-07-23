@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef } from 'react';
 import { Bell, ChevronDown, Globe, LogOut, Menu, User, Wallet, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
@@ -55,9 +55,10 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
   const unreadCount = notifications.filter((notification) => !notification.read).length;
 
   useEffect(() => {
-    const handleOpenAuth = (event: any) => {
-      const mode = event?.detail?.mode;
-      const token = event?.detail?.token || "";
+    const handleOpenAuth = (event: Event) => {
+      const detail = (event as CustomEvent<{ mode?: string; token?: string }>).detail;
+      const mode = detail?.mode;
+      const token = detail?.token || "";
       if (mode === "signup") setAuthMode("signup");
       else if (mode === "reset") { setAuthMode("reset"); setAuthPrefilledToken(token); }
       else if (mode === "verify") { setAuthMode("verify"); setAuthPrefilledToken(token); }

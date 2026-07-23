@@ -1,4 +1,3 @@
-import React from 'react';
 import { Market, MarketStatus } from '@/src/types';
 import { formatSOL } from '@/src/lib/utils';
 import { Clock, ArrowRight } from 'lucide-react';

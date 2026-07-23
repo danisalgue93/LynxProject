@@ -102,6 +102,41 @@ export interface Proposal {
   author: string;
 }
 
+/** One OHLC candle as served by GET /api/chart/klines. */
+export interface Candle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+}
+
+/** Shape of GET /api/daostats. */
+export interface DaoStats {
+  activeVoters: number;
+  totalLynxStaked: number;
+  activeDiscussions: number;
+}
+
+/** An open position row inside Portfolio.holdings. */
+export interface PortfolioHolding {
+  marketId: string;
+  position: string;
+  amount: number;
+  entryPrice: number;
+  currentPrice: number;
+  currency?: 'SOL' | 'LYNX';
+}
+
+/** A claimable/settled payment row inside Portfolio.payments. */
+export interface PortfolioPayment {
+  title: string;
+  amount: number;
+  date: string | number;
+  token?: 'SOL' | 'LYNX' | string;
+}
+
 export interface Portfolio {
   walletAddress?: string;
   solBalance: number;
@@ -111,8 +146,8 @@ export interface Portfolio {
   winRate?: number;
   totalProfit?: number;
   feeShare?: number;
-  payments?: Array<Record<string, unknown>>;
-  holdings?: Array<Record<string, unknown>>;
+  payments?: PortfolioPayment[];
+  holdings?: PortfolioHolding[];
   history?: Array<Record<string, unknown>>;
   approvedAt?: number;
   connectedWallets?: string[];

@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import { getErrorMessage } from '@/src/lib/errors';
+import { useEffect, useState, useCallback } from 'react';
 import { Wallet, PieChart, TrendingUp, CheckCircle2, Trophy as RewardIcon, CreditCard } from 'lucide-react';
 import { formatSOL, formatNumber, cn } from '@/src/lib/utils';
 import { useProgram } from '@/src/hooks/useProgram';
@@ -37,8 +38,8 @@ export function PortfolioView() {
     : null;
   const isManagedAccount = user?.authMethod === 'email';
 
-  const getPortfolioErrorMessage = (err: any, fallback: string) => {
-    const message = typeof err === 'string' ? err : err?.message || fallback;
+  const getPortfolioErrorMessage = (err: unknown, fallback: string) => {
+    const message = getErrorMessage(err) || fallback;
     if (typeof message !== 'string') return fallback;
     if (message.includes('Insufficient SOL balance')) {
       return t('portfolio.insufficientSolBalance', 'Not enough SOL to complete this transaction.');
@@ -93,7 +94,7 @@ export function PortfolioView() {
     const offPortfolio = eventBus.on('portfolio:updated', onUpdate);
     const offReset = eventBus.on('dev:reset', onUpdate);
     return () => { offPortfolio(); offReset(); };
-  }, [fetchMarkets, fetchPortfolio]);
+  }, [fetchMarkets, fetchPortfolio, reloadStaking]);
 
   const handleClaim = async () => {
     if (pendingRewardsOnChain <= 0) return;
@@ -113,7 +114,7 @@ export function PortfolioView() {
           suppressErrorToast: true
         }
       );
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
       addToast({
         type: 'error',
@@ -178,7 +179,7 @@ export function PortfolioView() {
         }
       );
       setStakeAmount('');
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
       const msg = getPortfolioErrorMessage(err, t('portfolio.stakeActionFailed', 'Failed to update staking'));
       setStakeError(msg);
@@ -233,7 +234,7 @@ export function PortfolioView() {
         }
       );
       setSolLedgerAmount('');
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
       addToast({
         type: 'error',
@@ -395,8 +396,8 @@ export function PortfolioView() {
                       setMoonPayError(null);
                       try {
                         await openSignedMoonPay(walletAddress);
-                      } catch (err: any) {
-                        setMoonPayError(err.message || 'MoonPay is not available');
+                      } catch (err) {
+                        setMoonPayError(getErrorMessage(err) || 'MoonPay is not available');
                       }
                     }}
                   >
@@ -460,7 +461,7 @@ export function PortfolioView() {
               </div>
               
               <div className="space-y-3">
-                {portfolio.payments?.map((claim: any) => {
+                {portfolio.payments?.map((claim) => {
                   const isLynx = (claim.token || 'SOL') === 'LYNX';
                   return (
                   <div key={`${claim.date}-${claim.title}-${claim.token ?? 'SOL'}-${claim.amount}`} className={cn(
@@ -528,7 +529,7 @@ export function PortfolioView() {
               </div>
               
               <div className="space-y-2">
-                {portfolio.holdings?.map((holding: any) => {
+                {portfolio.holdings?.map((holding) => {
                   const market = markets.find(m => m.id === holding.marketId);
                   const title = market ? market.title : t('portfolio.unknownMarket', 'Unknown Market (Loading...)');
                   const pnl = (holding.currentPrice - holding.entryPrice) * holding.amount;

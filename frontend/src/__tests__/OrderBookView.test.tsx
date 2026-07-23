@@ -66,14 +66,14 @@ vi.mock('@/src/lib/api', () => ({
 global.fetch = vi.fn().mockResolvedValue({
   ok: true,
   json: async () => [],
-} as any);
+} as unknown as Response);
 
 // ── tests ────────────────────────────────────────────────────────────────────
 
 describe('OrderBookView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (global.fetch as any).mockResolvedValue({ ok: true, json: async () => [] });
+    vi.mocked(global.fetch).mockResolvedValue({ ok: true, json: async () => [] } as unknown as Response);
   });
 
   it('renders without crashing', () => {

@@ -1,4 +1,3 @@
-import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { LogIn, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
