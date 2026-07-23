@@ -2315,12 +2315,21 @@ app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
       return;
   }
 
+  // LedgerEntry.reference is UNIQUE in the schema, so it must never be raw
+  // client input: two deposits sent with the same `reference` string both
+  // succeed in memory and then collide on insert, which aborts the ENTIRE
+  // persistence transaction — and since the offending entry stays in memory,
+  // every subsequent save fails too. That is a permanent persistence outage,
+  // trivially triggerable on purpose. Only EXTERNAL_WALLET reaches this line
+  // (INTERNAL/CARD is rejected with 410 above) and it always carries a signature
+  // that was just verified on-chain and de-duplicated via hasTransaction(), so
+  // derive the reference from it instead.
   const result = store.deposit({
     wallet,
     currency: body.currency,
     amount: body.amount,
     provider: body.provider,
-    reference: body.reference
+    reference: body.signature ? `deposit:${body.signature}` : undefined
   });
   // Only record the final transaction if not already pre-registered (EXTERNAL_WALLET flow)
   if (body.signature && !store.hasTransaction(body.signature)) {

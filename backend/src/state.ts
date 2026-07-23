@@ -1430,8 +1430,19 @@ export class LynxState {
       }
       return;
     }
-    for (const wallet of stakers) {
-      const share = amount * (wallet.stakedLynx / totalStaked);
+    // Dust reconciliation, same pattern as the LYNX emission split (audit
+    // BAJA-4): each share was rounded independently, so their sum did not equal
+    // `amount` and the remainder was simply lost — resolveMarket had already
+    // charged the pool the full staker fee, but slightly less than that reached
+    // the stakers and the difference was credited to nobody. The last staker
+    // now takes the exact remainder so the distribution sums to `amount`.
+    let distributed = 0;
+    stakers.forEach((wallet, index) => {
+      const isLast = index === stakers.length - 1;
+      const share = isLast
+        ? roundAmount(amount - distributed)
+        : roundAmount(amount * (wallet.stakedLynx / totalStaked));
+      distributed = roundAmount(distributed + share);
       if (currency === 'LYNX') {
         wallet.rewardsLynx = roundAmount(wallet.rewardsLynx + share);
       } else {
@@ -1440,9 +1451,9 @@ export class LynxState {
       this.pushNotification(wallet.wallet, {
         type: 'claimable',
         title: `${currency} staking rewards available`,
-        message: `You earned ${roundAmount(share)} ${currency} from protocol event fees.`
+        message: `You earned ${share} ${currency} from protocol event fees.`
       });
-    }
+    });
   }
 
   private getCirculatingSupply(): number {
