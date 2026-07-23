@@ -30,12 +30,25 @@ import { proposeCredit, approveCredit, getCreditRequest, markExecuted, isReadyTo
 // ── Distributed locking (BE-17) ───────────────────────────────────────────────
 // Redis-based distributed lock using SET NX EX. Falls back to an in-memory map
 // when Redis is not available (single-instance only).
-const inMemoryLocks = new Map<string, number>(); // key → expiresAt
+const inMemoryLocks = new Map<string, { token: string; expiresAt: number }>();
+// Per-process record of the fencing token we wrote for each lock we currently
+// hold, so releaseLock can prove ownership before deleting (audit backend-H2).
+const heldLockTokens = new Map<string, string>();
+
+// Atomic compare-and-delete: only remove the lock if its value is still OUR
+// token. Without this, a lock that expired mid-operation (slow RPC / GC pause)
+// and was re-acquired by another request would be deleted by the original
+// holder's finally-block, freeing a lock it no longer owns and letting two
+// operations run concurrently on the same resource.
+const RELEASE_LOCK_LUA =
+  "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
 
 async function acquireLock(key: string, ttlMs: number): Promise<boolean> {
+  const token = randomUUID();
   if (redis) {
     try {
-      const result = await redis.set(`lock:${key}`, '1', 'PX', ttlMs, 'NX');
+      const result = await redis.set(`lock:${key}`, token, 'PX', ttlMs, 'NX');
+      if (result !== null) heldLockTokens.set(key, token);
       return result !== null;
     } catch (err) {
       console.error('[distributed-lock] redis error on acquire:', err instanceof Error ? err.message : err);
@@ -47,21 +60,29 @@ async function acquireLock(key: string, ttlMs: number): Promise<boolean> {
   // are NOT serialized.
   const now = Date.now();
   const held = inMemoryLocks.get(key);
-  if (held && held > now) return false;
-  inMemoryLocks.set(key, now + ttlMs);
+  if (held && held.expiresAt > now) return false;
+  inMemoryLocks.set(key, { token, expiresAt: now + ttlMs });
+  heldLockTokens.set(key, token);
   return true;
 }
 
 async function releaseLock(key: string): Promise<void> {
+  const token = heldLockTokens.get(key);
+  heldLockTokens.delete(key);
+  // No token means we never acquired it (or already released); nothing to do.
+  if (!token) return;
   if (redis) {
     try {
-      await (redis as any).del(`lock:${key}`);
+      await (redis as any).eval(RELEASE_LOCK_LUA, 1, `lock:${key}`, token);
+      return;
     } catch (err) {
       console.error('[distributed-lock] redis error on release:', err instanceof Error ? err.message : err);
       // Fall through to in-memory cleanup
     }
   }
-  inMemoryLocks.delete(key);
+  // Only delete the in-memory lock if it is still the one we took.
+  const held = inMemoryLocks.get(key);
+  if (held && held.token === token) inMemoryLocks.delete(key);
 }
 
 // Validate PROGRAM_ID format early (chain.ts parses it lazily)
@@ -1222,6 +1243,14 @@ function asyncRoute(handler: express.RequestHandler): express.RequestHandler {
 
 const positionSchema = z.enum(['YES', 'NO', 'A', 'B', 'DRAW']);
 const currencySchema = z.enum(['SOL', 'LYNX']);
+
+// Money-amount ceiling (audit backend-H3). `z.number().positive()` accepts
+// Infinity (Infinity > 0) and absurd finite values like 1e250 that overflow to
+// Infinity/NaN in downstream products such as notional = amount * price. This
+// caps every user-supplied amount/price to a finite, sane upper bound well above
+// any real balance so the arithmetic can never leave the safe numeric range.
+const MAX_MONEY_AMOUNT = 1e12;
+const moneyAmount = () => z.number().finite().positive().max(MAX_MONEY_AMOUNT);
 const sideSchema = z.enum(['BUY', 'SELL']);
 
 // ==================== AUTH ENDPOINTS ====================
@@ -1781,10 +1810,10 @@ app.post('/api/markets/:id/trades', tradingRateLimit, walletTradingRateLimit, as
   if (!requireAuth(req, res)) return;
   const body = z.object({
     wallet: z.string(),
-    amount: z.number().positive(),
+    amount: moneyAmount(),
     position: positionSchema,
     tradeType: z.enum(['limit', 'swap', 'market']).default('swap'),
-    limitPrice: z.number().positive().optional(),
+    limitPrice: moneyAmount().optional(),
     clientRequestId: z.string().max(100).optional(),
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
@@ -1942,7 +1971,7 @@ app.post('/api/duels', tradingRateLimit, walletTradingRateLimit, asyncRoute(asyn
     wallet: z.string(),
     marketId: z.string(),
     side: positionSchema,
-    amount: z.number().positive(),
+    amount: moneyAmount(),
     type: z.enum(['1v1', '1v1vP']).optional()
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
@@ -2098,12 +2127,12 @@ app.post('/api/orders', tradingRateLimit, walletTradingRateLimit, asyncRoute(asy
     pair: z.string().default('LYNX/SOL'),
     side: sideSchema,
     position: positionSchema.optional(),
-    amount: z.number().positive(),
-    price: z.number().positive().optional(),
+    amount: moneyAmount(),
+    price: moneyAmount().optional(),
     currency: currencySchema.default('LYNX'),
     tradeType: z.enum(['limit', 'market']).default('limit'),
-    maxPrice: z.number().positive().optional(),
-    minPrice: z.number().positive().optional()
+    maxPrice: moneyAmount().optional(),
+    minPrice: moneyAmount().optional()
   }).refine((data) => data.tradeType === 'market' || typeof data.price === 'number', {
     message: 'price is required for limit orders',
     path: ['price']
@@ -2230,7 +2259,7 @@ app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
   const body = z.object({
     wallet: z.string(),
     currency: currencySchema,
-    amount: z.number().positive(),
+    amount: moneyAmount(),
     provider: z.enum(['CARD', 'EXTERNAL_WALLET', 'INTERNAL']).default('INTERNAL'),
     reference: z.string().optional(),
     signature: z.string().optional()
@@ -2318,7 +2347,7 @@ app.post('/api/admin/credits/propose', asyncRoute(async (req, res) => {
   const body = z.object({
     wallet: z.string(),
     currency: currencySchema,
-    amount: z.number().positive(),
+    amount: moneyAmount(),
     reason: z.string().min(3),
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
@@ -2396,7 +2425,7 @@ app.post('/api/ledger/withdraw', asyncRoute(async (req, res) => {
   const body = z.object({
     wallet: z.string(),
     currency: currencySchema,
-    amount: z.number().positive(),
+    amount: moneyAmount(),
     reference: z.string().optional()
   }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
@@ -2580,7 +2609,7 @@ app.post('/api/positions/:id/claim', asyncRoute(async (req, res) => {
 
 app.post('/api/positions/:id/boost-with-lynx', tradingRateLimit, walletTradingRateLimit, asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
-  const body = z.object({ wallet: z.string(), lynxAmount: z.number().positive() }).parse(req.body);
+  const body = z.object({ wallet: z.string(), lynxAmount: moneyAmount() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet) return; // requireWalletBody already sent the 400
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
@@ -2635,7 +2664,7 @@ app.delete('/api/orders/:id', asyncRoute(async (req, res) => {
 
 app.post('/api/staking/stake', tradingRateLimit, walletTradingRateLimit, asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
-  const body = z.object({ wallet: z.string(), amount: z.number().positive() }).parse(req.body);
+  const body = z.object({ wallet: z.string(), amount: moneyAmount() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet) return; // requireWalletBody already sent the 400
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
@@ -2659,7 +2688,7 @@ app.post('/api/staking/stake', tradingRateLimit, walletTradingRateLimit, asyncRo
 
 app.post('/api/staking/unstake', tradingRateLimit, walletTradingRateLimit, asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
-  const body = z.object({ wallet: z.string(), amount: z.number().positive() }).parse(req.body);
+  const body = z.object({ wallet: z.string(), amount: moneyAmount() }).parse(req.body);
   const wallet = requireWalletBody(req, res, body.wallet);
   if (!wallet) return; // requireWalletBody already sent the 400
   if (!requireAuthMatchesWallet(req, res, wallet)) return;
@@ -2944,6 +2973,24 @@ async function start() {
   if (process.env.NODE_ENV === 'production' && persistence.driver !== 'prisma') {
     throw new Error('STORE_DRIVER must be "prisma" in production');
   }
+  // audit backend-H1: the business state (balances, orders, order book, seen
+  // transactions, pending credit/resolution approvals) lives in this process's
+  // memory — loaded from the DB/Redis once at boot and thereafter only WRITTEN
+  // back, never re-read. The Redis distributed locks serialize concurrent
+  // requests to the SAME key but do NOT synchronize this in-memory state across
+  // processes, so running 2+ active replicas behind a load balancer reopens
+  // double-spend / "credit request not found on the other replica" races. This
+  // service must therefore run as a SINGLE active replica for business state.
+  // Read-only/health-check replicas are fine. Set SINGLE_INSTANCE_ACK=true once
+  // the deployment guarantees this to silence the warning.
+  if (process.env.NODE_ENV === 'production' && process.env.SINGLE_INSTANCE_ACK !== 'true') {
+    console.warn(JSON.stringify({
+      level: 'warn', module: 'startup', msg: 'single-instance-business-state',
+      detail: 'Business state is in-process memory; run exactly ONE active replica. ' +
+        'Set SINGLE_INSTANCE_ACK=true to acknowledge, or migrate state to a shared store before scaling out.',
+    }));
+  }
+
   await persistence.load(store);
   await loadPersistedAuthUsers();
   await loadPendingCreditApprovalsFromRedis();
