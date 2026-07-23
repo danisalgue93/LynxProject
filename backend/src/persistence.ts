@@ -404,11 +404,33 @@ export function dbToLedger(r: any): LedgerEntry {
 // instead of rewriting every row on every save()). `previousSnapshot` is
 // mutated in place to become the new baseline for the next call.
 
-function diffRows<T>(
+/**
+ * Diff the current rows against the last-written snapshot.
+ *
+ * PURE with respect to `previousSnapshot`: the snapshot is only advanced when
+ * the caller invokes the returned `commit()`, which MUST happen after the
+ * database transaction has actually committed.
+ *
+ * This used to mutate `previousSnapshot` inline, while building the diff, which
+ * caused two bugs:
+ *
+ *  1. DATA LOSS. The snapshot claimed the rows were persisted before the
+ *     transaction ran. If that transaction then failed (DB down, deadlock,
+ *     dropped connection), the next save() saw no difference for those rows and
+ *     never wrote them again — balances/orders/ledger entries silently stayed
+ *     in memory only and were lost on restart.
+ *  2. The batch-insert fast path was dead. The write phase decides new-vs-
+ *     existing via `lastTransactions.has(id)` / `lastLedger.has(id)`, but the
+ *     ids had already been inserted into those maps, so `.has()` was always
+ *     true and every row took the slow per-row upsert path instead of
+ *     createMany.
+ */
+export function diffRows<T>(
   current: Map<string, T>,
   previousSnapshot: Map<string, string>
-): { changed: T[]; deletedKeys: string[] } {
+): { changed: T[]; deletedKeys: string[]; commit: () => void } {
   const changed: T[] = [];
+  const pending = new Map<string, string>();
   const seen = new Set<string>();
 
   for (const [key, row] of current.entries()) {
@@ -416,7 +438,7 @@ function diffRows<T>(
     const serialized = JSON.stringify(row);
     if (previousSnapshot.get(key) !== serialized) {
       changed.push(row);
-      previousSnapshot.set(key, serialized);
+      pending.set(key, serialized);
     }
   }
 
@@ -424,9 +446,13 @@ function diffRows<T>(
   for (const key of previousSnapshot.keys()) {
     if (!seen.has(key)) deletedKeys.push(key);
   }
-  for (const key of deletedKeys) previousSnapshot.delete(key);
 
-  return { changed, deletedKeys };
+  const commit = () => {
+    for (const [key, serialized] of pending) previousSnapshot.set(key, serialized);
+    for (const key of deletedKeys) previousSnapshot.delete(key);
+  };
+
+  return { changed, deletedKeys, commit };
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────
@@ -797,6 +823,20 @@ export function createPersistence(): Persistence {
           update: store.treasury,
         });
       });
+
+      // Only NOW mark these rows as persisted. If $transaction above threw, this
+      // is never reached, the snapshots keep their previous values, and the next
+      // save() retries the same rows instead of silently dropping them forever.
+      markets.commit();
+      positions.commit();
+      wallets.commit();
+      orders.commit();
+      trades.commit();
+      duels.commit();
+      proposals.commit();
+      notifications.commit();
+      transactions.commit();
+      ledger.commit();
     },
 
     async recordVote(proposalId, wallet, voteType, weight) {
