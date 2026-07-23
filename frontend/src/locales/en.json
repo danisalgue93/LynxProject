@@ -577,5 +577,12 @@
     "errorGeneric": "Could not create the market.",
     "cutoffDefaultWarning": "No date set — defaults to 24 h from now: {{date}}",
     "resolveDefaultWarning": "No date set — defaults to cut-off + 24 h"
+  },
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "body": "An unexpected error occurred. Please try refreshing the page.",
+    "errorId": "Error ID:",
+    "tryAgain": "Try again",
+    "reload": "Reload page"
   }
 }

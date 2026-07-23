@@ -307,6 +307,7 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
+                aria-label={t("auth.email", "Email")}
                 placeholder={t("auth.email", "Email")}
                 required
                 className="w-full bg-[#18181B] border border-[#27272A] text-white px-4 py-3 rounded text-sm placeholder-[#52525B] focus:outline-none focus:border-[#00FFD1]/50"
@@ -318,6 +319,7 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
+                aria-label={t("auth.password", "Password")}
                 placeholder={t("auth.password", "Password")}
                 required
                 className="w-full bg-[#18181B] border border-[#27272A] text-white px-4 py-3 rounded text-sm placeholder-[#52525B] focus:outline-none focus:border-[#00FFD1]/50"
@@ -330,6 +332,7 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
                   type="password"
                   value={currentPassword}
                   onChange={(event) => setCurrentPassword(event.target.value)}
+                  aria-label={t("auth.currentPassword", "Current password")}
                   placeholder={t("auth.currentPassword", "Current password")}
                   required
                   className="w-full bg-[#18181B] border border-[#27272A] text-white px-4 py-3 rounded text-sm placeholder-[#52525B] focus:outline-none focus:border-[#00FFD1]/50"
@@ -338,6 +341,7 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
                   type="password"
                   value={newPassword}
                   onChange={(event) => setNewPassword(event.target.value)}
+                  aria-label={t("auth.newPassword", "New password")}
                   placeholder={t("auth.newPassword", "New password")}
                   required
                   className="w-full bg-[#18181B] border border-[#27272A] text-white px-4 py-3 rounded text-sm placeholder-[#52525B] focus:outline-none focus:border-[#00FFD1]/50"
@@ -346,6 +350,7 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
                   type="password"
                   value={confirmPassword}
                   onChange={(event) => setConfirmPassword(event.target.value)}
+                  aria-label={t("auth.confirmNewPassword", "Confirm new password")}
                   placeholder={t("auth.confirmNewPassword", "Confirm new password")}
                   required
                   className="w-full bg-[#18181B] border border-[#27272A] text-white px-4 py-3 rounded text-sm placeholder-[#52525B] focus:outline-none focus:border-[#00FFD1]/50"
@@ -357,6 +362,7 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
               <input
                 value={verificationToken}
                 onChange={(event) => setVerificationToken(event.target.value)}
+                aria-label={t("auth.verificationToken", "Verification token")}
                 placeholder={t("auth.verificationToken", "Verification token")}
                 required
                 className="w-full bg-[#18181B] border border-[#27272A] text-white px-4 py-3 rounded text-sm placeholder-[#52525B] focus:outline-none focus:border-[#00FFD1]/50"
@@ -368,6 +374,7 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
                 <input
                   value={resetToken}
                   onChange={(event) => setResetToken(event.target.value)}
+                  aria-label={t("auth.resetToken", "Reset token")}
                   placeholder={t("auth.resetToken", "Reset token")}
                   required
                   className="w-full bg-[#18181B] border border-[#27272A] text-white px-4 py-3 rounded text-sm placeholder-[#52525B] focus:outline-none focus:border-[#00FFD1]/50"
@@ -376,6 +383,7 @@ export function AuthModal({ isOpen, onClose, defaultMode, prefilledToken = "", o
                   type="password"
                   value={newPassword}
                   onChange={(event) => setNewPassword(event.target.value)}
+                  aria-label={t("auth.newPassword", "New password")}
                   placeholder={t("auth.newPassword", "New password")}
                   required
                   className="w-full bg-[#18181B] border border-[#27272A] text-white px-4 py-3 rounded text-sm placeholder-[#52525B] focus:outline-none focus:border-[#00FFD1]/50"

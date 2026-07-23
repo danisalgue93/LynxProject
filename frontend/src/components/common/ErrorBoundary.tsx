@@ -1,6 +1,10 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
 import { RefreshCw, AlertTriangle } from 'lucide-react';
 import { Sentry } from '../../lib/sentry';
+// A class component can't use the useTranslation hook, so translate through the
+// i18n instance directly. This is the screen a user sees when something breaks,
+// so it should honor their language like the rest of the app (audit frontend-6.3).
+import i18n from '../../i18n';
 
 interface Props {
   children: ReactNode;
@@ -52,13 +56,13 @@ export class ErrorBoundary extends Component<Props, State> {
           <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
             <AlertTriangle className="w-8 h-8 text-red-400" />
           </div>
-          <h2 className="text-xl font-bold text-white mb-3">Something went wrong</h2>
+          <h2 className="text-xl font-bold text-white mb-3">{i18n.t('errorBoundary.title', 'Something went wrong')}</h2>
           <p className="text-sm text-[#71717A] mb-2">
-            An unexpected error occurred. Please try refreshing the page.
+            {i18n.t('errorBoundary.body', 'An unexpected error occurred. Please try refreshing the page.')}
           </p>
           {this.state.eventId && (
             <p className="text-xs text-[#52525B] font-mono mt-1">
-              Error ID: {this.state.eventId}
+              {i18n.t('errorBoundary.errorId', 'Error ID:')} {this.state.eventId}
             </p>
           )}
           {import.meta.env.DEV && this.state.error && (
@@ -73,14 +77,14 @@ export class ErrorBoundary extends Component<Props, State> {
               className="flex items-center gap-2 px-4 py-2 bg-[#18181B] border border-[#27272A] text-white text-sm rounded hover:border-[#00FFD1]/50 transition-colors"
             >
               <RefreshCw className="w-4 h-4" />
-              Try again
+              {i18n.t('errorBoundary.tryAgain', 'Try again')}
             </button>
             <button
               onClick={() => window.location.reload()}
               type="button"
               className="px-4 py-2 bg-[#00FFD1] text-black text-sm font-bold rounded hover:bg-[#00E5BC] transition-colors"
             >
-              Reload page
+              {i18n.t('errorBoundary.reload', 'Reload page')}
             </button>
           </div>
         </div>

@@ -140,7 +140,7 @@ function MarketChart({ isLynxSol, market, chartType = 'line', chartRange = '1M',
               const clampedWickHeight = Math.max(0.1, Math.min(100 - clampedWickTop, wickBottomY - wickTopY));
               
               return (
-                <div key={i} className="flex-1 h-full relative group/candle cursor-crosshair flex justify-center min-w-0">
+                <div key={d.time ?? i} className="flex-1 h-full relative group/candle cursor-crosshair flex justify-center min-w-0">
                   {/* Tooltip on hover */}
                   <div className="hidden group-hover/candle:flex absolute bottom-[105%] left-1/2 -translate-x-1/2 mb-2 p-1.5 lg:p-2 bg-[#0D0D0E] border border-[#27272A] shadow-xl rounded flex-col gap-0.5 lg:gap-1 text-[8px] lg:text-[10px] font-mono whitespace-nowrap z-20 text-[#A1A1AA] pointer-events-none">
                     <div className="flex justify-between gap-3 lg:gap-4"><span>O:</span> <span className="text-white">{d.open.toFixed(5)}</span></div>
@@ -304,8 +304,16 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
     };
     loadOrderBook();
     const offOrderbook = eventBus.on('orderbook:updated', () => { loadOrderBook(); });
-    const interval = window.setInterval(loadOrderBook, 5000);
-    return () => { window.clearInterval(interval); offOrderbook(); };
+    // Poll only while the tab is visible (audit frontend-5.2); socket push is the
+    // primary channel, this is the fallback. Refresh on return to visibility.
+    const interval = window.setInterval(() => { if (!document.hidden) loadOrderBook(); }, 5000);
+    const onVisibility = () => { if (!document.hidden) loadOrderBook(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.clearInterval(interval);
+      offOrderbook();
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [fetchOrderBook]);
 
   useEffect(() => {

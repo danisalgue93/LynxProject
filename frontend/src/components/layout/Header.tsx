@@ -77,7 +77,8 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
         return;
       }
       try {
-        const data = await apiFetch<any[]>(`/api/notifications?wallet=${encodeURIComponent(accountWallet)}`);
+        type RawNotification = Notification & { createdAt?: string | number };
+        const data = await apiFetch<RawNotification[]>(`/api/notifications?wallet=${encodeURIComponent(accountWallet)}`);
         if (!cancelled) {
           setNotifications(data.map((item) => ({
             ...item,
@@ -89,10 +90,18 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
       }
     };
     loadNotifications();
-    const interval = window.setInterval(loadNotifications, 10000);
+    // Poll only while the tab is visible (audit frontend-5.2): with the tab
+    // backgrounded there's nothing to see, and socket push already delivers
+    // real-time updates — this interval is just a fallback. Refresh immediately
+    // when the tab becomes visible again so it's never stale on return.
+    const tick = () => { if (!document.hidden) loadNotifications(); };
+    const interval = window.setInterval(tick, 10000);
+    const onVisibility = () => { if (!document.hidden) loadNotifications(); };
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [accountWallet]);
 
@@ -140,6 +149,8 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
             <button
               type="button"
               aria-label={t("header.changeLanguage", "Change language")}
+              aria-haspopup="menu"
+              aria-expanded={showLangMenu}
               onClick={() => setShowLangMenu((value) => !value)}
               className="flex items-center gap-2 p-2 text-[#71717A] hover:text-white transition-colors text-xs font-semibold"
               id="language-switcher"
@@ -172,6 +183,8 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
             <button
               type="button"
               aria-label={t("notifications.title", "Notifications")}
+              aria-haspopup="dialog"
+              aria-expanded={showNotifications}
               onClick={() => setShowNotifications((value) => !value)}
               className="flex p-2 text-[#71717A] hover:text-white transition-colors relative"
               id="notifications"
@@ -194,6 +207,9 @@ export function Header({ onMenuToggle, isSidebarOpen, onLogout, showAuthButtons 
             <div className="relative" ref={accountMenuRef}>
               <button
                 type="button"
+                aria-label={t("header.accountMenu", "Account menu")}
+                aria-haspopup="menu"
+                aria-expanded={showAccountMenu}
                 onClick={() => setShowAccountMenu((value) => !value)}
                 className="flex items-center gap-2 bg-[#111827] text-[#E5E7EB] text-xs font-semibold px-3 py-2 rounded uppercase hover:bg-[#1F2937] transition-all"
               >

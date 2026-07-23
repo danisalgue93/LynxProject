@@ -14,6 +14,21 @@ import * as Sentry from '@sentry/react';
 
 const dsn = import.meta.env.VITE_SENTRY_DSN;
 
+// Strip sensitive query params (wallet address, email-link tokens) from any URL
+// string. Shared by beforeBreadcrumb AND beforeSend so the scrubbing is not only
+// applied to navigation breadcrumbs but also to the event's own request.url /
+// trace context — the path the previous code missed (audit frontend-1.2).
+const SENSITIVE_QUERY_PARAMS = ['wallet', 'verify', 'reset', 'token'];
+function scrubUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    for (const p of SENSITIVE_QUERY_PARAMS) url.searchParams.delete(p);
+    return url.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
 // Only initialise when a DSN is provided.
 // In development without a DSN, Sentry is a no-op so there is no performance
 // overhead and no console noise.
@@ -39,20 +54,22 @@ if (dsn) {
       }),
     ],
 
-    // Strip sensitive query params from URLs before they're sent to Sentry
+    // Strip sensitive query params from navigation breadcrumbs.
     beforeBreadcrumb(breadcrumb) {
-      if (breadcrumb.data?.url) {
-        try {
-          const url = new URL(breadcrumb.data.url as string);
-          url.searchParams.delete('wallet');
-          url.searchParams.delete('verify');
-          url.searchParams.delete('reset');
-          breadcrumb.data.url = url.toString();
-        } catch {
-          // ignore invalid URLs
-        }
+      if (typeof breadcrumb.data?.url === 'string') {
+        breadcrumb.data.url = scrubUrl(breadcrumb.data.url);
       }
       return breadcrumb;
+    },
+
+    // And from the event itself — Sentry captures the current page URL in
+    // request.url / the trace context, which beforeBreadcrumb never touches. So
+    // an error during a load of /?reset=TOKEN could otherwise leak that token.
+    beforeSend(event) {
+      if (event.request?.url) {
+        event.request.url = scrubUrl(event.request.url);
+      }
+      return event;
     },
   });
 }

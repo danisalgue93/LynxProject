@@ -577,5 +577,12 @@
     "errorGeneric": "No se pudo crear el mercado.",
     "cutoffDefaultWarning": "Sin fecha — se usará 24 h desde ahora: {{date}}",
     "resolveDefaultWarning": "Sin fecha — se usará cut-off + 24 h"
+  },
+  "errorBoundary": {
+    "title": "Algo salió mal",
+    "body": "Ocurrió un error inesperado. Por favor, recarga la página.",
+    "errorId": "ID de error:",
+    "tryAgain": "Reintentar",
+    "reload": "Recargar página"
   }
 }
