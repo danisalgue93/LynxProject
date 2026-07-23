@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Market, MarketStatus } from '@/src/types';
 import { formatSOL } from '@/src/lib/utils';
 import { Clock, ArrowRight } from 'lucide-react';
@@ -8,10 +9,13 @@ import { cn } from '@/src/lib/utils';
 
 interface MarketCardProps {
   market: Market;
-  onClick: (id: string) => void;
+  // Stable callback (the grid passes its own onMarketSelect directly); the card
+  // supplies the market so the parent doesn't create a new arrow per row, which
+  // would defeat the memoization below.
+  onSelect: (market: Market) => void;
 }
 
-export function MarketCard({ market, onClick }: MarketCardProps) {
+function MarketCardImpl({ market, onSelect }: MarketCardProps) {
   const { t } = useTranslation();
   const statusLabel = market.status === MarketStatus.RESOLVED
     ? t('marketCard.resolved', 'RESOLVED')
@@ -48,7 +52,7 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
           ? "border-[#9945FF]/30 bg-[#9945FF]/5 hover:border-[#9945FF]/60" 
           : "border-[#1F1F23] hover:border-[#00FFD1]/30"
       )}
-      onClick={() => onClick(market.id)}
+      onClick={() => onSelect(market)}
       id={`market-card-${market.id}`}
     >
       {market.imageUrl && (
@@ -171,3 +175,7 @@ export function MarketCard({ market, onClick }: MarketCardProps) {
     </motion.div>
   );
 }
+
+// Memoized: market grids re-render on unrelated state (search text, filters,
+// polling); a card whose market object is unchanged should not re-render.
+export const MarketCard = memo(MarketCardImpl);

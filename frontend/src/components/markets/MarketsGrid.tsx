@@ -156,10 +156,10 @@ export function MarketsGrid({ onMarketSelect, canCreateMarket = false, onCreateM
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-8">
           {filtered.map(market => (
-            <MarketCard 
-              key={market.id} 
-              market={market} 
-              onClick={() => onMarketSelect(market)} 
+            <MarketCard
+              key={market.id}
+              market={market}
+              onSelect={onMarketSelect}
             />
           ))}
         </div>

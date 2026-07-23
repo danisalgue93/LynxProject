@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { memo, useState, useEffect } from 'react';
 import { Duel, DuelStatus, Market, Position } from '@/src/types';
 import { formatSOL, cn } from '@/src/lib/utils';
 import { Sword, User, ArrowRight, Shield, X } from 'lucide-react';
@@ -16,7 +16,7 @@ interface DuelCardProps {
   duel: Duel;
 }
 
-export function DuelCard({ duel }: DuelCardProps) {
+function DuelCardImpl({ duel }: DuelCardProps) {
   const { t } = useTranslation();
   const { acceptDuel, cancelDuel } = useProgram();
   const { executeTransaction } = useBlockchainTransaction();
@@ -305,3 +305,7 @@ export function DuelCard({ duel }: DuelCardProps) {
     </motion.div>
   );
 }
+
+// Memoized: the duels grid re-renders on unrelated updates; a card whose duel
+// object is unchanged should not.
+export const DuelCard = memo(DuelCardImpl);
