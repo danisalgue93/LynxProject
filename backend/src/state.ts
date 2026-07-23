@@ -521,6 +521,12 @@ export class LynxState {
     }
 
     const creditedToPool = roundAmount(input.amount - burn);
+    // Implied price BEFORE this trade moves the pool. It used to be sampled
+    // after the pool had already been credited, so the recorded entry price
+    // included the buyer's own money: buying 100 YES into a 0/100 book recorded
+    // an entry of 100/200 = 0.5 instead of the ~0.01 odds actually accepted,
+    // skewing both the position's PnL and the trade record.
+    const entryPrice = this.estimatePositionPrice(market.id, position);
     market.status = 'ACTIVE';
     market.poolAmount = roundAmount(market.poolAmount + creditedToPool);
     if (position === 'YES' || position === 'A') market.yesAmount = roundAmount(market.yesAmount + creditedToPool);
@@ -535,7 +541,7 @@ export class LynxState {
       wallet: wallet.wallet,
       position,
       amount: creditedToPool,
-      entryPrice: this.estimatePositionPrice(market.id, position),
+      entryPrice,
       currency: market.currency,
       claimed: false,
       createdAt: nowMs(),
@@ -1229,7 +1235,13 @@ export class LynxState {
     if (refund > 0) {
       this.credit(this.getWallet(order.owner), order.lockedCurrency, refund);
     }
-    order.lockedAmount = order.spentAmount ?? order.lockedAmount;
+    // Shrink the lock to what was actually spent so this is IDEMPOTENT: a second
+    // call refunds 0. The previous `?? order.lockedAmount` left the lock at its
+    // full value when nothing had been consumed, so calling this twice for such
+    // an order would have credited the same refund twice. Not reachable today
+    // (both call sites require status === 'FILLED', which implies spentAmount is
+    // set), but this is refund code — it must not depend on that invariant.
+    order.lockedAmount = order.spentAmount ?? 0;
   }
 
   private matchLynxOrder(order: Order) {
@@ -1788,21 +1800,31 @@ export class LynxState {
     if (order.status === 'FILLED') throw new Error('Order is already filled');
     if (order.status === 'CANCELLED') throw new Error('Order is already cancelled');
 
-    order.status = 'CANCELLED';
-
     const wallet = this.getWallet(walletAddress);
+
+    // Decide the refund BEFORE mutating the order. The unknown-order-type branch
+    // below throws, and this used to run after `status = 'CANCELLED'` had already
+    // been written — leaving the order permanently cancelled with its funds still
+    // locked and never refunded (the throw aborts the request, but this is
+    // in-memory state with no transaction to roll it back).
+    let applyRefund: () => void;
     if (order.lockedAmount !== undefined && order.lockedCurrency) {
       // Modern path: refund exactly what was escrowed and not yet spent.
+      const lockedCurrency = order.lockedCurrency;
       const refund = roundAmount(order.lockedAmount - (order.spentAmount ?? 0));
-      if (refund > 0) this.credit(wallet, order.lockedCurrency, refund);
-      order.lockedAmount = order.spentAmount ?? order.lockedAmount;
+      applyRefund = () => {
+        if (refund > 0) this.credit(wallet, lockedCurrency, refund);
+        // Shrink the lock to what was spent so a repeated refund is a no-op.
+        order.lockedAmount = order.spentAmount ?? 0;
+      };
     } else if (order.pair === 'LYNX/SOL' && order.side === 'BUY') {
       // Legacy LYNX/SOL BUY: SOL was locked (remaining LYNX * price).
       const refund = roundAmount(order.remaining * order.price);
-      wallet.solBalance = roundAmount(wallet.solBalance + refund);
+      applyRefund = () => { wallet.solBalance = roundAmount(wallet.solBalance + refund); };
     } else if (order.pair === 'LYNX/SOL') {
       // Legacy LYNX/SOL SELL (e.g. the treasury initial-sale order): LYNX locked.
-      wallet.lynxBalance = roundAmount(wallet.lynxBalance + order.remaining);
+      const refund = order.remaining;
+      applyRefund = () => { wallet.lynxBalance = roundAmount(wallet.lynxBalance + refund); };
     } else {
       // Audit BUG-3: an order with no lockedAmount/lockedCurrency on an unknown
       // pair. Refunding `remaining` of `currency` here is a GUESS that is wrong
@@ -1813,6 +1835,9 @@ export class LynxState {
         `Cannot safely refund order ${orderId}: no lockedAmount/lockedCurrency and not a known legacy LYNX/SOL order. New order types must set lockedAmount/lockedCurrency.`
       );
     }
+
+    order.status = 'CANCELLED';
+    applyRefund();
 
     return { cancelled: orderId, portfolio: this.getPortfolio(walletAddress) };
   }

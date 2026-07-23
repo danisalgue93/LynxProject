@@ -491,17 +491,23 @@ export function createPersistence(): Persistence {
   // development without a database).
   const hasDatabaseUrl = Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.trim());
   const explicitlyMemory = process.env.STORE_DRIVER === 'memory';
+
+  // Checked BEFORE the wantsPrisma branch below. It used to live inside
+  // `if (!wantsPrisma)`, which this case never reaches — with
+  // STORE_DRIVER=prisma, wantsPrisma is `(true || …) && true` = true — so the
+  // "fail loudly" guard was unreachable and the process instead built a
+  // PrismaClient with no connection string, failing later with a far more
+  // obscure error at the first query.
+  if (process.env.STORE_DRIVER === 'prisma' && !hasDatabaseUrl) {
+    throw new Error(
+      'STORE_DRIVER=prisma was set but DATABASE_URL is missing/empty. ' +
+      'Set DATABASE_URL to a real Postgres connection string, or remove STORE_DRIVER to use the in-memory driver intentionally.'
+    );
+  }
+
   const wantsPrisma = (process.env.STORE_DRIVER === 'prisma' || hasDatabaseUrl) && !explicitlyMemory;
 
   if (!wantsPrisma) {
-    if (process.env.STORE_DRIVER === 'prisma' && !hasDatabaseUrl) {
-      // Someone explicitly asked for Prisma but didn't configure a database — fail
-      // loudly instead of quietly losing data.
-      throw new Error(
-        'STORE_DRIVER=prisma was set but DATABASE_URL is missing/empty. ' +
-        'Set DATABASE_URL to a real Postgres connection string, or remove STORE_DRIVER to use the in-memory driver intentionally.'
-      );
-    }
     console.warn(
       '⚠️  [persistence] Using the IN-MEMORY store driver. ' +
       'All markets, trades, orders, duels and balances will be LOST on every restart or redeploy. ' +
