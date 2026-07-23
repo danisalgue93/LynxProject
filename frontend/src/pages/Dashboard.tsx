@@ -21,7 +21,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Zap } from 'lucide-react';
 import { Market } from '../types';
 import { useProgram } from '../hooks/useProgram';
-import { eventBus } from '../lib/eventBus';
+import { eventBus, type AppEventName, type AppEvents } from '../lib/eventBus';
 import { API_BASE_URL, getAccessToken } from '../lib/api';
 import { io } from 'socket.io-client';
 import { useTranslation } from 'react-i18next';
@@ -58,10 +58,12 @@ export function Dashboard() {
       socket.on('connect', () => {
         if (activeWallet) socket.emit('identify', activeWallet);
       });
-      const events = ['market:created','market:updated','duel:created','duel:accepted','orderbook:updated','portfolio:updated','portfolio:updated:private','dao:proposal-created','dao:proposal-updated','crypto:tx'];
+      const events: AppEventName[] = ['market:created','market:updated','duel:created','duel:accepted','orderbook:updated','portfolio:updated','portfolio:updated:private','dao:proposal-created','dao:proposal-updated','crypto:tx'];
       for (const ev of events) {
-        socket.on(ev, (payload: any) => {
-          eventBus.dispatchEvent(new CustomEvent(ev, { detail: payload }));
+        // Socket payloads are an external, untyped boundary; consumers narrow
+        // per-event via the AppEvents map in lib/eventBus.ts.
+        socket.on(ev, (payload: unknown) => {
+          eventBus.emit(ev, payload as AppEvents[typeof ev]);
         });
       }
       return () => {
@@ -83,15 +85,12 @@ export function Dashboard() {
   const [txToasts, setTxToasts] = useState<Array<{ id: string; signature: string; link: string; wallet?: string }>>([]);
 
   useEffect(() => {
-    const onTx = (e: Event) => {
-      const d = (e as CustomEvent<{ signature: string; link: string; wallet?: string }>).detail;
+    return eventBus.on('crypto:tx', (d) => {
       if (!d || !d.signature) return;
       const id = `tx-${Date.now()}-${crypto.randomUUID()}`;
       setTxToasts((s) => [{ id, signature: d.signature, link: d.link, wallet: d.wallet }, ...s]);
       setTimeout(() => setTxToasts((s) => s.filter(t => t.id !== id)), 12000);
-    };
-    eventBus.addEventListener('crypto:tx', onTx as any);
-    return () => eventBus.removeEventListener('crypto:tx', onTx as any);
+    });
   }, []);
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
@@ -107,12 +106,9 @@ export function Dashboard() {
     };
     refresh();
     const onMarketsChanged = () => { refresh(); };
-    eventBus.addEventListener('market:created', onMarketsChanged as any);
-    eventBus.addEventListener('market:updated', onMarketsChanged as any);
-    return () => {
-      eventBus.removeEventListener('market:created', onMarketsChanged as any);
-      eventBus.removeEventListener('market:updated', onMarketsChanged as any);
-    };
+    const offCreated = eventBus.on('market:created', onMarketsChanged);
+    const offUpdated = eventBus.on('market:updated', onMarketsChanged);
+    return () => { offCreated(); offUpdated(); };
   }, [fetchMarkets]);
 
 

@@ -53,8 +53,9 @@ vi.mock('@/src/lib/auth', () => ({
 
 vi.mock('@/src/lib/eventBus', () => ({
   eventBus: {
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
+    // Matches the typed bus API: on() returns an unsubscribe function.
+    on: vi.fn(() => () => {}),
+    emit: vi.fn(),
   },
 }));
 

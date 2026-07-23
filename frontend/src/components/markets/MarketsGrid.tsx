@@ -29,12 +29,9 @@ export function MarketsGrid({ onMarketSelect, canCreateMarket = false, onCreateM
     };
     loadMarkets();
     const onUpdate = () => { loadMarkets(); };
-    eventBus.addEventListener('market:created', onUpdate as any);
-    eventBus.addEventListener('market:updated', onUpdate as any);
-    return () => {
-      eventBus.removeEventListener('market:created', onUpdate as any);
-      eventBus.removeEventListener('market:updated', onUpdate as any);
-    };
+    const offCreated = eventBus.on('market:created', onUpdate);
+    const offUpdated = eventBus.on('market:updated', onUpdate);
+    return () => { offCreated(); offUpdated(); };
   }, [fetchMarkets]);
 
   // Derive available categories dynamically from loaded markets

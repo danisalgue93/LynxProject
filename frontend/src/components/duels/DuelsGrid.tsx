@@ -27,12 +27,9 @@ export function DuelsGrid({ onCreateDuel, readOnly = false }: DuelsGridProps) {
     };
     loadDuels();
     const onUpdate = () => { loadDuels(); };
-    eventBus.addEventListener('duel:created', onUpdate as any);
-    eventBus.addEventListener('duel:accepted', onUpdate as any);
-    return () => {
-      eventBus.removeEventListener('duel:created', onUpdate as any);
-      eventBus.removeEventListener('duel:accepted', onUpdate as any);
-    };
+    const offCreated = eventBus.on('duel:created', onUpdate);
+    const offAccepted = eventBus.on('duel:accepted', onUpdate);
+    return () => { offCreated(); offAccepted(); };
   }, [fetchDuels]);
 
   const filteredDuels = duels.filter(duel => {

@@ -287,12 +287,9 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
     };
     loadMarkets();
     const onUpdateMarkets = () => { loadMarkets(); };
-    eventBus.addEventListener('market:created', onUpdateMarkets as any);
-    eventBus.addEventListener('market:updated', onUpdateMarkets as any);
-    return () => {
-      eventBus.removeEventListener('market:created', onUpdateMarkets as any);
-      eventBus.removeEventListener('market:updated', onUpdateMarkets as any);
-    };
+    const offCreated = eventBus.on('market:created', onUpdateMarkets);
+    const offUpdated = eventBus.on('market:updated', onUpdateMarkets);
+    return () => { offCreated(); offUpdated(); };
   }, [fetchMarkets]);
 
   useEffect(() => {
@@ -305,10 +302,9 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
       }
     };
     loadOrderBook();
-    const onOrderbook = () => { loadOrderBook(); };
-    eventBus.addEventListener('orderbook:updated', onOrderbook as any);
+    const offOrderbook = eventBus.on('orderbook:updated', () => { loadOrderBook(); });
     const interval = window.setInterval(loadOrderBook, 5000);
-    return () => { window.clearInterval(interval); eventBus.removeEventListener('orderbook:updated', onOrderbook as any); };
+    return () => { window.clearInterval(interval); offOrderbook(); };
   }, [fetchOrderBook]);
 
   useEffect(() => {
@@ -325,9 +321,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
       }
     };
     loadPredictionOrderBook();
-    const onOrderbook = () => { loadPredictionOrderBook(); };
-    eventBus.addEventListener('orderbook:updated', onOrderbook as any);
-    return () => eventBus.removeEventListener('orderbook:updated', onOrderbook as any);
+    return eventBus.on('orderbook:updated', () => { loadPredictionOrderBook(); });
   }, [fetchOrderBook, selectedMarketId]);
 
   const handleLynxTrade = async () => {
@@ -921,7 +915,7 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
                          </div>
                          {tradeErrorIsInsufficientSol && (
                            <button
-                             onClick={() => eventBus.dispatchEvent(new CustomEvent('navigate:tab', { detail: { tab: 'portfolio' } }))}
+                             onClick={() => eventBus.emit('navigate:tab', { tab: 'portfolio' })}
                              className="mt-3 w-full py-2 rounded bg-[#00FFD1] text-black text-xs font-black uppercase tracking-widest hover:bg-[#00E5BC] transition-colors"
                            >
                              {t('orderbook.depositSol', 'Deposit SOL')}

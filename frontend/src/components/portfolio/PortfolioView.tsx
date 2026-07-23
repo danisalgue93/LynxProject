@@ -90,12 +90,9 @@ export function PortfolioView() {
     };
     loadData();
     const onUpdate = () => { loadData(); };
-    eventBus.addEventListener('portfolio:updated', onUpdate as any);
-    eventBus.addEventListener('dev:reset', onUpdate as any);
-    return () => {
-      eventBus.removeEventListener('portfolio:updated', onUpdate as any);
-      eventBus.removeEventListener('dev:reset', onUpdate as any);
-    };
+    const offPortfolio = eventBus.on('portfolio:updated', onUpdate);
+    const offReset = eventBus.on('dev:reset', onUpdate);
+    return () => { offPortfolio(); offReset(); };
   }, [fetchMarkets, fetchPortfolio]);
 
   const handleClaim = async () => {

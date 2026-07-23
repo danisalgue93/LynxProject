@@ -55,29 +55,23 @@ export function PublicPage() {
   const [txToasts, setTxToasts] = useState<Array<{ id: string; signature: string; link: string; wallet?: string }>>([]);
 
   useEffect(() => {
-    const onTx = (e: Event) => {
-      const d = (e as CustomEvent<{ signature: string; link: string; wallet?: string }>).detail;
+    return eventBus.on('crypto:tx', (d) => {
       if (!d || !d.signature) return;
       const id = `tx-${Date.now()}-${crypto.randomUUID()}`;
       setTxToasts((s) => [{ id, signature: d.signature, link: d.link, wallet: d.wallet }, ...s]);
       setTimeout(() => setTxToasts((s) => s.filter(t => t.id !== id)), 12000);
-    };
-    eventBus.addEventListener('crypto:tx', onTx as any);
-    return () => eventBus.removeEventListener('crypto:tx', onTx as any);
+    });
   }, []);
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
   const closeSidebar = () => setIsSidebarOpen(false);
 
   useEffect(() => {
-    const onNavigateTab = (event: any) => {
-      const tab = event?.detail?.tab;
-      if (typeof tab === 'string') {
-        setActiveTab(tab);
+    return eventBus.on('navigate:tab', (detail) => {
+      if (typeof detail?.tab === 'string') {
+        setActiveTab(detail.tab);
       }
-    };
-    eventBus.addEventListener('navigate:tab', onNavigateTab as any);
-    return () => eventBus.removeEventListener('navigate:tab', onNavigateTab as any);
+    });
   }, []);
 
   useEffect(() => {
@@ -90,12 +84,9 @@ export function PublicPage() {
     };
     refresh();
     const onMarketsChanged = () => { refresh(); };
-    eventBus.addEventListener('market:created', onMarketsChanged as any);
-    eventBus.addEventListener('market:updated', onMarketsChanged as any);
-    return () => {
-      eventBus.removeEventListener('market:created', onMarketsChanged as any);
-      eventBus.removeEventListener('market:updated', onMarketsChanged as any);
-    };
+    const offCreated = eventBus.on('market:created', onMarketsChanged);
+    const offUpdated = eventBus.on('market:updated', onMarketsChanged);
+    return () => { offCreated(); offUpdated(); };
   }, [fetchMarkets]);
 
   const handleActionClick = (action: string) => {
