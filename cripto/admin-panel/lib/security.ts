@@ -111,10 +111,6 @@ export function isDevMode() {
   return process.env.ADMIN_DEV_MODE === 'true';
 }
 
-export function escapeMarkdown(text: string): string {
-  return text.replace(/([_*\[\]()~`>#+\-=|{}.!])/g, '\\$1');
-}
-
 /**
  * Structured audit record for anything an admin does that matters.
  *
@@ -191,8 +187,9 @@ if (process.env.NODE_ENV === 'production' && process.env.ADMIN_TRUST_PROXY_HEADE
 }
 if (isDevMode()) {
   console.warn(
-    '[security] ADMIN_DEV_MODE is "true". Telegram audit logging is SUPPRESSED — ' +
-    'actions are only logged to console with [DEV MODE - AUDIT LOG SUPPRESSED] prefix. ' +
+    '[security] ADMIN_DEV_MODE is "true". This enables developer-only behaviour ' +
+    '(e.g. MOCK_MARKETS in lib/solana.ts serves fake markets instead of reading the ' +
+    'chain). auditLog() still emits normally — audit records are NOT suppressed. ' +
     'Never use this setting in production.'
   );
 }

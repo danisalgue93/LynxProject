@@ -71,7 +71,13 @@ export async function middleware(req: NextRequest) {
     // longer than INACTIVITY_TIMEOUT_MS must re-authenticate.
     if (session.activityAt && Date.now() - session.activityAt > INACTIVITY_TIMEOUT_MS) {
       session.destroy();
-      return NextResponse.redirect(new URL('/login', req.url));
+      // Carry the session-clearing Set-Cookie (written by destroy() onto `res`)
+      // on the redirect. Returning a fresh NextResponse.redirect here would drop
+      // it, leaving the stale cookie in the browser (harmless — it keeps failing
+      // the check — but the expired session should be cleared, not left dangling).
+      const redirect = NextResponse.redirect(new URL('/login', req.url));
+      res.headers.getSetCookie().forEach((cookie) => redirect.headers.append('set-cookie', cookie));
+      return redirect;
     }
 
     // Sliding expiration: refresh the activity stamp on each authenticated hit.

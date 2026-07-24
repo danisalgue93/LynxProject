@@ -77,7 +77,24 @@ export function verifyTotp(
 ): boolean {
   if (!/^\d{6}$/.test(token)) return false;
   if (!base32Secret) return false;
-  const secret = base32Decode(base32Secret);
+  // A misconfigured ADMIN_TOTP_SECRET (spaces, hyphens, or otp-auth padding
+  // pasted from a QR export) contains non-base32 characters, so base32Decode
+  // throws. Without this guard that exception propagates out of the verify-otp
+  // route as a 500 on EVERY login attempt — locking the operator out of the
+  // emergency panel with a symptom indistinguishable from a server crash. Fail
+  // closed to a clean "invalid code", and log the real cause so it's diagnosable
+  // (mirrors how getAdminPasswordHash refuses a malformed ADMIN_PASSWORD).
+  let secret: Buffer;
+  try {
+    secret = base32Decode(base32Secret);
+  } catch (err) {
+    console.error(
+      '[totp] ADMIN_TOTP_SECRET is not valid base32 — TOTP verification cannot run. ' +
+      'It must contain only A-Z and 2-7 (no spaces, hyphens or padding). ' +
+      (err instanceof Error ? err.message : String(err))
+    );
+    return false;
+  }
   if (secret.length === 0) return false;
 
   const counter = Math.floor(Date.now() / 1000 / STEP_SECONDS);

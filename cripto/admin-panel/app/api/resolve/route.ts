@@ -50,9 +50,16 @@ const ACTIONS = new Set(['propose', 'approve', 'execute', 'dispute', 'finalize']
 //   dispute:  { action: 'dispute', marketPubkey, confirmation }
 //   finalize: { action: 'finalize', marketPubkey }
 export async function POST(req: NextRequest) {
+  // Auth failures must be 401 (so the panel re-authenticates), not folded into
+  // the catch-all 400 below that reports every operation error.
   try {
     await requireAdminSession();
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unauthorized';
+    return NextResponse.json({ error: message }, { status: 401 });
+  }
 
+  try {
     // Which deployment (i.e. which of the two multisig admins) took the action.
     // Recorded on every audit line so the trail attributes each step to a signer
     // rather than to an anonymous "the admin panel".
@@ -162,6 +169,11 @@ export async function POST(req: NextRequest) {
 export async function GET() {
   try {
     await requireAdminSession();
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unauthorized';
+    return NextResponse.json({ error: message }, { status: 401 });
+  }
+  try {
     const proposals = await fetchOpenProposals();
     // Which signer this deployment is. Each admin runs their own panel with their
     // own key, so the UI must show whose panel this is — otherwise an operator

@@ -551,7 +551,13 @@ export async function proposeResolveMarketAdmin(marketPubkey: string, result: Ou
   const multisig = multisigPda(config, programId);
 
   const msInfo = await connection.getAccountInfo(multisig);
-  if (!msInfo) throw new Error('Multisig account not found. Run init_multisig first.');
+  if (!msInfo) {
+    // Wipe before this early throw too (AP-14): the keypair was loaded above and
+    // the try/finally that normally wipes it is only entered further down, so
+    // this validation path would otherwise leave the secret key in memory.
+    try { wipeKeypair(proposer); } catch { /* best-effort memory wipe */ }
+    throw new Error('Multisig account not found. Run init_multisig first.');
+  }
   const decodedMs = decodeMultisig(multisig, msInfo.data);
   const proposal = proposalPda(multisig, BigInt(decodedMs.proposalSeq), programId);
 
@@ -603,6 +609,9 @@ export async function approveProposal(proposalPubkey: string) {
   const msInfo = await fetchMultisig();
   const signerPubkey = signerKeypair.publicKey.toBase58();
   if (!msInfo.signers.includes(signerPubkey)) {
+    // AP-14: wipe on this early validation throw too (the try/finally below is
+    // not reached), or the secret key stays resident in memory.
+    try { wipeKeypair(signerKeypair); } catch { /* best-effort memory wipe */ }
     throw new Error('This admin key is not a multisig signer');
   }
 
@@ -667,7 +676,11 @@ export async function executeResolveMarketAdmin(proposalPubkey: string, marketPu
   const proposal = new PublicKey(proposalPubkey);
 
   const configInfo = await connection.getAccountInfo(config);
-  if (!configInfo) throw new Error('Protocol config account not found');
+  if (!configInfo) {
+    // AP-14: wipe before this early throw (the try/finally below is not reached).
+    try { wipeKeypair(payer); } catch { /* best-effort memory wipe */ }
+    throw new Error('Protocol config account not found');
+  }
   const decodedConfig = decodeConfig(configInfo.data);
 
   const ix = new TransactionInstruction({
@@ -747,7 +760,11 @@ export async function finalizeResolution(marketPubkey: string) {
   const config = configPda(programId);
 
   const configInfo = await connection.getAccountInfo(config);
-  if (!configInfo) throw new Error('Protocol config account not found');
+  if (!configInfo) {
+    // AP-14: wipe before this early throw (the try/finally below is not reached).
+    try { wipeKeypair(payer); } catch { /* best-effort memory wipe */ }
+    throw new Error('Protocol config account not found');
+  }
   const decodedConfig = decodeConfig(configInfo.data);
 
   const ix = new TransactionInstruction({
