@@ -22,9 +22,8 @@ export default function LoginPage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Login failed');
-      if (data.devOtp) {
-        window.alert(`Dev OTP: ${data.devOtp}`);
-      }
+      // Password accepted → the second factor is a TOTP code from the operator's
+      // authenticator app (there is nothing to deliver, so no devOtp anymore).
       setStep('otp');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Login failed');
@@ -59,7 +58,7 @@ export default function LoginPage() {
         <div className="card" style={{ padding: 28 }}>
           <h1 style={{ margin: 0, fontSize: 24 }}>Lynx Emergency Admin</h1>
           <p className="muted" style={{ marginTop: 8 }}>
-            Manual resolution is locked behind password, 2FA (TOTP or Telegram), and on-chain timeout checks.
+            Manual resolution is locked behind password, TOTP 2FA, and on-chain timeout checks.
           </p>
 
           {step === 'password' ? (
@@ -85,12 +84,12 @@ export default function LoginPage() {
             <form onSubmit={verifyOtp} style={{ display: 'grid', gap: 14, marginTop: 24 }}>
               <div className="card" style={{ padding: 14, background: '#172554' }}>
                 <p style={{ margin: 0, color: '#bfdbfe', fontSize: 13 }}>
-                  Enter your 2FA code from your authenticator app (TOTP), or use the Telegram OTP that was sent.
+                  Enter the current 6-digit code from your authenticator app (TOTP).
                 </p>
               </div>
               <label>
                 <span className="muted" style={{ display: 'block', fontSize: 13, marginBottom: 6 }}>
-                  2FA code (TOTP or Telegram OTP)
+                  2FA code (TOTP)
                 </span>
                 <input
                   inputMode="numeric"

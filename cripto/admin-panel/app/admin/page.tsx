@@ -8,6 +8,7 @@ type Market = {
   id: string;
   title: string;
   oracleAuthority: string;
+  currency: 'SOL' | 'LYNX';
   status: string;
   oracleDeadline: number;
   poolTotal: string;
@@ -41,12 +42,22 @@ type Proposal = {
 
 type Outcome = 'Yes' | 'No' | 'Draw';
 
-function lamportsToSol(value: string): string {
-  const lamports = BigInt(value);
-  const sol = lamports / 10_000_000_000n;
-  const remainder = lamports % 10_000_000_000n;
-  const decimals = remainder.toString().padStart(9, '0').slice(0, 4);
-  return `${sol}.${decimals}`;
+// Base units per whole token. SOL is 1e9 lamports; LYNX is 1e6 micro-LYNX
+// (mint decimals = 6). Was hardcoded to 10_000_000_000n (1e10), which displayed
+// every pool at 1/10th of its real size AND labelled LYNX markets as SOL — an
+// admin resolving a market saw the wrong amount in the wrong unit.
+const BASE_UNITS: Record<'SOL' | 'LYNX', bigint> = {
+  SOL: 1_000_000_000n,
+  LYNX: 1_000_000n,
+};
+function formatAmount(value: string, currency: 'SOL' | 'LYNX'): string {
+  const base = BASE_UNITS[currency];
+  const raw = BigInt(value);
+  const whole = raw / base;
+  const fracDigits = base.toString().length - 1; // 9 for SOL, 6 for LYNX
+  const remainder = raw % base;
+  const decimals = remainder.toString().padStart(fracDigits, '0').slice(0, 4);
+  return `${whole}.${decimals} ${currency}`;
 }
 
 export default function AdminPage() {
@@ -430,9 +441,9 @@ function MarketRow({ market, ready, children }: { market: Market; ready: boolean
         Market #{market.id} — {market.pubkey}
       </p>
       <div className="card" style={{ padding: 12, background: '#18181b', marginTop: 12 }}>
-        <Metric label="Pool" value={`${lamportsToSol(market.poolTotal)} SOL`} />
-        <Metric label="YES" value={`${lamportsToSol(market.yesTotal)} SOL`} />
-        <Metric label="NO" value={`${lamportsToSol(market.noTotal)} SOL`} />
+        <Metric label="Pool" value={formatAmount(market.poolTotal, market.currency)} />
+        <Metric label="YES" value={formatAmount(market.yesTotal, market.currency)} />
+        <Metric label="NO" value={formatAmount(market.noTotal, market.currency)} />
       </div>
       {!ready && (
         <p className="danger" style={{ margin: '10px 0 0', fontSize: 13 }}>

@@ -60,6 +60,7 @@ export type AdminMarket = {
   id: string;
   title: string;
   oracleAuthority: string;
+  currency: 'SOL' | 'LYNX';
   status: MarketStatus;
   isTernary: boolean;
   cutoffTs: number;
@@ -294,7 +295,7 @@ export function decodeMarket(pubkey: PublicKey, data: Buffer): AdminMarket {
   reader.pubkey(); // vault
   const oracleAuthority = reader.pubkey();
   const title = reader.string();
-  reader.u8(); // currency
+  const currency = reader.u8() === 1 ? 'LYNX' : 'SOL'; // Currency enum: 0=SOL, 1=LYNX
   const status = statusName(reader.u8());
   const isTernary = reader.u8() === 1;
   const cutoffTs = Number(reader.i64());
@@ -321,6 +322,7 @@ export function decodeMarket(pubkey: PublicKey, data: Buffer): AdminMarket {
     id: id.toString(),
     title,
     oracleAuthority: oracleAuthority.toBase58(),
+    currency,
     status,
     isTernary,
     cutoffTs,
@@ -421,6 +423,7 @@ function mockMarkets(): AdminMarket[] {
       id: '1001',
       title: '[MOCK] Madrid - Empate - Barcelona',
       oracleAuthority: 'MockOracleAuthority111111111111111111111',
+      currency: 'SOL',
       status: 'CutOff',
       isTernary: true,
       cutoffTs: now - 7200,
@@ -439,6 +442,7 @@ function mockMarkets(): AdminMarket[] {
       id: '1002',
       title: '[MOCK] BTC closes above 100k',
       oracleAuthority: 'MockOracleAuthority222222222222222222222',
+      currency: 'SOL',
       status: 'CutOff',
       isTernary: false,
       cutoffTs: now - 5400,
