@@ -24,6 +24,7 @@ ARG VITE_TREASURY_WALLET
 ARG VITE_PROGRAM_ID
 ARG VITE_LYNX_MINT
 ARG VITE_SENTRY_DSN
+ARG VITE_SENTRY_TRACES_SAMPLE_RATE
 
 # Create .env from build args so Vite can pick them up
 RUN echo "VITE_API_URL=${VITE_API_URL:-}" > .env && \
@@ -34,7 +35,8 @@ RUN echo "VITE_API_URL=${VITE_API_URL:-}" > .env && \
     echo "VITE_TREASURY_WALLET=${VITE_TREASURY_WALLET:-}" >> .env && \
     echo "VITE_PROGRAM_ID=${VITE_PROGRAM_ID:-}" >> .env && \
     echo "VITE_LYNX_MINT=${VITE_LYNX_MINT:-}" >> .env && \
-    echo "VITE_SENTRY_DSN=${VITE_SENTRY_DSN:-}" >> .env
+    echo "VITE_SENTRY_DSN=${VITE_SENTRY_DSN:-}" >> .env && \
+    echo "VITE_SENTRY_TRACES_SAMPLE_RATE=${VITE_SENTRY_TRACES_SAMPLE_RATE:-}" >> .env
 
 RUN npm run build
 

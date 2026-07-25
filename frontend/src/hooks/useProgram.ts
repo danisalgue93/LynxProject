@@ -2,7 +2,7 @@ import { getErrorMessage } from '@/src/lib/errors';
 import { useState, useCallback, useRef } from 'react';
 import { Market, Duel, Proposal, Portfolio, Position, DaoStats } from '../types';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, type Connection } from '@solana/web3.js';
 import { apiFetch } from '../lib/api';
 import { getManagedWalletAddress, useManagedAuthSession } from '../lib/auth';
 import { useSolanaTransaction } from './useSolanaTransaction';
@@ -55,6 +55,22 @@ function toOnChainOutcome(position: string): OnChainOutcome {
   if (position === 'NO' || position === 'B') return 'No';
   if (position === 'DRAW') return 'Draw';
   throw new Error(`Posicion "${position}" no soportada on-chain.`);
+}
+
+// Poll until a signature reaches 'finalized' (rooted, reorg-safe). The backend
+// credits deposits only against a finalized tx, so the client waits for that
+// state before registering rather than letting the POST fail and retry. Bounded
+// so a stuck/dropped tx surfaces an error instead of hanging forever.
+async function waitForFinalized(connection: Connection, signature: string, timeoutMs = 90_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { value } = await connection.getSignatureStatuses([signature]);
+    const status = value[0];
+    if (status?.err) throw new Error('On-chain transaction failed before finalization.');
+    if (status?.confirmationStatus === 'finalized') return;
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+  throw new Error('Timed out waiting for the deposit transaction to finalize. It may still finalize — check your balance shortly.');
 }
 
 // Shape returned by GET /api/onchain/dao-proposals (see backend chain.ts
@@ -737,6 +753,13 @@ export function useProgram() {
       if (!signature && publicKey) {
         signature = await sendSolTransfer(amount);
       }
+      // The backend credits the deposit only against a FINALIZED tx (guards against
+      // a reorg reverting a deposit we already credited). sendSolTransfer confirms at
+      // 'confirmed', so wait for finalization here before registering, otherwise the
+      // POST would fail with "not yet finalized" and force a manual retry.
+      if (signature) {
+        await waitForFinalized(connection, signature);
+      }
       const result = await apiFetch<{ portfolio: Portfolio }>('/api/ledger/deposit', {
         method: 'POST',
         body: JSON.stringify({
@@ -751,7 +774,7 @@ export function useProgram() {
     } finally {
       endOp(opId);
     }
-  }, [ensureApproved, publicKey, sendSolTransfer, startOp, endOp]);
+  }, [ensureApproved, publicKey, connection, sendSolTransfer, startOp, endOp]);
 
   const withdrawSol = useCallback(async (amount: number) => {
     const opId = `withdrawSol-${Date.now()}`;

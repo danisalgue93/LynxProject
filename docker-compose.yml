@@ -179,6 +179,10 @@ services:
         VITE_PROGRAM_ID:              ${PROGRAM_ID:-}
         VITE_LYNX_MINT:               ${LYNX_MINT:-}
         VITE_SENTRY_DSN:              ${VITE_SENTRY_DSN:-}
+        # Transaction sampling rate for Sentry tracing. Defaults to 1.0 (100%) in
+        # code; set e.g. 0.1 in production once you have baseline traffic to bound
+        # Sentry quota/overhead.
+        VITE_SENTRY_TRACES_SAMPLE_RATE: ${VITE_SENTRY_TRACES_SAMPLE_RATE:-}
     restart: unless-stopped
     # AP-03: Container security hardening
     user: "lynx"

@@ -283,3 +283,4 @@ jobs:
             VITE_PROGRAM_ID=${{ vars.VITE_PROGRAM_ID }}
             VITE_LYNX_MINT=${{ vars.VITE_LYNX_MINT }}
             VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
+            VITE_SENTRY_TRACES_SAMPLE_RATE=${{ vars.VITE_SENTRY_TRACES_SAMPLE_RATE || '0.1' }}

@@ -1051,8 +1051,16 @@ async function verifyOnChainSolDeposit(params: {
 
   let tx;
   try {
+    // Credit spendable off-chain balance only against a FINALIZED transaction, not
+    // merely 'confirmed'. A deposit credit is an irreversible off-chain action
+    // triggered by an on-chain event; at 'confirmed' (optimistic, ~1 vote) a deep
+    // reorg — rare on Solana but possible — could revert the deposit tx after we
+    // already credited it, leaving the DB richer than the chain. 'finalized'
+    // (rooted, 31+ confirmations) is not reorg-reversible, closing that window at
+    // the cost of a few extra seconds before the balance shows up. The user simply
+    // retries once the tx is rooted (the pre-registration is removed on failure).
     tx = await getSolanaConnection().getTransaction(signature, {
-      commitment: 'confirmed',
+      commitment: 'finalized',
       maxSupportedTransactionVersion: 0
     });
   } catch (err: any) {
@@ -1060,7 +1068,7 @@ async function verifyOnChainSolDeposit(params: {
   }
 
   if (!tx) {
-    return { ok: false, error: 'Transaction not found or not yet confirmed on-chain' };
+    return { ok: false, error: 'Transaction not found or not yet finalized on-chain — please retry in a few seconds' };
   }
   if (tx.meta?.err) {
     return { ok: false, error: 'On-chain transaction failed' };
