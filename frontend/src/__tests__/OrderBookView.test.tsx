@@ -97,10 +97,15 @@ describe('OrderBookView', () => {
     expect(screen.getByText('Sell')).toBeInTheDocument();
   });
 
-  it('shows Limit and Market order type buttons', () => {
+  // The LYNX/SOL spot book is limit-only: the on-chain program has no
+  // market-order instruction (place_spot_order_* always rests a priced order).
+  // A "Market" tab used to hide the price field and then hard-fail in
+  // executeLynxOrder ("enter a slippage price" with no field to enter it), so it
+  // must not be offered on this book. Guards against reintroducing that dead-end.
+  it('does not offer a Market order type on the LYNX/SOL book', () => {
     render(<OrderBookView />);
-    expect(screen.getByText('Limit')).toBeInTheDocument();
-    expect(screen.getByText('Market')).toBeInTheDocument();
+    expect(screen.getByLabelText('Price (SOL)')).toBeInTheDocument();
+    expect(screen.queryByText('Market')).not.toBeInTheDocument();
   });
 
   // These fields carry no placeholder — the visible "Price (SOL)" / "Qty (LYNX)"
@@ -111,12 +116,6 @@ describe('OrderBookView', () => {
     render(<OrderBookView />);
     expect(screen.getByLabelText('Price (SOL)')).toBeInTheDocument();
     expect(screen.getByLabelText('Amount (LYNX)')).toBeInTheDocument();
-  });
-
-  it('hides price input when Market order type is selected', () => {
-    render(<OrderBookView />);
-    fireEvent.click(screen.getByText('Market'));
-    expect(screen.queryByLabelText('Price (SOL)')).not.toBeInTheDocument();
   });
 
   it('switches to Sell side when Sell button is clicked', () => {

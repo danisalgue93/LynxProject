@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "@/src/lib/utils";
-import { useProgram } from "@/src/hooks/useProgram";
+import { useProgram, type PositionEntry } from "@/src/hooks/useProgram";
 import { useFocusTrap } from "@/src/hooks/useFocusTrap";
 import { useBlockchainTransaction } from "@/src/hooks/useBlockchainTransaction";
 import { useToast } from "@/src/context/ToastContext";
@@ -172,7 +172,7 @@ export function MarketDetail({
   const [selectedSide, setSelectedSide] = useState<Position>(Position.YES);
   const [isPending, setIsPending] = useState(false);
   const [claimablePosId, setClaimablePosId] = useState<string | null>(null);
-  const [claimablePosition, setClaimablePosition] = useState<any | null>(null);
+  const [claimablePosition, setClaimablePosition] = useState<PositionEntry | null>(null);
   const [isClaiming, setIsClaiming] = useState(false);
   const [claimResult, setClaimResult] = useState<{
     payout: number;

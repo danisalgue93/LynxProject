@@ -49,11 +49,22 @@ export const PRICE_SCALE = 1_000_000_000n;
 
 // Convierte un precio "SOL por LYNX" (humano) al price_scaled (lamports por
 // micro-LYNX * PRICE_SCALE) que espera el programa para el libro spot.
+//
+// price_scaled = lamports_por_micro_LYNX * PRICE_SCALE, y
+// lamports_por_micro_LYNX = (solPerLynx * 1e9 lamports/SOL) / 1e6 micro-LYNX/LYNX.
+// Es decir price_scaled = solPerLynx * 1e12.
+//
+// BUG (corregido): la version previa dividia ADEMAS por 1_000_000_000n, dejando
+// el resultado 1e9 veces demasiado pequeno (0.005 SOL/LYNX -> 5 en vez de 5e9).
+// Con eso, spot_sol_amount() on-chain calculaba un coste 1e9 veces menor: las
+// ordenes de compra revertian por caer bajo MIN_ORDER_LAMPORTS, y una venta que
+// llegara a casar habria pagado al vendedor 1e9 veces menos SOL por su LYNX. La
+// inversa priceScaledToSolPerLynx ya era correcta, asi que el round-trip estaba
+// roto — ahora vuelve a cerrar (ver lynxProgram.spot.test.ts).
 export function solPerLynxToPriceScaled(solPerLynx: number): bigint {
-  const decimals = 10n ** BigInt(LYNX_DECIMALS);
-  const numerator = BigInt(Math.round(solPerLynx * 1e9));
-  const scaled = (numerator * PRICE_SCALE) / (1_000_000_000n * decimals);
-  return scaled;
+  const decimals = 10n ** BigInt(LYNX_DECIMALS); // micro-LYNX por LYNX
+  const lamportsPerLynx = BigInt(Math.round(solPerLynx * 1e9));
+  return (lamportsPerLynx * PRICE_SCALE) / decimals;
 }
 
 export function priceScaledToSolPerLynx(priceScaled: bigint): number {
@@ -630,11 +641,13 @@ export async function buildCancelLimitOrderLynxTx(params: {
   const { connection, signer, market, order, orderOwner } = params;
   const programId = getProgramId();
   const { lynxMint } = await getProtocolConfigInfo(connection);
+  const config = configPda(programId);
   const escrow = predictionOrderEscrowLynxPda(order, programId);
   const ownerLynxAccount = await getAssociatedTokenAddress(lynxMint, orderOwner);
   const ix = new TransactionInstruction({
     programId,
     keys: [
+      { pubkey: config, isSigner: false, isWritable: false },
       { pubkey: market, isSigner: false, isWritable: false },
       { pubkey: order, isSigner: false, isWritable: true },
       { pubkey: escrow, isSigner: false, isWritable: true },
@@ -834,14 +847,19 @@ export async function buildCancelSpotOrderSellTx(params: {
 
 // --- Staking LYNX on-chain -----------------------------------------------------
 //
-// NOT wired into the UI yet. Staking still runs through the off-chain engine
-// (backend/src/state.ts); these builders are the client half of migrating it
-// on-chain (phase 5, see LAUNCH_DECISIONS.md). Account order and data layout are
-// cross-checked against StakeLynx/UnstakeLynx/ClaimStakingRewards in lib.rs and
-// unit-tested in lynxProgram.staking.test.ts. They still need end-to-end
-// verification against a deployed program on devnet before the UI switches to
-// them and the off-chain path is retired — a valid byte layout is not proof the
-// program accepts the transaction.
+// WIRED INTO THE UI: useProgram.ts (stakeLynx/unstakeLynx/claimRewards) builds
+// and signs these against the user's real LYNX via signAndSendOnChain, and the
+// staking UI (StakeModal, GovernanceView, PortfolioView) calls them — the staked
+// balance / pending rewards are read from the on-chain StakePosition, not an
+// off-chain backend balance. Account order and data layout are cross-checked
+// against StakeLynx/UnstakeLynx/ClaimStakingRewards in lib.rs and unit-tested in
+// lynxProgram.staking.test.ts.
+//
+// STILL PENDING (see LAUNCH_DECISIONS.md phase 5): end-to-end verification
+// against a program deployed on devnet, signing with a real wallet. A valid byte
+// layout and green unit tests are not proof the deployed program accepts the
+// transaction, so treat this path as verified-in-code but not yet verified
+// end-to-end.
 
 export async function buildStakeLynxTx(params: {
   connection: Connection;
@@ -929,15 +947,21 @@ export function buildClaimStakingRewardsTx(params: {
 
 // --- Duelos on-chain -----------------------------------------------------------
 //
-// NOT wired into the UI yet. Duels still run through the off-chain engine
-// (backend/src/state.ts); these builders are the client half of migrating them
-// on-chain (phase 5, see LAUNCH_DECISIONS.md). Account order and data layout are
-// cross-checked against CreateDuel/AcceptDuel/CancelDuel in lib.rs and
-// unit-tested in lynxProgram.duels.test.ts. Settlement (resolve_duel_sol /
-// resolve_protocol_duel) is intentionally absent: those instructions take no
-// signer — they are permissionless cranks and belong in the keeper
-// (backend/src/chain.ts), not a user-signed client transaction. Like staking,
-// these still need end-to-end verification on devnet before the UI adopts them.
+// WIRED INTO THE UI: useProgram.ts (createDuel/acceptDuel/cancelDuel) builds and
+// signs these against the user's real SOL via signAndSendOnChain whenever there
+// is an on-chain parent market and a connected wallet, and the duel UI
+// (CreateDuelModal, DuelCard) calls them; the legacy off-chain engine
+// (backend/src/state.ts) is only a fallback for markets without an on-chain
+// backing. Account order and data layout are cross-checked against
+// CreateDuel/AcceptDuel/CancelDuel in lib.rs and unit-tested in
+// lynxProgram.duels.test.ts. Settlement (resolve_duel_sol / resolve_protocol_duel)
+// is intentionally absent: those instructions take no signer — they are
+// permissionless cranks and belong in the keeper (backend/src/chain.ts), not a
+// user-signed client transaction.
+//
+// STILL PENDING (see LAUNCH_DECISIONS.md phase 5): like staking, end-to-end
+// verification on devnet with a real deployed program and wallet — verified in
+// code, not yet verified end-to-end.
 
 export async function buildCreateDuelTx(params: {
   creator: PublicKey;

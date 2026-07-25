@@ -245,8 +245,10 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
   // 'lynx-sol' is the special native token market
   const [selectedMarketId, setSelectedMarketId] = useState<string>('lynx-sol');
   
-  // LYNX/SOL specific state
-  const [lynxTradeType, setLynxTradeType] = useState<'limit' | 'market'>('limit');
+  // LYNX/SOL specific state. The spot book is limit-only: the on-chain program
+  // has no market-order instruction (place_spot_order_* always rests a priced
+  // order), so this is a constant rather than a user-toggleable mode.
+  const lynxTradeType = 'limit' as const;
   const [lynxSide, setLynxSide] = useState<'buy' | 'sell'>('buy');
   const [lynxPrice, setLynxPrice] = useState('0.005');
   const [lynxAmount, setLynxAmount] = useState('1000');
@@ -788,26 +790,34 @@ export function OrderBookView({ readOnly = false, onAuthRequired }: { readOnly?:
             <div className="glass-card rounded border border-[#1F1F23] bg-[#0D0D0E] p-2 lg:p-6 lg:sticky lg:top-8 lg:h-[calc(100vh-100px)] flex flex-col">
               <h3 className="hidden lg:block text-[11px] font-bold text-[#71717A] uppercase tracking-widest mb-6">{t('orderbook.execution', 'Execution')}</h3>
               
+              {/* The on-chain spot orderbook (place_spot_order_buy/sell) only
+                  creates resting limit orders with a required price — there is no
+                  market-order instruction. Offering a "Market" tab here hid the
+                  price field and then hard-failed in executeLynxOrder ("enter a
+                  slippage price" with no field to enter it). So the LYNX/SOL book
+                  is limit-only and the toggle is shown for prediction markets. */}
+              {!isLynxSol && (
               <div className="flex gap-1 bg-[#18181B] p-0.5 rounded mb-3 lg:mb-8 border border-[#27272A] shrink-0">
-                 <button 
-                  onClick={() => isLynxSol ? setLynxTradeType('limit') : setPredTradeType('limit')}
+                 <button
+                  onClick={() => setPredTradeType('limit')}
                   className={cn(
                     "flex-1 py-1 lg:py-2 text-[8px] lg:text-[10px] font-bold rounded uppercase tracking-widest transition-all",
-                    (isLynxSol ? lynxTradeType : predTradeType) === 'limit' ? "bg-[#3F3F46] text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]" : "text-[#52525B] hover:text-[#A1A1AA]"
+                    predTradeType === 'limit' ? "bg-[#3F3F46] text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]" : "text-[#52525B] hover:text-[#A1A1AA]"
                   )}
                  >
                    Limit
                  </button>
-                 <button 
-                  onClick={() => isLynxSol ? setLynxTradeType('market') : setPredTradeType('swap')}
+                 <button
+                  onClick={() => setPredTradeType('swap')}
                   className={cn(
                     "flex-1 py-1 lg:py-2 text-[8px] lg:text-[10px] font-bold rounded uppercase tracking-widest transition-all",
-                    (isLynxSol ? lynxTradeType : predTradeType) === (isLynxSol ? 'market' : 'swap') ? "bg-[#3F3F46] text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]" : "text-[#52525B] hover:text-[#A1A1AA]"
+                    predTradeType === 'swap' ? "bg-[#3F3F46] text-white shadow-[0_0_10px_rgba(255,255,255,0.1)]" : "text-[#52525B] hover:text-[#A1A1AA]"
                   )}
                  >
-                   {isLynxSol ? t('orderbook.market', 'Market') : t('orderbook.swap', 'Swap')}
+                   {t('orderbook.swap', 'Swap')}
                  </button>
               </div>
+              )}
 
               <div className="space-y-3 lg:space-y-6 flex-1 flex flex-col justify-between lg:block">
                  <div className="space-y-3 lg:space-y-4">

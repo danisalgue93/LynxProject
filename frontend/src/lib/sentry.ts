@@ -14,6 +14,16 @@ import * as Sentry from '@sentry/react';
 
 const dsn = import.meta.env.VITE_SENTRY_DSN;
 
+// Transaction sampling rate. Defaults to 100% so nothing is missed before there
+// is baseline traffic, but is overridable without a code change: set
+// VITE_SENTRY_TRACES_SAMPLE_RATE (e.g. 0.1 for 10%) once you have baseline data,
+// to bound Sentry quota/overhead in production. Falls back to 1.0 on an unset or
+// malformed value, and clamps to [0, 1].
+const parsedTracesRate = Number(import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE);
+const tracesSampleRate = Number.isFinite(parsedTracesRate)
+  ? Math.min(1, Math.max(0, parsedTracesRate))
+  : 1.0;
+
 // Strip sensitive query params (wallet address, email-link tokens) from any URL
 // string. Shared by beforeBreadcrumb AND beforeSend so the scrubbing is not only
 // applied to navigation breadcrumbs but also to the event's own request.url /
@@ -38,9 +48,10 @@ if (dsn) {
     environment: import.meta.env.MODE,           // 'production' | 'development'
     release: import.meta.env.VITE_APP_VERSION,   // optional: set in CI with git SHA
 
-    // Capture 100% of transactions in production for now.
-    // Lower this to e.g. 0.1 (10%) once you have baseline traffic data.
-    tracesSampleRate: 1.0,
+    // Defaults to 100% but is overridable via VITE_SENTRY_TRACES_SAMPLE_RATE
+    // (e.g. 0.1 for 10%) once you have baseline traffic data — no code change
+    // needed to bound Sentry quota/overhead in production.
+    tracesSampleRate,
 
     // Replay captures 10% of sessions, 100% when an error occurs.
     replaysSessionSampleRate: 0.1,

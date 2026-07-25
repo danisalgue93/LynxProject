@@ -101,6 +101,19 @@ export function Dashboard() {
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
   const closeSidebar = () => setIsSidebarOpen(false);
 
+  // Cross-view navigation: e.g. the order book's "Deposit SOL" quick-action
+  // (shown on an insufficient-balance error) emits navigate:tab to jump to the
+  // portfolio. Without this listener that button was a no-op on the authenticated
+  // Dashboard (it only worked on the public page, which did wire it).
+  useEffect(() => {
+    return eventBus.on('navigate:tab', (detail) => {
+      if (typeof detail?.tab === 'string') {
+        setActiveTab(detail.tab);
+        setIsSidebarOpen(false);
+      }
+    });
+  }, []);
+
   const handleLogout = () => {
     logout();
     navigate('/');

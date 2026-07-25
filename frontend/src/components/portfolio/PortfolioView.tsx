@@ -525,7 +525,6 @@ export function PortfolioView() {
                   <TrendingUp className="w-4 h-4 text-[#52525B]" />
                   <h3 className="text-[10px] md:text-[11px] font-bold text-[#71717A] uppercase tracking-widest">{t('portfolio.openPositions', 'Open Trading Positions')}</h3>
                 </div>
-                <button className="text-[9px] md:text-[10px] font-bold text-[#00FFD1] hover:underline uppercase tracking-widest">{t('portfolio.history', 'History')}</button>
               </div>
               
               <div className="space-y-2">

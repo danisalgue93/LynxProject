@@ -12,7 +12,10 @@ const DEFAULT_SOLANA_CLUSTER = (import.meta.env?.VITE_SOLANA_NETWORK as string) 
  * @returns URL del explorer
  */
 export function getTxExplorerUrl(txHash: string, cluster: string = DEFAULT_SOLANA_CLUSTER): string {
-  return `${EXPLORER_BASE}/tx/${txHash}?cluster=${cluster}`;
+  // Encode both segments even though these are almost always base58
+  // signatures/addresses from web3.js or the indexer: defence in depth so a
+  // stray character can never break out of the path or the query string.
+  return `${EXPLORER_BASE}/tx/${encodeURIComponent(txHash)}?cluster=${encodeURIComponent(cluster)}`;
 }
 
 /**
@@ -22,7 +25,7 @@ export function getTxExplorerUrl(txHash: string, cluster: string = DEFAULT_SOLAN
  * @returns URL del explorer
  */
 export function getAddressExplorerUrl(address: string, cluster: string = DEFAULT_SOLANA_CLUSTER): string {
-  return `${EXPLORER_BASE}/address/${address}?cluster=${cluster}`;
+  return `${EXPLORER_BASE}/address/${encodeURIComponent(address)}?cluster=${encodeURIComponent(cluster)}`;
 }
 
 /**
@@ -32,5 +35,5 @@ export function getAddressExplorerUrl(address: string, cluster: string = DEFAULT
  * @returns URL del explorer
  */
 export function getTokenExplorerUrl(mint: string, cluster: string = DEFAULT_SOLANA_CLUSTER): string {
-  return `${EXPLORER_BASE}/address/${mint}?cluster=${cluster}`;
+  return `${EXPLORER_BASE}/address/${encodeURIComponent(mint)}?cluster=${encodeURIComponent(cluster)}`;
 }
