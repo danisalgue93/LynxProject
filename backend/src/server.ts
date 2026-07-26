@@ -2351,8 +2351,8 @@ app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
   // every subsequent save fails too. That is a permanent persistence outage,
   // trivially triggerable on purpose. Only EXTERNAL_WALLET reaches this line
   // (INTERNAL/CARD is rejected with 410 above) and it always carries a signature
-  // that was just verified on-chain and de-duplicated via hasTransaction(), so
-  // derive the reference from it instead.
+  // that was just verified on-chain and de-duplicated via the moneySignatures
+  // replay guard, so derive the reference from it instead.
   const result = store.deposit({
     wallet,
     currency: body.currency,
