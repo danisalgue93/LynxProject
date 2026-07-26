@@ -86,6 +86,14 @@ export class LynxState {
   notifications = new Map<string, Notification[]>();
   transactions = new Map<string, { signature: string; wallet?: string; intent?: any; timestamp: number }>();
   transactionsByWallet = new Map<string, string[]>(); // wallet → transaction IDs (BE-H-01)
+  // Dedicated replay guard for on-chain MONEY signatures (deposits verified via
+  // verifyOnChainSolDeposit). This is deliberately SEPARATE from the `transactions`
+  // history Map: the client-facing POST /api/transactions writes into `transactions`
+  // for UI display, and if the deposit replay guard shared that namespace anyone
+  // could pre-register a victim's public deposit signature and permanently block
+  // their credit (audit H-1). Only the server-verified money flow writes here.
+  // Repopulated from persisted money-intent transactions on load (persistence.ts).
+  moneySignatures = new Set<string>();
   positionsByWallet = new Map<string, string[]>(); // wallet → position IDs (BE-M-06)
   tradesByWallet = new Map<string, string[]>(); // wallet → trade IDs (BE-M-06)
   ledger = new Map<string, LedgerEntry>();
@@ -1179,6 +1187,21 @@ export class LynxState {
 
   hasTransaction(signature: string) {
     return this.transactions.has(signature);
+  }
+
+  // Money-signature replay guard (deposits). Kept separate from the general
+  // transaction history so the unauthenticated-content POST /api/transactions
+  // route can never block a real deposit by pre-registering its signature (H-1).
+  hasMoneySignature(signature: string) {
+    return this.moneySignatures.has(signature);
+  }
+
+  markMoneySignature(signature: string) {
+    this.moneySignatures.add(signature);
+  }
+
+  unmarkMoneySignature(signature: string) {
+    this.moneySignatures.delete(signature);
   }
 
   getTransaction(signature: string) {

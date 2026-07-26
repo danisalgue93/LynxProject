@@ -36,6 +36,9 @@
     "tweetnacl": "^1.0.3",
     "zod": "^3.25.76"
   },
+  "overrides": {
+    "body-parser": "^1.20.6"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/bcryptjs": "^2.4.6",

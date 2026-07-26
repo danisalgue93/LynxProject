@@ -107,6 +107,12 @@ services:
     environment:
       NODE_ENV:             production
       PORT:                 4000
+      # This compose runs exactly ONE backend replica, which is mandatory: the
+      # business state lives in-process (see audit M-2/backend-H1). The backend
+      # refuses to boot in production without this explicit acknowledgement. Do
+      # NOT set replicas > 1 for this service without migrating state to a shared
+      # store first.
+      SINGLE_INSTANCE_ACK:  ${SINGLE_INSTANCE_ACK:-true}
       DATABASE_URL:         postgresql://${POSTGRES_USER:-lynx}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lynx_market}?schema=public&sslmode=require
       STORE_DRIVER:         prisma
       # No username: redis-server here uses --requirepass (no ACL user), so the

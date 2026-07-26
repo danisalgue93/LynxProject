@@ -804,8 +804,11 @@ describe('Lynx backend API', () => {
 
     await request(app)
       .post('/api/transactions')
+      // A base58, signature-shaped value: the route now validates the format
+      // (part of the H-1 hardening), so the old 'TEST_SIGNATURE' placeholder is
+      // correctly rejected.
+      .send({ signature: 'TxSignature' + 'a'.repeat(60), wallet: user.wallet })
       .set(auth(user.token))
-      .send({ signature: 'TEST_SIGNATURE', wallet: user.wallet })
       .expect(200);
 
     await request(app).post('/api/dev/reset').set(auth(adminToken)).expect(200);
@@ -815,6 +818,27 @@ describe('Lynx backend API', () => {
       .set(auth(user.token))
       .expect(200);
     expect(response.body).toHaveLength(0);
+  });
+
+  // Regression for audit H-1: POST /api/transactions must not let a user register
+  // a transaction under someone else's wallet (which previously allowed poisoning
+  // another user's history and spoofing a crypto:tx socket event to their room).
+  it('rejects registering a transaction under a wallet the caller does not own', async () => {
+    const attacker = await registerUser('tx-attacker');
+    const victim = await registerUser('tx-victim');
+
+    await request(app)
+      .post('/api/transactions')
+      .send({ signature: 'VictimSig' + 'b'.repeat(60), wallet: victim.wallet })
+      .set(auth(attacker.token))
+      .expect(403);
+
+    // The victim's transaction history stays empty — nothing was written for them.
+    const victimTxs = await request(app)
+      .get(`/api/transactions?wallet=${encodeURIComponent(victim.wallet)}`)
+      .set(auth(victim.token))
+      .expect(200);
+    expect(victimTxs.body).toHaveLength(0);
   });
 
   it('rejects repeated DAO votes from the same approved wallet', async () => {

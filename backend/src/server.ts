@@ -1644,17 +1644,33 @@ app.delete('/auth/unlink-wallet', (req: any, res) => {
 
 // ==================== API ENDPOINTS ====================
 
-app.get('/api/health', (_req, res) => {
-  const mem = process.memoryUsage();
-  res.json({
+app.get('/api/health', (req, res) => {
+  // Public payload: just enough for a load balancer / orchestrator liveness probe.
+  // Process memory, the on-chain indexer state, store driver and program id are
+  // reconnaissance-useful (memory pressure, recent restarts) and were previously
+  // exposed unauthenticated (audit B-2), so they are gated behind the admin API
+  // token header (x-admin-token). Without ADMIN_API_TOKEN configured, details are
+  // simply never served.
+  const base = {
     status: 'ok',
     service: 'lynx-backend',
     version: process.env.npm_package_version || '0.0.0',
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  };
+  const configuredToken = process.env.ADMIN_API_TOKEN;
+  const provided = req.header('x-admin-token');
+  const isAdminToken = Boolean(configuredToken) && typeof provided === 'string' && constantTimeEqual(provided, configuredToken!);
+  if (!isAdminToken) {
+    res.json(base);
+    return;
+  }
+  const mem = process.memoryUsage();
+  res.json({
+    ...base,
     store: persistence.driver,
     solanaCluster: process.env.SOLANA_CLUSTER || 'devnet',
     programId: process.env.PROGRAM_ID || null,
-    uptime: Math.floor(process.uptime()),
-    timestamp: new Date().toISOString(),
     memory: {
       heapUsedMB: Math.round(mem.heapUsed / 1_048_576),
       heapTotalMB: Math.round(mem.heapTotal / 1_048_576),
@@ -2287,13 +2303,17 @@ app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
       }
       // REPLAY / RACE-CONDITION FIX: Register the signature synchronously BEFORE
       // the async RPC verification. Without this, two concurrent requests with the
-      // same signature could both pass hasTransaction() before either records it.
-      // store.hasTransaction() is O(1) synchronous, so this is atomic within Node.
-      if (store.hasTransaction(body.signature!)) {
+      // same signature could both pass the guard before either records it.
+      // The guard is the dedicated moneySignatures set — NOT the shared
+      // transactions history — so POST /api/transactions cannot pre-poison it and
+      // block a legitimate deposit (audit H-1). hasMoneySignature() is O(1) sync,
+      // so this check+mark is atomic within Node.
+      if (store.hasMoneySignature(body.signature!)) {
         res.status(400).json({ error: 'This transaction signature has already been used' });
         return;
       }
       // Pre-register to block concurrent duplicates; removed on verification failure
+      store.markMoneySignature(body.signature!);
       store.addTransaction({ signature: body.signature!, wallet, intent: { type: 'DEPOSIT_PENDING', currency: body.currency, amount: body.amount, provider: body.provider } });
 
       const verification = await verifyOnChainSolDeposit({
@@ -2303,6 +2323,7 @@ app.post('/api/ledger/deposit', asyncRoute(async (req, res) => {
       });
       if (!verification.ok) {
         // Remove the pre-registration so the user can retry with a valid signature
+        store.unmarkMoneySignature(body.signature!);
         store.removeTransaction(body.signature!);
         res.status(400).json({ error: verification.error });
         return;
@@ -2830,27 +2851,49 @@ app.post('/api/notifications/read', asyncRoute(async (req, res) => {
   res.json(notifications);
 }));
 
-app.post('/api/transactions', asyncRoute(async (req, res) => {
+app.post('/api/transactions', tradingRateLimit, asyncRoute(async (req, res) => {
   if (!requireAuth(req, res)) return;
-  const intent = req.body || {};
-  try { if ((req as any).log) (req as any).log.info({ intent }, 'tx:intent'); } catch { logger.info({ requestId: (req as any).id, intent }, 'tx:intent'); }
-  if (intent.signature) {
-    const link = `https://explorer.solana.com/tx/${intent.signature}?cluster=${process.env.SOLANA_CLUSTER || 'devnet'}`;
-    try { if ((req as any).log) (req as any).log.info({ signature: intent.signature, link }, 'tx:signature'); } catch { logger.info({ requestId: (req as any).id, signature: intent.signature, link }, 'tx:signature'); }
-    // persist signature in store and emit socket event
-    try {
-      store.addTransaction({ signature: intent.signature, wallet: typeof intent.wallet === 'string' ? intent.wallet : undefined, intent });
-      emitToWallet(intent.wallet, 'crypto:tx', { signature: intent.signature, wallet: intent.wallet, link, timestamp: Date.now() });
-      await persist();
-    } catch (e) {
-      try { if ((req as any).log) (req as any).log.error({ err: e }, 'Failed to persist tx'); } catch { logger.error({ requestId: (req as any).id, err: e }, 'Failed to persist tx'); }
-    }
+  // This endpoint records a client-side transaction for the UI history/toast. It
+  // used to store whatever the client sent and emit a socket event to ANY wallet,
+  // with no schema or ownership check — so any authenticated user could:
+  //   - pre-register another user's public deposit signature and permanently block
+  //     their credit (the deposit replay guard shared this namespace),
+  //   - spoof a crypto:tx notification into a victim's socket room,
+  //   - stash an unbounded `intent` blob in memory.
+  // (audit H-1). Now: validate + bound the body, require the wallet to belong to
+  // the caller, and write only to the display history — never the money-signature
+  // replay guard, which only the server-verified deposit flow may touch.
+  const parsed = z.object({
+    signature: z.string().trim().regex(/^[1-9A-HJ-NP-Za-km-z]{32,120}$/, 'Invalid transaction signature'),
+    wallet: z.string(),
+    intent: z.object({
+      action: z.string().max(64).optional(),
+      amount: z.number().finite().optional(),
+      memo: z.string().max(500).optional(),
+    }).optional(),
+  }).parse(req.body);
+
+  const wallet = requireWalletBody(req, res, parsed.wallet);
+  if (!wallet) return;
+  if (!requireAuthMatchesWallet(req, res, wallet)) return;
+
+  const link = `https://explorer.solana.com/tx/${parsed.signature}?cluster=${process.env.SOLANA_CLUSTER || 'devnet'}`;
+  try {
+    store.addTransaction({
+      signature: parsed.signature,
+      wallet,
+      intent: { action: parsed.intent?.action, amount: parsed.intent?.amount, memo: parsed.intent?.memo },
+    });
+    emitToWallet(wallet, 'crypto:tx', { signature: parsed.signature, wallet, link, timestamp: Date.now() });
+    await persist();
+  } catch (e) {
+    logger.error({ requestId: (req as any).id, err: e }, 'Failed to persist tx');
   }
   res.json({
     success: true,
     mode: 'registered-intent',
     message: 'Transaction intent registered in the Lynx backend indexer.',
-    intent
+    signature: parsed.signature,
   });
 }));
 
@@ -3000,12 +3043,21 @@ async function start() {
   // service must therefore run as a SINGLE active replica for business state.
   // Read-only/health-check replicas are fine. Set SINGLE_INSTANCE_ACK=true once
   // the deployment guarantees this to silence the warning.
+  // Fail closed rather than merely warning (audit M-2): a warning is easy to miss
+  // in an orchestrator that auto-scales, and running 2+ active replicas silently
+  // reopens double-spend / cross-replica "credit request not found" races (M-1).
+  // Refuse to boot in production until the operator has explicitly acknowledged
+  // that this is deployed as a single active replica (SINGLE_INSTANCE_ACK=true) —
+  // the docker-compose deployment sets it, since it runs exactly one backend.
   if (process.env.NODE_ENV === 'production' && process.env.SINGLE_INSTANCE_ACK !== 'true') {
-    console.warn(JSON.stringify({
-      level: 'warn', module: 'startup', msg: 'single-instance-business-state',
-      detail: 'Business state is in-process memory; run exactly ONE active replica. ' +
-        'Set SINGLE_INSTANCE_ACK=true to acknowledge, or migrate state to a shared store before scaling out.',
-    }));
+    throw new Error(
+      'Refusing to start: business state (balances, orders, order book, seen ' +
+      'signatures, pending credit/resolution approvals) lives in this process\'s ' +
+      'memory, so exactly ONE active replica may serve it. Running more than one ' +
+      'reopens double-spend and cross-replica approval races. Set ' +
+      'SINGLE_INSTANCE_ACK=true to confirm this deployment runs a single active ' +
+      'replica, or migrate state.ts to a shared store before scaling out.'
+    );
   }
 
   await persistence.load(store);

@@ -597,6 +597,21 @@ export function createPersistence(): Persistence {
         }])
       );
 
+      // Rebuild the deposit replay guard (moneySignatures) from persisted
+      // money-intent transactions so a deposit cannot be replayed across a
+      // restart. Only server-verified money flows set intent.type (DEPOSIT /
+      // DEPOSIT_PENDING); the client-facing /api/transactions route stores an
+      // intent WITHOUT a `type`, so those are correctly excluded — the guard
+      // stays un-poisonable (audit H-1).
+      const moneyIntentTypes = new Set(['DEPOSIT', 'DEPOSIT_PENDING']);
+      store.moneySignatures = new Set<string>();
+      for (const t of store.transactions.values()) {
+        const type = (t.intent as { type?: string } | undefined)?.type;
+        if (t.signature && type && moneyIntentTypes.has(type)) {
+          store.moneySignatures.add(t.signature);
+        }
+      }
+
       store.ledger = new Map(ledgerEntries.map(r => [r.id, dbToLedger(r)]));
 
       // Rebuild in-memory indexes from loaded data (BE-M-06)
