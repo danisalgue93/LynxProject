@@ -25,6 +25,27 @@ input[type=number] {
   body {
     @apply bg-[#0A0A0B] text-[#E4E4E7] font-sans antialiased selection:bg-[#00FFD1] selection:text-black;
   }
+
+  /* Tailwind v4's Preflight no longer gives buttons `cursor: pointer` the way v3
+     did, so every enabled <button> was rendering with the default arrow cursor
+     (nav, header, modals, menus — everywhere). Restore the affordance globally:
+     pointer for interactive controls, not-allowed for disabled ones. These live
+     in the base layer, so any explicit `cursor-*` utility on a specific element
+     still overrides them. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  label[role="button"],
+  select:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  button[aria-disabled="true"],
+  [role="button"][aria-disabled="true"],
+  select:disabled {
+    cursor: not-allowed;
+  }
 }
 
 .lynx-grid {
