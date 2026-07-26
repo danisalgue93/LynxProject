@@ -126,7 +126,7 @@ export function PublicPage() {
                 exit={{ opacity: 0, x: -20 }}
                 transition={{ duration: 0.3 }}
               >
-                <OrderBookView onAuthRequired={handleActionClick} />
+                <OrderBookView readOnly={!isAuthenticated} onAuthRequired={handleActionClick} />
               </motion.div>
             ) : activeTab === 'portfolio' ? (
               <motion.div
@@ -223,9 +223,10 @@ export function PublicPage() {
 
       <AnimatePresence>
         {selectedMarket && (
-          <MarketDetail 
-            market={selectedMarket} 
+          <MarketDetail
+            market={selectedMarket}
             onClose={() => setSelectedMarket(null)}
+            readOnly={!isAuthenticated}
             onAuthRequired={handleActionClick}
             onHostDuel={() => setIsCreateDuelOpen(true)}
           />
