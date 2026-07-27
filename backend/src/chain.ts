@@ -55,6 +55,25 @@ const PROGRAM_ID = process.env.PROGRAM_ID ? new PublicKey(process.env.PROGRAM_ID
 const REFRESH_INTERVAL_MS = Number(process.env.CHAIN_INDEXER_INTERVAL_MS || 30_000);
 const KEEPER_INTERVAL_MS = Number(process.env.CHAIN_KEEPER_INTERVAL_MS || 6_000);
 
+// --- Indexado en vivo por WebSocket (preferido sobre el polling de
+// getProgramAccounts) ---
+// El indexador se suscribe a onProgramAccountChange y recibe cada cambio de
+// cuenta EN TIEMPO REAL (push), en vez de barrer las 6 llamadas caras de
+// getProgramAccounts cada ciclo. Ademas corre una reconciliacion COMPLETA
+// periodica como red de seguridad: captura los CIERRES de cuenta (que las
+// notificaciones de cambio pueden no entregar) y cualquier update perdido
+// durante una reconexion del WebSocket. Con CHAIN_DISABLE_WS=true se cae a
+// polling puro (p. ej. un RPC sin soporte de WebSocket). web3.js reconecta el
+// WS y re-suscribe automaticamente mientras no se recree el objeto Connection.
+const WS_ENABLED = process.env.CHAIN_DISABLE_WS !== 'true';
+// Cadencia del rebuild completo. Con WS vivo es solo una reconciliacion de
+// seguridad, asi que es poco frecuente por defecto (5 min); sin WS es EL
+// indexador y se mantiene frecuente (el comportamiento previo de
+// CHAIN_INDEXER_INTERVAL_MS).
+const RECONCILE_INTERVAL_MS = Number(
+  process.env.CHAIN_RECONCILE_INTERVAL_MS || (WS_ENABLED ? 300_000 : REFRESH_INTERVAL_MS)
+);
+
 let connection: Connection | null = null;
 function withRpcTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 15000): Promise<T> {
   return Promise.race([
@@ -367,6 +386,71 @@ let refreshPausedUntil = 0;
 // other while rebuilding the same Maps).
 let refreshRunning = false;
 
+// Una entrada por tipo de cuenta indexada: su discriminador, una etiqueta, y
+// closures para vaciar su Map (reconciliacion completa) o insertar/actualizar
+// una cuenta (tanto en la reconciliacion como en los updates en vivo por WS),
+// reutilizando los MISMOS decoders en ambos caminos.
+function makeKind<T>(disc: Buffer, label: string, map: Map<string, T>, decode: (pubkey: PublicKey, data: Buffer) => T) {
+  return {
+    disc,
+    label,
+    clear: () => map.clear(),
+    upsert: (pubkey: PublicKey, data: Buffer) => map.set(pubkey.toBase58(), decode(pubkey, data)),
+  };
+}
+const ACCOUNT_KINDS = [
+  makeKind(ACCOUNT_DISC.market, 'market', marketsByPubkey, decodeMarket),
+  makeKind(ACCOUNT_DISC.predictionOrder, 'predictionOrder', ordersByPubkey, decodePredictionOrder),
+  makeKind(ACCOUNT_DISC.userPosition, 'userPosition', positionsByPubkey, decodePosition),
+  makeKind(ACCOUNT_DISC.spotOrder, 'spotOrder', spotOrdersByPubkey, decodeSpotOrder),
+  makeKind(ACCOUNT_DISC.duel, 'duel', duelsByPubkey, decodeDuel),
+  makeKind(ACCOUNT_DISC.daoProposal, 'daoProposal', daoProposalsByPubkey, decodeDaoProposal),
+];
+
+// --- Suscripciones WebSocket en vivo ---
+let programSubscriptions: number[] = [];
+let wsUpdates = 0;
+let lastWsUpdateAt = 0;
+
+function subscribeAll() {
+  if (!WS_ENABLED || !PROGRAM_ID) return;
+  const conn = getConnection();
+  for (const k of ACCOUNT_KINDS) {
+    try {
+      const subId = conn.onProgramAccountChange(
+        PROGRAM_ID,
+        (info) => {
+          // Push: decodifica la unica cuenta que cambio y hace upsert. Los
+          // errores (layout inesperado) se tragan igual que en la reconciliacion.
+          try {
+            k.upsert(info.accountId, info.accountInfo.data as Buffer);
+            wsUpdates++;
+            lastWsUpdateAt = Date.now();
+          } catch { /* ignora cuenta con formato inesperado */ }
+        },
+        'confirmed',
+        [{ memcmp: { offset: 0, bytes: bs58.encode(k.disc) } }]
+      );
+      programSubscriptions.push(subId);
+    } catch (err: any) {
+      chainLog.warn('ws subscribe failed', { label: k.label, error: err?.message });
+    }
+  }
+  if (programSubscriptions.length) {
+    chainLog.info('ws subscriptions active', { count: programSubscriptions.length });
+  }
+}
+
+async function unsubscribeAll() {
+  if (!connection || programSubscriptions.length === 0) { programSubscriptions = []; return; }
+  const conn = connection;
+  const subs = programSubscriptions;
+  programSubscriptions = [];
+  for (const subId of subs) {
+    try { await conn.removeProgramAccountChangeListener(subId); } catch { /* ignora */ }
+  }
+}
+
 async function refreshOnce(force = false) {
   if (!PROGRAM_ID) return;
   if (refreshRunning) return;
@@ -389,36 +473,16 @@ async function refreshOnce(force = false) {
         conn.getProgramAccounts(PROGRAM_ID!, { filters: [{ memcmp: { offset: 0, bytes: bs58.encode(disc) } }] }),
         `refresh:getProgramAccounts:${label}`
       );
-    const marketAccounts = await gpa(ACCOUNT_DISC.market, 'market');
-    const orderAccounts = await gpa(ACCOUNT_DISC.predictionOrder, 'predictionOrder');
-    const positionAccounts = await gpa(ACCOUNT_DISC.userPosition, 'userPosition');
-    const spotOrderAccounts = await gpa(ACCOUNT_DISC.spotOrder, 'spotOrder');
-    const duelAccounts = await gpa(ACCOUNT_DISC.duel, 'duel');
-    const daoProposalAccounts = await gpa(ACCOUNT_DISC.daoProposal, 'daoProposal');
-
-    marketsByPubkey.clear();
-    for (const { pubkey, account } of marketAccounts) {
-      try { marketsByPubkey.set(pubkey.toBase58(), decodeMarket(pubkey, account.data)); } catch { /* ignora cuentas con formato inesperado */ }
-    }
-    ordersByPubkey.clear();
-    for (const { pubkey, account } of orderAccounts) {
-      try { ordersByPubkey.set(pubkey.toBase58(), decodePredictionOrder(pubkey, account.data)); } catch { /* ignora */ }
-    }
-    positionsByPubkey.clear();
-    for (const { pubkey, account } of positionAccounts) {
-      try { positionsByPubkey.set(pubkey.toBase58(), decodePosition(pubkey, account.data)); } catch { /* ignora */ }
-    }
-    spotOrdersByPubkey.clear();
-    for (const { pubkey, account } of spotOrderAccounts) {
-      try { spotOrdersByPubkey.set(pubkey.toBase58(), decodeSpotOrder(pubkey, account.data)); } catch { /* ignora */ }
-    }
-    duelsByPubkey.clear();
-    for (const { pubkey, account } of duelAccounts) {
-      try { duelsByPubkey.set(pubkey.toBase58(), decodeDuel(pubkey, account.data)); } catch { /* ignora */ }
-    }
-    daoProposalsByPubkey.clear();
-    for (const { pubkey, account } of daoProposalAccounts) {
-      try { daoProposalsByPubkey.set(pubkey.toBase58(), decodeDaoProposal(pubkey, account.data)); } catch { /* ignora */ }
+    // Cada tipo: snapshot -> clear -> rebuild, SECUENCIAL a proposito (ver
+    // arriba: getProgramAccounts tiene limite por-metodo). Este mismo camino
+    // sirve para el snapshot inicial y para la reconciliacion periodica; los
+    // updates incrementales llegan por WebSocket via k.upsert().
+    for (const k of ACCOUNT_KINDS) {
+      const accounts = await gpa(k.disc, k.label);
+      k.clear();
+      for (const { pubkey, account } of accounts) {
+        try { k.upsert(pubkey, account.data); } catch { /* ignora cuentas con formato inesperado */ }
+      }
     }
 
     lastRefreshError = null;
@@ -449,8 +513,16 @@ export function startChainIndexer() {
     chainLog.warn('PROGRAM_ID not set — on-chain indexer disabled');
     return;
   }
+  // 1) snapshot inicial, 2) ir en vivo por WebSocket, 3) reconciliacion completa
+  // periodica como red de seguridad (cierres de cuenta + cualquier gap del WS).
   refreshOnce();
-  if (!refreshTimer) refreshTimer = setInterval(refreshOnce, REFRESH_INTERVAL_MS);
+  subscribeAll();
+  if (!refreshTimer) refreshTimer = setInterval(refreshOnce, RECONCILE_INTERVAL_MS);
+  chainLog.info('indexer started', {
+    mode: WS_ENABLED && programSubscriptions.length > 0 ? 'websocket+reconcile' : 'polling',
+    reconcileMs: RECONCILE_INTERVAL_MS,
+    wsSubscriptions: programSubscriptions.length,
+  });
   if (!keeperTimer && getKeeperKeypair()) {
     keeperTimer = setInterval(() => {
       runKeeperOnce()
@@ -472,6 +544,7 @@ export function startChainIndexer() {
 export function stopChainIndexer() {
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
   if (keeperTimer) { clearInterval(keeperTimer); keeperTimer = null; }
+  void unsubscribeAll();
 }
 
 // Fuerza un refresco inmediato (usado por POST /api/onchain/sync tras una tx
@@ -530,6 +603,11 @@ export function getIndexerStatus() {
     keeperPausedUntil,
     lastRefreshAt,
     lastRefreshError,
+    mode: WS_ENABLED && programSubscriptions.length > 0 ? 'websocket+reconcile' : 'polling',
+    wsEnabled: WS_ENABLED,
+    wsSubscriptions: programSubscriptions.length,
+    wsUpdates,
+    lastWsUpdateAt,
     markets: marketsByPubkey.size,
     orders: ordersByPubkey.size,
     positions: positionsByPubkey.size,
