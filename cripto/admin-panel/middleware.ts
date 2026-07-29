@@ -93,11 +93,22 @@ export async function middleware(req: NextRequest) {
   res.headers.set('X-Content-Type-Options', 'nosniff');
   res.headers.set('Referrer-Policy', 'no-referrer');
   res.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  // Strict CSP for admin panel — no external resources allowed
+  // Strict CSP for admin panel — no external resources allowed.
+  // script-src 'unsafe-inline' is required by Next.js App Router hydration, and
+  // style-src 'unsafe-inline' by Next's injected styles + the panel's inline
+  // style props (buttons/layout). In DEV, Next's React-Refresh/webpack HMR
+  // runtime evaluates code via eval(), which needs 'unsafe-eval'; production is
+  // built ahead of time and has no eval, so prod keeps 'unsafe-eval' OUT (a real
+  // XSS hardening — unlike style/inline, eval would let injected script run).
+  const scriptSrc =
+    process.env.NODE_ENV !== 'production'
+      ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+      : "script-src 'self' 'unsafe-inline'";
   res.headers.set(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none';" // Note: script-src 'unsafe-inline' is required by Next.js App Router hydration, and style-src 'unsafe-inline' by Next's injected styles + the panel's inline style props (buttons/layout). Styles cannot execute JS, so this does not weaken the XSS posture the way script-src would.
-    // To remove it, implement nonce-based CSP per https://nextjs.org/docs/app/building-your-application/configuring/content-security-policy
+    `default-src 'self'; ${scriptSrc}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none';`
+    // To drop the inline/eval allowances entirely, implement nonce-based CSP per
+    // https://nextjs.org/docs/app/building-your-application/configuring/content-security-policy
   );
   res.headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
   return res;
