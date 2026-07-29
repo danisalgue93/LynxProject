@@ -96,7 +96,7 @@ export async function middleware(req: NextRequest) {
   // Strict CSP for admin panel — no external resources allowed
   res.headers.set(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none';" // Note: script-src 'unsafe-inline' is required by Next.js App Router hydration.
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none';" // Note: script-src 'unsafe-inline' is required by Next.js App Router hydration, and style-src 'unsafe-inline' by Next's injected styles + the panel's inline style props (buttons/layout). Styles cannot execute JS, so this does not weaken the XSS posture the way script-src would.
     // To remove it, implement nonce-based CSP per https://nextjs.org/docs/app/building-your-application/configuring/content-security-policy
   );
   res.headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
