@@ -91,6 +91,25 @@ async function sendWithRetry(
   html: string,
   attempts = 3
 ): Promise<void> {
+  // Dev fallback: with no RESEND_API_KEY there is no way to actually deliver
+  // mail. Rather than fail silently — the callers swallow the rejection, so the
+  // UI still says "check your email" and nothing ever arrives — log the action
+  // link to the server console so local development can complete verification /
+  // password-reset flows without any email infrastructure. Production requires
+  // RESEND_API_KEY at startup (docker-compose `:?`), so this branch is dev-only.
+  if (!process.env.RESEND_API_KEY) {
+    const link = (html.match(/href="([^"]+)"/)?.[1] ?? '').replace(/&amp;/g, '&');
+    console.warn(JSON.stringify({
+      level: 'warn',
+      module: 'email',
+      msg: 'RESEND_API_KEY not set — email NOT sent. Open this link manually (local dev only):',
+      to,
+      subject,
+      link: link || '(no link found in this email)',
+    }));
+    return;
+  }
+
   let lastError: unknown;
   for (let i = 0; i < attempts; i++) {
     try {
