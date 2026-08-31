@@ -3,7 +3,12 @@ pub const BPS_DENOMINATOR: u64 = 10_000;
 pub const EVENT_PROTOCOL_FEE_BPS: u64 = 1_000;
 pub const STAKER_REWARD_FEE_BPS: u64 = 500;
 pub const TREASURY_EVENT_FEE_BPS: u64 = 500;
-pub const GLOBAL_TRADE_FEE_BPS: u64 = 10;
+// Trading en el libro de ordenes GRATIS (0 bps). Entrar y operar no cuesta nada,
+// igual que en Polymarket: el protocolo solo cobra el fee de los EVENTOS (10%:
+// 5% stakers + 5% treasury). Se mantiene la constante en 0 en vez de arrancar el
+// codigo del fee para poder reactivarlo cambiando solo este valor; con 0 el
+// vendedor cobra el importe integro y no se transfiere nada al treasury.
+pub const GLOBAL_TRADE_FEE_BPS: u64 = 0;
 pub const LYNX_EVENT_BURN_BPS: u64 = 1_500;
 
 // Minting split for LYNX emitted on resolved SOL markets:

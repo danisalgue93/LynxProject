@@ -193,15 +193,19 @@ Por tanto, puede subir o bajar dependiendo de:
 
 💰 PASO 7 — FEE GLOBAL DE LA PLATAFORMA
 
-Las operaciones sujetas al sistema de fees de la plataforma tienen un:
+El trading en la plataforma es GRATUITO:
 
-«0,1% de fee»
+«0% de fee de trading»
 
-Este fee se destina:
+Comprar, vender y colocar órdenes en el order book no tiene ningún coste, igual que en Polymarket. Entrar al ecosistema es gratis.
 
-«100% → treasury del protocolo»
+El protocolo cobra ÚNICAMENTE el fee de los eventos:
 
-Puede aplicarse a las operaciones contempladas por el sistema, incluyendo la actividad de trading de LYNX y otras operaciones internas definidas por la plataforma.
+«10% → 5% stakers + 5% treasury»
+
+Ese 10% se aplica a los eventos de predicción, a los duelos 1v1 y a los duelos 1v1vP. No hay ninguna otra comisión en el sistema.
+
+
 
 ---
 
@@ -213,7 +217,7 @@ Entre ellas:
 
 - 5% del SOL generado por los eventos
 - 10% de los LYNX minteados
-- fees globales de la plataforma
+- 5% del SOL de los duelos 1v1 y 1v1vP
 - ingresos derivados de operaciones del order book
 - SOL obtenidos mediante determinados mecanismos 1v1vP
 - otros ingresos definidos por el protocolo
@@ -289,7 +293,17 @@ La estructura es:
 
 En lugar de existir únicamente una confrontación entre dos usuarios, el protocolo puede ocupar una posición dentro del evento.
 
-El protocolo puede asumir la posición que haya quedado libre cuando no exista un usuario ocupándola.
+El protocolo asume la posición que queda libre después de que dos usuarios hayan tomado las suyas.
+
+Flujo exacto:
+
+1. El usuario 1 crea el duelo y elige su posición, aportando SOL.
+2. El duelo queda ABIERTO esperando a un segundo usuario.
+3. El usuario 2 acepta y elige una posición distinta, aportando la misma cantidad de SOL.
+4. El protocolo ocupa automáticamente la tercera posición, la única que queda libre, aportando LYNX.
+5. Al resolverse el mercado se liquida el duelo.
+
+Si nadie acepta el duelo antes de que el mercado se resuelva, el creador recupera íntegramente su SOL.
 
 De esta forma, el protocolo pasa a participar directamente en el resultado del evento.
 
@@ -322,15 +336,22 @@ Si estos recursos no son suficientes, se utilizan los recursos disponibles asoci
 
 Finalmente, si todavía fuese necesario cubrir parte de la obligación, entra en funcionamiento el mecanismo de minteo correspondiente.
 
-Importe a pagar — valoración:
+Reparto cuando gana un usuario:
 
-El importe que el protocolo debe cubrir se calcula como el equivalente en LYNX del SOL adeudado al usuario, según la cotización de mercado de LYNX en el momento de la liquidación.
+El usuario ganador se lleva TODO el bote (el SOL de los dos usuarios) menos el fee del protocolo del 10% (5% stakers + 5% treasury), y además recibe el LYNX que aportó el protocolo.
 
-Es decir, NO se aplica el porcentaje de la tabla de tramos de emisión: esa tabla regula cuánto LYNX se emite por el SOL apostado en los eventos, no cuánto vale la obligación de pago de un 1v1vP.
+Importe en LYNX que aporta el protocolo — valoración:
+
+La cantidad de LYNX se calcula aplicando el porcentaje del TRAMO DE SUPPLY vigente (la tabla del PASO 3) sobre el SOL de una posición, exactamente igual que la emisión de los eventos.
+
+El ratio se congela en el momento de resolverse el mercado, de modo que no puede manipularse justo antes de la liquidación.
 
 Ejemplo:
 
-El protocolo debe 10 SOL y LYNX cotiza a 0,5 SOL → debe entregar 20 LYNX, tomándolos en el orden Treasury → Order book → Minteo.
+Dos usuarios apuestan 5 SOL cada uno (bote de 10 SOL). El tramo vigente es del 70%.
+
+- Si gana un usuario: recibe 9 SOL (10 menos el 10% de fee) más 3,5 LYNX (5 SOL × 70%).
+- Si gana el protocolo: los 10 SOL se reparten 5 a stakers y 5 al treasury.
 
 ---
 
@@ -455,9 +476,9 @@ Distribución del SOL de los eventos
 5% staking
 5% treasury»
 
-Fee global de plataforma
+Fee de trading
 
-«0,1% → 100% treasury»
+«0% — el trading es gratis»
 
 Fee de duelos 1v1
 

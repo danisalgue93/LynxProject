@@ -860,10 +860,14 @@ async function settleReadyDuels(keeper: Keypair, conn: Connection) {
           data: IX.resolveDuelSol,
         }));
       } else {
-        // OneVOneVProtocol: recipient is always the creator; the LYNX bonus is
-        // minted to the creator's ATA, so ensure it exists (keeper pays rent).
-        const creator = new PublicKey(d.creator);
-        const recipientLynxAccount = await getAssociatedTokenAddress(lynxMint, creator);
+        // OneVOneVProtocol es TERCIARIO: creador vs rival vs protocolo. Gana el
+        // usuario cuya posicion coincide con el resultado; si no coincide ninguna,
+        // gana el protocolo y el programa ignora estas cuentas de destino (pero
+        // deben pasarse igualmente). El LYNX se acuna en la ATA del ganador.
+        const pCreatorWins = market.result === d.creatorOutcome;
+        const winner = pCreatorWins ? new PublicKey(d.creator) : new PublicKey(d.rival);
+        const creator = winner;
+        const recipientLynxAccount = await getAssociatedTokenAddress(lynxMint, winner);
         const ataInfo = await withRpcTimeout(conn.getAccountInfo(recipientLynxAccount), 'settleDuel:getAccountInfo:ata', 15000);
         if (!ataInfo) {
           instructions.push(createAssociatedTokenAccountInstruction(keeper.publicKey, recipientLynxAccount, creator, lynxMint));

@@ -12,7 +12,10 @@ export const TREASURY_EVENT_FEE = 0.05;
 // the seller/LYNX leg — do not "fix" this by also charging the seller, that
 // would double-charge the same trade and break the treasury accounting the
 // rest of this module documents.
-export const GLOBAL_TRADE_FEE = 0.001;
+// Trading GRATIS (0%). Igual que on-chain: el protocolo solo cobra el fee de los
+// EVENTOS (10% = 5% stakers + 5% treasury). Debe seguir valiendo lo mismo que
+// GLOBAL_TRADE_FEE_BPS en constants.rs.
+export const GLOBAL_TRADE_FEE = 0;
 export const LYNX_EVENT_BURN = 0.15;
 
 export const LYNX_MINT_TIERS: Array<{ maxSupply: number; ratio: number }> = [

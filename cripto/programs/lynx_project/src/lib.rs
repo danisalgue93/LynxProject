@@ -1462,17 +1462,16 @@ pub mod lynx_project {
         let duel = &mut ctx.accounts.duel;
         duel.parent_market = ctx.accounts.parent_market.key();
         duel.creator = ctx.accounts.creator.key();
-        duel.rival = if duel_type == DuelType::OneVOneVProtocol { ctx.accounts.config.key() } else { Pubkey::default() };
+        // 1v1vP es TERCIARIO: usuario 1 vs usuario 2 vs protocolo. El duelo nace
+        // ABIERTO esperando al segundo usuario; el protocolo ocupa despues la
+        // posicion que quede libre (ver accept_duel).
+        duel.rival = Pubkey::default();
         duel.id = duel_id;
         duel.amount = amount;
         duel.creator_outcome = creator_outcome;
-        duel.rival_outcome = if duel_type == DuelType::OneVOneVProtocol {
-            default_rival_outcome(creator_outcome, ctx.accounts.parent_market.is_ternary)
-        } else {
-            Outcome::Unresolved
-        };
+        duel.rival_outcome = Outcome::Unresolved;
         duel.duel_type = duel_type;
-        duel.status = if duel_type == DuelType::OneVOneVProtocol { DuelStatus::Active } else { DuelStatus::Open };
+        duel.status = DuelStatus::Open;
         duel.expires_ts = expires_ts;
         duel.bump = ctx.bumps.duel;
         duel.vault_bump = ctx.bumps.duel_vault;
@@ -1485,7 +1484,9 @@ pub mod lynx_project {
     pub fn accept_duel(ctx: Context<AcceptDuel>, rival_outcome: Outcome) -> Result<()> {
         require!(!ctx.accounts.config.paused, LynxError::ProtocolPaused);
         let duel = &mut ctx.accounts.duel;
-        require!(duel.duel_type == DuelType::OneVOne, LynxError::InvalidDuelType);
+        // Acepta tanto 1v1 (usuario vs usuario) como 1v1vP (terciario: este es el
+        // SEGUNDO usuario; el protocolo ocupara despues la tercera posicion, la que
+        // no eligieron ni el creador ni el rival).
         require!(duel.status == DuelStatus::Open, LynxError::InvalidStatus);
         require!(ctx.accounts.parent_market.status == MarketStatus::Open || ctx.accounts.parent_market.status == MarketStatus::Active, LynxError::MarketClosed);
         let now = Clock::get()?.unix_timestamp;
@@ -1569,18 +1570,60 @@ pub mod lynx_project {
         require!(duel.status == DuelStatus::Active, LynxError::InvalidStatus);
         require!(market.status == MarketStatus::Resolved, LynxError::InvalidStatus);
 
+        // 1v1vP TERCIARIO: usuario 1 (creator) vs usuario 2 (rival) vs protocolo.
+        // Los dos usuarios pusieron `amount` cada uno, asi que el bote en SOL es 2x.
+        // El protocolo ocupa la TERCERA posicion: la que no eligio ninguno de los dos,
+        // por lo que gana exactamente cuando el resultado no coincide con ninguna de
+        // las posiciones de los usuarios.
+        let pot = duel.amount.checked_mul(2).ok_or(LynxError::MathOverflow)?;
         let creator_wins = market.result == duel.creator_outcome;
-        if creator_wins {
-            require_keys_eq!(ctx.accounts.recipient.key(), duel.creator, LynxError::Unauthorized);
-            transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.recipient.to_account_info(), duel.amount)?;
+        let rival_wins = market.result == duel.rival_outcome;
+        let protocol_wins = !creator_wins && !rival_wins;
+
+        // Fee del protocolo, identico al de un evento: 10% (5% stakers + 5% treasury).
+        let staker_fee = bps(pot, STAKER_REWARD_FEE_BPS)?;
+        let treasury_fee = bps(pot, TREASURY_EVENT_FEE_BPS)?;
+
+        if protocol_wins {
+            // El protocolo gana: se queda el bote entero de los dos usuarios y lo
+            // reparte 50% a stakers de LYNX y 50% al treasury.
+            let staker_share = pot.checked_div(2).ok_or(LynxError::MathOverflow)?;
+            let treasury_share = pot.checked_sub(staker_share).ok_or(LynxError::MathOverflow)?;
+            if staker_share > 0 && ctx.accounts.config.total_staked > 0 {
+                transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.rewards_vault.to_account_info(), staker_share)?;
+                credit_stakers(&mut ctx.accounts.config, staker_share)?;
+                transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), treasury_share)?;
+            } else {
+                // Sin stakers no hay a quien repartir: todo al treasury.
+                transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), pot)?;
+            }
+        } else {
+            // Gana uno de los dos usuarios: se lleva TODO el bote menos el 10% de fee,
+            // y ademas recibe el LYNX que aporto el protocolo como su posicion.
+            let winner = if creator_wins { duel.creator } else { duel.rival };
+            require_keys_eq!(ctx.accounts.recipient.key(), winner, LynxError::Unauthorized);
+            require_keys_eq!(ctx.accounts.recipient_lynx_account.owner, winner, LynxError::Unauthorized);
+
+            transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), treasury_fee)?;
+            if staker_fee > 0 && ctx.accounts.config.total_staked > 0 {
+                transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.rewards_vault.to_account_info(), staker_fee)?;
+                credit_stakers(&mut ctx.accounts.config, staker_fee)?;
+            } else {
+                transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), staker_fee)?;
+            }
+            let payout = pot
+                .checked_sub(staker_fee).ok_or(LynxError::MathOverflow)?
+                .checked_sub(treasury_fee).ok_or(LynxError::MathOverflow)?;
+            transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.recipient.to_account_info(), payout)?;
+
+            // La aportacion del protocolo se acuna segun el ratio de emision por
+            // TRAMOS DE SUPPLY congelado en el mercado al resolverse (SC-02), la misma
+            // regla que la emision de los eventos. No depende de ninguna cotizacion
+            // de mercado, que seria manipulable.
             let base_payout_micro_lynx = duel
                 .amount
                 .checked_div(LAMPORTS_TO_MICRO_LYNX_DENOMINATOR)
                 .ok_or(LynxError::MathOverflow)?;
-            // SC-02 fix: use the mint_ratio_bps frozen on the Market at
-            // resolve-time (finalize_market_and_fees) instead of calling
-            // current_mint_ratio_bps() which reads the instantaneous
-            // circulating supply and is manipulable (see SC-01).
             let ratio_bps = market.mint_ratio_bps;
             require!(ratio_bps > 0, LynxError::InvalidAmount);
             let payout_micro_lynx = bps(base_payout_micro_lynx, ratio_bps)?;
@@ -1603,42 +1646,15 @@ pub mod lynx_project {
                 .total_lynx_supply
                 .checked_add(payout_micro_lynx)
                 .ok_or(LynxError::MathOverflow)?;
-        } else {
-            // PASO 13: el protocolo gana. El SOL del duelo se reparte 50% a los
-            // stakers de LYNX y 50% al treasury. El credito a stakers usa el mismo
-            // patron que finalize_market_and_fees (rewards_vault + indice
-            // reward_per_token_scaled), para que cada staker cobre su parte
-            // proporcional con claim_staking_rewards.
-            let duel_amount = duel.amount;
-            let staker_share = duel_amount.checked_div(2).ok_or(LynxError::MathOverflow)?;
-            let treasury_share = duel_amount.checked_sub(staker_share).ok_or(LynxError::MathOverflow)?;
-            if staker_share > 0 && ctx.accounts.config.total_staked > 0 {
-                transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.rewards_vault.to_account_info(), staker_share)?;
-                ctx.accounts.config.reward_per_token_scaled = ctx
-                    .accounts
-                    .config
-                    .reward_per_token_scaled
-                    .checked_add(
-                        (staker_share as u128)
-                            .checked_mul(REWARD_SCALE).ok_or(LynxError::MathOverflow)?
-                            .checked_div(ctx.accounts.config.total_staked as u128).ok_or(LynxError::MathOverflow)?,
-                    )
-                    .ok_or(LynxError::MathOverflow)?;
-                transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), treasury_share)?;
-            } else {
-                // Sin stakers no hay a quien repartir: el SOL entero va al treasury
-                // en vez de quedar atrapado en el rewards_vault sin reclamante.
-                transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), duel_amount)?;
-            }
         }
-        duel.status = DuelStatus::Resolved;
+
+        ctx.accounts.duel.status = DuelStatus::Resolved;
         // SC-03: release protocol exposure now that the duel is settled
         ctx.accounts.config.protocol_duel_exposure = ctx
             .accounts
             .config
             .protocol_duel_exposure
-            .checked_sub(duel.amount)
-            .ok_or(LynxError::MathOverflow)?;
+            .saturating_sub(ctx.accounts.duel.amount);
         Ok(())
     }
 
@@ -1654,10 +1670,21 @@ pub mod lynx_project {
     // Open, so they can't reach this path.
     pub fn cancel_duel(ctx: Context<CancelDuel>) -> Result<()> {
         let duel = &mut ctx.accounts.duel;
-        require!(duel.duel_type == DuelType::OneVOne, LynxError::InvalidDuelType);
+        // Un 1v1vP tambien nace ABIERTO (espera al segundo usuario), asi que su
+        // creador puede cancelarlo igual que un 1v1 mientras nadie lo haya aceptado.
         require!(duel.status == DuelStatus::Open, LynxError::InvalidStatus);
 
         transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.creator.to_account_info(), duel.amount)?;
+        // SC-03: create_duel reservo exposicion del protocolo para este 1v1vP. Si el
+        // duelo se cancela hay que devolverla, o el cupo quedaria consumido para
+        // siempre por duelos que nunca llegaron a jugarse.
+        if duel.duel_type == DuelType::OneVOneVProtocol {
+            ctx.accounts.config.protocol_duel_exposure = ctx
+                .accounts
+                .config
+                .protocol_duel_exposure
+                .saturating_sub(duel.amount);
+        }
         duel.status = DuelStatus::Cancelled;
         Ok(())
     }
@@ -2615,6 +2642,9 @@ pub struct ResolveProtocolDuel<'info> {
 
 #[derive(Accounts)]
 pub struct CancelDuel<'info> {
+    // Necesario para liberar protocol_duel_exposure al cancelar un 1v1vP.
+    #[account(mut, seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProtocolConfig>,
     #[account(mut)]
     pub creator: Signer<'info>,
     #[account(
@@ -2858,20 +2888,6 @@ fn position_is_winner(market: &Account<Market>, position: &Account<UserPosition>
     market.result == position.outcome
 }
 
-fn default_rival_outcome(outcome: Outcome, is_ternary: bool) -> Outcome {
-    if is_ternary {
-        match outcome {
-            Outcome::Yes => Outcome::No,
-            Outcome::No => Outcome::Yes,
-            Outcome::Draw => Outcome::Yes,
-            Outcome::Unresolved => Outcome::No,
-        }
-    } else if outcome == Outcome::Yes {
-        Outcome::No
-    } else {
-        Outcome::Yes
-    }
-}
 
 fn settle_staker(config: &Account<ProtocolConfig>, stake: &mut Account<StakePosition>) -> Result<()> {
     if stake.amount == 0 {
@@ -2993,6 +3009,22 @@ fn mint_ratio_bps_twap(twap: &CirculatingSupplyTwap, config: &ProtocolConfig) ->
         None => instantaneous_circulating_supply(config),
     };
     Ok(ratio_for_circulating(circulating))
+}
+
+/// Acredita `amount` lamports a los stakers de LYNX avanzando el indice
+/// reward_per_token_scaled, el mismo mecanismo que usan las fees de los eventos
+/// (finalize_market_and_fees). El llamante debe haber transferido ya esos
+/// lamports al rewards_vault y garantizado que total_staked > 0.
+fn credit_stakers(config: &mut ProtocolConfig, amount: u64) -> Result<()> {
+    config.reward_per_token_scaled = config
+        .reward_per_token_scaled
+        .checked_add(
+            (amount as u128)
+                .checked_mul(REWARD_SCALE).ok_or(LynxError::MathOverflow)?
+                .checked_div(config.total_staked as u128).ok_or(LynxError::MathOverflow)?,
+        )
+        .ok_or(LynxError::MathOverflow)?;
+    Ok(())
 }
 
 fn bps(amount: u64, basis_points: u64) -> Result<u64> {

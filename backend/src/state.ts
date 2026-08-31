@@ -805,15 +805,17 @@ export class LynxState {
       grossAmount: input.amount,
       burnedAmount,
       currency: market.currency,
-      status: type === '1v1vP' ? 'ACTIVE' : 'OPEN',
+      // 1v1vP es TERCIARIO: nace ABIERTO esperando al segundo usuario. El protocolo
+      // ocupa despues la posicion que quede libre (ver acceptDuel).
+      status: 'OPEN',
       positionA,
-      positionB: type === '1v1vP' ? opposingPosition(positionA, market.isTernary) : undefined,
+      positionB: undefined,
       isTernary: market.isTernary,
       type,
-      protocolSide: type === '1v1vP' ? opposingPosition(positionA, market.isTernary) : undefined,
-      rival: type === '1v1vP' ? TREASURY_WALLET : undefined,
+      protocolSide: undefined,
+      rival: undefined,
       createdAt: nowMs(),
-      acceptedAt: type === '1v1vP' ? nowMs() : undefined
+      acceptedAt: undefined
     };
     this.duels.set(duel.id, duel);
     return duel;
@@ -851,6 +853,13 @@ export class LynxState {
     }
     duel.rival = wallet.wallet;
     duel.positionB = positionB;
+    if (duel.type === '1v1vP') {
+      // 1v1vP TERCIARIO: el protocolo ocupa la posicion que no eligio ninguno de
+      // los dos usuarios. Un mercado ternario tiene exactamente tres posiciones,
+      // asi que siempre queda una libre.
+      const ternaryPositions: Position[] = ['A', 'B', 'DRAW'];
+      duel.protocolSide = ternaryPositions.find((p) => p !== duel.positionA && p !== positionB);
+    }
     duel.status = 'ACTIVE';
     duel.acceptedAt = nowMs();
     return duel;
@@ -1570,6 +1579,21 @@ export class LynxState {
   }
 
   private resolveDuelsForMarket(market: Market) {
+    // Duelos que nunca llego a aceptar nadie: al resolverse el mercado ya no pueden
+    // jugarse, asi que se reembolsa al creador su stake y se marcan CANCELLED (lo
+    // mismo que hace cancel_duel on-chain). Sin esto el dinero quedaba bloqueado en
+    // un duelo OPEN para siempre (ahora los 1v1vP tambien nacen OPEN).
+    const unmatched = [...this.duels.values()].filter((duel) => duel.parentMarketId === market.id && duel.status === 'OPEN');
+    for (const duel of unmatched) {
+      const wallet = this.getWallet(duel.creator);
+      this.credit(wallet, duel.currency, duel.amount);
+      duel.status = 'CANCELLED';
+      this.pushNotification(duel.creator, {
+        type: 'system_info',
+        title: 'Duel refunded',
+        message: `Nobody accepted your duel on "${market.title}" before it resolved, so your stake was refunded.`
+      });
+    }
     const duels = [...this.duels.values()].filter((duel) => duel.parentMarketId === market.id && duel.status === 'ACTIVE');
     for (const duel of duels) {
       duel.status = 'RESOLVED';
@@ -1579,18 +1603,29 @@ export class LynxState {
       const rivalWins = result === duel.positionB || (result === 'YES' && duel.positionB === 'A') || (result === 'NO' && duel.positionB === 'B');
 
       if (duel.type === '1v1vP') {
-        if (creatorWins) {
-          const wallet = this.getWallet(duel.creator);
-          this.credit(wallet, 'SOL', duel.amount);
+        // 1v1vP TERCIARIO: usuario 1 vs usuario 2 vs protocolo. Ambos usuarios
+        // pusieron `amount`, asi que el bote es 2x; el protocolo ocupa la tercera
+        // posicion y gana cuando el resultado no es el de ninguno de los dos.
+        const pot = roundAmount(duel.amount * 2);
+        const duelStakerFee = roundAmount(pot * STAKER_REWARD_FEE);
+        const duelTreasuryFee = roundAmount(pot * TREASURY_EVENT_FEE);
+        if (creatorWins || rivalWins) {
+          // Gana un usuario: se lleva TODO el bote menos el 10% de fee, y ademas
+          // recibe el LYNX que aporto el protocolo como su posicion.
+          const winnerAddress = creatorWins ? duel.creator : (duel.rival as string);
+          const wallet = this.getWallet(winnerAddress);
+          const payout = roundAmount(pot - duelStakerFee - duelTreasuryFee);
+          this.credit(wallet, 'SOL', payout);
+          this.treasury.sol = roundAmount(this.treasury.sol + duelTreasuryFee);
+          this.distributeStakingRewards(duelStakerFee, 'SOL');
           this.mintProtocolDuelLynx(wallet.wallet, duel.amount);
-          duel.winner = duel.creator;
+          duel.winner = winnerAddress;
         } else {
-          // PASO 13: el protocolo gana el 1v1vP -> el SOL se reparte 50% a los
-          // stakers de LYNX y 50% al treasury (antes iba 100% al treasury).
-          // distributeStakingRewards ya redirige al treasury si no hay stakers,
-          // asi que el SOL nunca queda sin destinatario.
-          const stakerShare = roundAmount(duel.amount / 2);
-          const treasuryShare = roundAmount(duel.amount - stakerShare);
+          // Gana el protocolo: el bote entero se reparte 50% a stakers y 50% al
+          // treasury. distributeStakingRewards ya redirige al treasury si no hay
+          // stakers, asi que el SOL nunca queda sin destinatario.
+          const stakerShare = roundAmount(pot / 2);
+          const treasuryShare = roundAmount(pot - stakerShare);
           const protocolWallet = this.getWallet(TREASURY_WALLET);
           this.credit(protocolWallet, 'SOL', treasuryShare);
           this.treasury.protocolDuelSol = roundAmount(this.treasury.protocolDuelSol + treasuryShare);

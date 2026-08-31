@@ -34,7 +34,7 @@ export function DocsView() {
       id: "02",
       title: t('docs.step2Title', "Protocol Fees"),
       icon: <Scale className="w-5 h-5" />,
-      content: t('docs.step2Content', "A 10% fee is applied to the event total volume: 5% to LYNX staker rewards and 5% to the treasury. User-vs-user 1v1 duels pay that same 10% on the pot."),
+      content: t('docs.step2Content', "A 10% fee is applied to the event volume: 5% to LYNX stakers and 5% to the treasury. It is the only fee in the system and applies equally to events, 1v1 duels and 1v1vP duels."),
       color: "#9945FF",
       details: [
         { label: "LYNX Stakers", value: "5% SOL Rewards", highlight: true },
@@ -68,7 +68,7 @@ export function DocsView() {
       id: "05",
       title: t('docs.step5Title', "Platform Fees & Treasury"),
       icon: <Wallet className="w-5 h-5" />,
-      content: t('docs.step5Content', "A 0.1% fee on all platform transactions funds the Treasury, powering buybacks, development, and system liquidity."),
+      content: t('docs.step5Content', "Trading is FREE: buying, selling and placing orders costs nothing. The protocol only charges the 10% event fee (5% stakers + 5% treasury), which also applies to duels."),
       color: "#FF4545",
       details: [
         { label: "Global TX Fee", value: "0.1%" },
@@ -90,7 +90,7 @@ export function DocsView() {
       id: "07",
       title: t('docs.step7Title', "1v1vP Mode"),
       icon: <Zap className="w-5 h-5" />,
-      content: t('docs.step7Content', "In 1v1vP Duels the protocol takes the event position left open. If the protocol WINS, the SOL is split 50% to LYNX stakers and 50% to the treasury. If it LOSES, it settles in this order: 1) treasury LYNX, 2) the protocol own LYNX on the order book, 3) minting as a last resort, paying the LYNX equivalent of the SOL at the market price."),
+      content: t('docs.step7Content', "1v1vP is three-way: user 1 creates the duel, user 2 accepts with a different position, and the protocol takes the remaining third position by putting up LYNX. If a user wins, they take the whole pot minus the 10% fee and also receive the protocol LYNX. If the protocol wins, the SOL is split 50% to stakers and 50% to treasury."),
       color: "#9945FF",
       details: [
         { label: "If Protocol Wins", value: "50% Stakers / 50% Treasury", highlight: true },
