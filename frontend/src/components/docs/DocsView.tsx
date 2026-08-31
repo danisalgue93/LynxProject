@@ -34,7 +34,7 @@ export function DocsView() {
       id: "02",
       title: t('docs.step2Title', "Protocol Fees"),
       icon: <Scale className="w-5 h-5" />,
-      content: t('docs.step2Content', "A 10% fee is applied to the total event volume for ecosystem growth and rewards."),
+      content: t('docs.step2Content', "A 10% fee is applied to the event total volume: 5% to LYNX staker rewards and 5% to the treasury. User-vs-user 1v1 duels pay that same 10% on the pot."),
       color: "#9945FF",
       details: [
         { label: "LYNX Stakers", value: "5% SOL Rewards", highlight: true },

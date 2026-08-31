@@ -848,12 +848,14 @@ async function settleReadyDuels(keeper: Keypair, conn: Connection) {
         instructions.push(new TransactionInstruction({
           programId: PROGRAM_ID,
           keys: [
-            { pubkey: configPk, isSigner: false, isWritable: false },
+            { pubkey: configPk, isSigner: false, isWritable: true },
             { pubkey: parentMarketPk, isSigner: false, isWritable: false },
             { pubkey: duelPk, isSigner: false, isWritable: true },
             { pubkey: duelVault, isSigner: false, isWritable: true },
             { pubkey: recipient, isSigner: false, isWritable: true },
             { pubkey: treasury, isSigner: false, isWritable: true },
+            // El fee del duelo 1v1 (10%) reparte 5% a stakers via el rewards vault.
+            { pubkey: pda([Buffer.from('rewards_vault')], PROGRAM_ID!), isSigner: false, isWritable: true },
           ],
           data: IX.resolveDuelSol,
         }));

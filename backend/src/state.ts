@@ -1600,26 +1600,33 @@ export class LynxState {
         continue;
       }
 
+      // Los duelos 1v1 pagan el mismo fee de protocolo que un evento: 10% del
+      // bote, 5% a stakers de LYNX y 5% al treasury (antes solo el 0,1% de
+      // trading, y los stakers no recibian nada de los duelos).
       const total = roundAmount(duel.amount * 2);
-      const fee = roundAmount(total * GLOBAL_TRADE_FEE);
+      const stakerFee = roundAmount(total * STAKER_REWARD_FEE);
+      const treasuryFee = roundAmount(total * TREASURY_EVENT_FEE);
+      const fee = roundAmount(stakerFee + treasuryFee);
       const payout = roundAmount(total - fee);
       if (creatorWins && !rivalWins) {
         const wallet = this.getWallet(duel.creator);
         this.credit(wallet, duel.currency, payout);
         if (duel.currency === 'LYNX') {
-          this.treasury.lynx = roundAmount(this.treasury.lynx + fee);
+          this.treasury.lynx = roundAmount(this.treasury.lynx + treasuryFee);
         } else {
-          this.treasury.sol = roundAmount(this.treasury.sol + fee);
+          this.treasury.sol = roundAmount(this.treasury.sol + treasuryFee);
         }
+        this.distributeStakingRewards(stakerFee, duel.currency);
         duel.winner = duel.creator;
       } else if (rivalWins && duel.rival) {
         const wallet = this.getWallet(duel.rival);
         this.credit(wallet, duel.currency, payout);
         if (duel.currency === 'LYNX') {
-          this.treasury.lynx = roundAmount(this.treasury.lynx + fee);
+          this.treasury.lynx = roundAmount(this.treasury.lynx + treasuryFee);
         } else {
-          this.treasury.sol = roundAmount(this.treasury.sol + fee);
+          this.treasury.sol = roundAmount(this.treasury.sol + treasuryFee);
         }
+        this.distributeStakingRewards(stakerFee, duel.currency);
         duel.winner = duel.rival;
       } else {
         if (duel.currency === 'LYNX') {

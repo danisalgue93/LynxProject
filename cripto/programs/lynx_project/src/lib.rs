@@ -1529,11 +1529,33 @@ pub mod lynx_project {
         require_keys_eq!(ctx.accounts.recipient.key(), recipient_key, LynxError::Unauthorized);
 
         let total = duel.amount.checked_mul(2).ok_or(LynxError::MathOverflow)?;
-        let fee = bps(total, GLOBAL_TRADE_FEE_BPS)?;
+        // Los duelos 1v1 pagan el MISMO fee de protocolo que un evento de prediccion:
+        // 10% del bote, repartido 5% a stakers de LYNX y 5% al treasury. Antes solo
+        // cobraban el 0,1% de trading y los stakers no recibian nada de los duelos.
+        let staker_fee = bps(total, STAKER_REWARD_FEE_BPS)?;
+        let treasury_fee = bps(total, TREASURY_EVENT_FEE_BPS)?;
+        let fee = staker_fee.checked_add(treasury_fee).ok_or(LynxError::MathOverflow)?;
         if recipient_key == ctx.accounts.config.treasury {
+            // Empate / nadie acierta: el bote entero va al treasury, sin fee que repartir.
             transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), total)?;
         } else {
-            transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), fee)?;
+            transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), treasury_fee)?;
+            if staker_fee > 0 && ctx.accounts.config.total_staked > 0 {
+                transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.rewards_vault.to_account_info(), staker_fee)?;
+                ctx.accounts.config.reward_per_token_scaled = ctx
+                    .accounts
+                    .config
+                    .reward_per_token_scaled
+                    .checked_add(
+                        (staker_fee as u128)
+                            .checked_mul(REWARD_SCALE).ok_or(LynxError::MathOverflow)?
+                            .checked_div(ctx.accounts.config.total_staked as u128).ok_or(LynxError::MathOverflow)?,
+                    )
+                    .ok_or(LynxError::MathOverflow)?;
+            } else {
+                // Sin stakers, su parte va al treasury en vez de quedar bloqueada.
+                transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), staker_fee)?;
+            }
             transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.recipient.to_account_info(), total.checked_sub(fee).ok_or(LynxError::MathOverflow)?)?;
         }
         duel.status = DuelStatus::Resolved;
@@ -2538,9 +2560,9 @@ pub struct ResolveDuelSol<'info> {
     #[account(seeds = [b"config"], bump = config.bump)]
     pub config: Account<'info, ProtocolConfig>,
     #[account(seeds = [b"market", parent_market.id.to_le_bytes().as_ref()], bump = parent_market.bump)]
-    pub parent_market: Account<'info, Market>,
+    pub parent_market: Box<Account<'info, Market>>,
     #[account(mut, has_one = parent_market)]
-    pub duel: Account<'info, Duel>,
+    pub duel: Box<Account<'info, Duel>>,
     #[account(mut, seeds = [b"duel_vault", duel.key().as_ref()], bump = duel_vault.bump)]
     pub duel_vault: Account<'info, DuelVault>,
     /// CHECK: checked against duel winner
@@ -2549,6 +2571,10 @@ pub struct ResolveDuelSol<'info> {
     /// CHECK: checked against config.treasury
     #[account(mut, address = config.treasury)]
     pub treasury: UncheckedAccount<'info>,
+    // PASO 3 (duelos 1v1): la mitad del fee del protocolo va a los stakers de LYNX,
+    // asi que la instruccion necesita el rewards vault.
+    #[account(mut, seeds = [b"rewards_vault"], bump = rewards_vault.bump)]
+    pub rewards_vault: Account<'info, RewardsVault>,
 }
 
 #[derive(Accounts)]

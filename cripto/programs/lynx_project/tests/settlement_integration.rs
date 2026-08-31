@@ -5,9 +5,10 @@
 //! misroutes funds. Driven against the REAL compiled program via BanksClient.
 
 use anchor_lang::{AccountSerialize, AccountDeserialize, InstructionData, ToAccountMetas};
-use lynx_project::constants::GLOBAL_TRADE_FEE_BPS;
+use lynx_project::constants::{STAKER_REWARD_FEE_BPS, TREASURY_EVENT_FEE_BPS};
 use lynx_project::state::{
     Currency, Duel, DuelStatus, DuelType, DuelVault, Market, MarketStatus, MarketVault, Outcome, ProtocolConfig,
+    RewardsVault,
 };
 use solana_program_test::ProgramTest;
 use solana_sdk::{
@@ -58,7 +59,10 @@ async fn resolve_duel_sol_pays_the_winner_minus_fee() {
 
     let amount = LAMPORTS_PER_SOL / 2; // 0.5 SOL each side
     let total = amount * 2;            // 1 SOL pot
-    let fee = total * GLOBAL_TRADE_FEE_BPS / 10_000; // 10 bps = 0.001 SOL
+    // Un duelo 1v1 paga el fee de protocolo: 10% del bote (5% stakers + 5% treasury).
+    // Este test no siembra stakers (total_staked = 0), asi que la parte de stakers
+    // tambien acaba en el treasury y el assert de treasury sigue midiendo el fee entero.
+    let fee = total * (STAKER_REWARD_FEE_BPS + TREASURY_EVENT_FEE_BPS) / 10_000;
 
     // Market resolved YES; the duel creator picked YES so the creator wins.
     let market = resolved_market(market_id, mb, vault_pda, vb, Outcome::Yes, LAMPORTS_PER_SOL, 2 * LAMPORTS_PER_SOL, LAMPORTS_PER_SOL, LAMPORTS_PER_SOL);
@@ -76,6 +80,8 @@ async fn resolve_duel_sol_pays_the_winner_minus_fee() {
     // Anchor discriminator matches — MarketVault has the same layout but a
     // different discriminator, which would fail deserialization).
     pt.add_account(duel_vault_pda, racct(bytes(&DuelVault { duel: duel_key, bump: dvb }), total));
+    let (rv_pda, rv_bump) = Pubkey::find_program_address(&[b"rewards_vault"], &pid());
+    pt.add_account(rv_pda, racct(bytes(&RewardsVault { bump: rv_bump }), 0));
     let ctx = pt.start_with_context().await;
 
     let before = ctx.banks_client.get_balance(creator).await.unwrap();
@@ -84,6 +90,7 @@ async fn resolve_duel_sol_pays_the_winner_minus_fee() {
         accounts: lynx_project::accounts::ResolveDuelSol {
             config: config_pda, parent_market: market_pda, duel: duel_key, duel_vault: duel_vault_pda,
             recipient: creator, treasury,
+            rewards_vault: Pubkey::find_program_address(&[b"rewards_vault"], &pid()).0,
         }.to_account_metas(None),
         data: lynx_project::instruction::ResolveDuelSol {}.data(),
     };
