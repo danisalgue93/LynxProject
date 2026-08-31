@@ -1582,7 +1582,32 @@ pub mod lynx_project {
                 .checked_add(payout_micro_lynx)
                 .ok_or(LynxError::MathOverflow)?;
         } else {
-            transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), duel.amount)?;
+            // PASO 13: el protocolo gana. El SOL del duelo se reparte 50% a los
+            // stakers de LYNX y 50% al treasury. El credito a stakers usa el mismo
+            // patron que finalize_market_and_fees (rewards_vault + indice
+            // reward_per_token_scaled), para que cada staker cobre su parte
+            // proporcional con claim_staking_rewards.
+            let duel_amount = duel.amount;
+            let staker_share = duel_amount.checked_div(2).ok_or(LynxError::MathOverflow)?;
+            let treasury_share = duel_amount.checked_sub(staker_share).ok_or(LynxError::MathOverflow)?;
+            if staker_share > 0 && ctx.accounts.config.total_staked > 0 {
+                transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.rewards_vault.to_account_info(), staker_share)?;
+                ctx.accounts.config.reward_per_token_scaled = ctx
+                    .accounts
+                    .config
+                    .reward_per_token_scaled
+                    .checked_add(
+                        (staker_share as u128)
+                            .checked_mul(REWARD_SCALE).ok_or(LynxError::MathOverflow)?
+                            .checked_div(ctx.accounts.config.total_staked as u128).ok_or(LynxError::MathOverflow)?,
+                    )
+                    .ok_or(LynxError::MathOverflow)?;
+                transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), treasury_share)?;
+            } else {
+                // Sin stakers no hay a quien repartir: el SOL entero va al treasury
+                // en vez de quedar atrapado en el rewards_vault sin reclamante.
+                transfer_lamports(&ctx.accounts.duel_vault.to_account_info(), &ctx.accounts.treasury.to_account_info(), duel_amount)?;
+            }
         }
         duel.status = DuelStatus::Resolved;
         // SC-03: release protocol exposure now that the duel is settled
@@ -2531,16 +2556,16 @@ pub struct ResolveProtocolDuel<'info> {
     #[account(mut, seeds = [b"config"], bump = config.bump)]
     pub config: Account<'info, ProtocolConfig>,
     #[account(seeds = [b"market", parent_market.id.to_le_bytes().as_ref()], bump = parent_market.bump)]
-    pub parent_market: Account<'info, Market>,
+    pub parent_market: Box<Account<'info, Market>>,
     #[account(mut, has_one = parent_market)]
-    pub duel: Account<'info, Duel>,
+    pub duel: Box<Account<'info, Duel>>,
     #[account(mut, seeds = [b"duel_vault", duel.key().as_ref()], bump = duel_vault.bump)]
     pub duel_vault: Account<'info, DuelVault>,
     /// CHECK: checked against duel creator
     #[account(mut)]
     pub recipient: UncheckedAccount<'info>,
     #[account(mut, address = config.lynx_mint)]
-    pub lynx_mint: Account<'info, Mint>,
+    pub lynx_mint: Box<Account<'info, Mint>>,
     // The LYNX prize is minted here. This instruction is permissionless (anyone
     // may crank a settled duel), so without an owner constraint the caller could
     // pass their own token account and steal the winner's minted LYNX while the
@@ -2551,10 +2576,14 @@ pub struct ResolveProtocolDuel<'info> {
         constraint = recipient_lynx_account.mint == config.lynx_mint @ LynxError::InvalidCurrency,
         constraint = recipient_lynx_account.owner == duel.creator @ LynxError::Unauthorized
     )]
-    pub recipient_lynx_account: Account<'info, TokenAccount>,
+    pub recipient_lynx_account: Box<Account<'info, TokenAccount>>,
     /// CHECK: checked against config.treasury
     #[account(mut, address = config.treasury)]
     pub treasury: UncheckedAccount<'info>,
+    // PASO 13: half of the SOL the protocol wins goes to LYNX stakers, so the
+    // rewards vault must be reachable from this instruction.
+    #[account(mut, seeds = [b"rewards_vault"], bump = rewards_vault.bump)]
+    pub rewards_vault: Account<'info, RewardsVault>,
     pub token_program: Program<'info, Token>,
 }
 
@@ -3049,8 +3078,8 @@ mod math_tests {
         // Same order production uses: prorate emission to the position, then split.
         let position_micro_lynx = mul_div(base_micro_lynx, position, pool_total).unwrap();
         let got = bps(position_micro_lynx, LYNX_PARTICIPANT_BPS).unwrap();
-        // 85% participant share of this position's 10% (= 1e8 micro-LYNX) share.
-        assert_eq!(got, 85_000_000);
+        // 30% participant share of this position's 10% (= 1e8 micro-LYNX) share.
+        assert_eq!(got, 30_000_000);
     }
 
     /// The three-way LYNX split must never mint more than the computed total.

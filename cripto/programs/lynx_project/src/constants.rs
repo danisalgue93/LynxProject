@@ -7,11 +7,13 @@ pub const GLOBAL_TRADE_FEE_BPS: u64 = 10;
 pub const LYNX_EVENT_BURN_BPS: u64 = 1_500;
 
 // Minting split for LYNX emitted on resolved SOL markets:
-// 85% to the participant (user), 15% sold on the order book at the
-// initial listing price (see INITIAL_SALE_PRICE_LAMPORTS below).
-pub const LYNX_PARTICIPANT_BPS: u64 = 8_500;
-pub const LYNX_TREASURY_BPS: u64 = 0;
-pub const LYNX_INITIAL_SALE_BPS: u64 = 1_500;
+// 30% participants (users) / 60% order book / 10% treasury (whitepaper PASO 4).
+// The treasury share gives the protocol a LYNX inventory, the FIRST source used
+// to settle a lost 1v1vP before the order book or minting (PASO 12).
+// The three shares MUST sum to BPS_DENOMINATOR (10_000).
+pub const LYNX_PARTICIPANT_BPS: u64 = 3_000;
+pub const LYNX_TREASURY_BPS: u64 = 1_000;
+pub const LYNX_INITIAL_SALE_BPS: u64 = 6_000;
 
 // LYNX has 6 decimals. 1 SOL = 1_000_000_000 lamports should mint
 // 1 LYNX = 1_000_000 micro-LYNX, so lamports / 1_000.

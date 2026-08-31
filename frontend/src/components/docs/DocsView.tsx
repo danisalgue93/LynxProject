@@ -45,7 +45,7 @@ export function DocsView() {
       id: "03",
       title: t('docs.step3Title', "LYNX Emission"),
       icon: <Coins className="w-5 h-5" />,
-      content: t('docs.step3Content', "1 LYNX is emitted for every 1 SOL accumulated in resolved SOL events. 30% goes to users, 10% to treasury, and 60% to liquidity/sales."),
+      content: t('docs.step3Content', "Base emission is 1 LYNX per 1 SOL wagered in resolved SOL events, but the rate steps down as LYNX circulating supply grows (100% at launch, down to 2.5%). Of the LYNX emitted: 30% to users, 10% to treasury, 60% to the order book."),
       color: "#14F195",
       details: [
         { label: "Users", value: "30%" },
@@ -90,11 +90,11 @@ export function DocsView() {
       id: "07",
       title: t('docs.step7Title', "1v1vP Mode"),
       icon: <Zap className="w-5 h-5" />,
-      content: t('docs.step7Content', "In 1v1vP Duels, the protocol participates by emitting LYNX for its SOL counterpart. The amount minted follows the same decreasing supply-tiered ratio as SOL-market emissions, not a fixed 1:1 to the SOL wagered. If the protocol wins, the SOL goes to the Treasury. If it loses, the emitted LYNX is awarded to the players."),
+      content: t('docs.step7Content', "In 1v1vP Duels the protocol takes the event position left open. If the protocol WINS, the SOL is split 50% to LYNX stakers and 50% to the treasury. If it LOSES, it settles in this order: 1) treasury LYNX, 2) the protocol own LYNX on the order book, 3) minting as a last resort, paying the LYNX equivalent of the SOL at the market price."),
       color: "#9945FF",
       details: [
-        { label: "Protocol Matches", value: "Dynamic (see emission schedule)", highlight: true },
-        { label: "If Protocol Loses", value: "+LYNX to Players" }
+        { label: "If Protocol Wins", value: "50% Stakers / 50% Treasury", highlight: true },
+        { label: "If Protocol Loses", value: "Treasury -> Order Book -> Mint" }
       ]
     },
     {

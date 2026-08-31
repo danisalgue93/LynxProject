@@ -1,7 +1,7 @@
 //! Integration coverage for mint_lynx_distribution — the LYNX participation
 //! emission that every participant of a resolved SOL market claims for their own
-//! position. It mints new LYNX (85% to the participant, 15% to the initial-sale
-//! account, 0% base to treasury) prorated by the position's share of the pool,
+//! position. It mints new LYNX (30% to the participant, 60% to the order-book
+//! account, 10% base to treasury) prorated by the position's share of the pool,
 //! and routes the rounding remainder ("dust") to treasury so the minted total is
 //! exact. Driven against the REAL compiled program via BanksClient.
 //!
@@ -123,13 +123,13 @@ async fn run_distribution(pool_total: u64, position_amount: u64) -> (u64, u64, u
 }
 
 #[tokio::test]
-async fn sole_participant_gets_the_full_85_15_split() {
+async fn sole_participant_gets_the_full_30_60_10_split() {
     // pool = 10 SOL, this position IS the whole pool. base = pool/1000 = 10_000_000
     // micro-LYNX; ratio 100% -> total emission 10_000_000.
     let (holder, treasury, sale, supply, mint) = run_distribution(10 * LAMPORTS_PER_SOL, 10 * LAMPORTS_PER_SOL).await;
-    assert_eq!(holder, 8_500_000, "participant gets 85%");
-    assert_eq!(sale, 1_500_000, "initial-sale account gets 15%");
-    assert_eq!(treasury, 0, "no dust when the split divides evenly");
+    assert_eq!(holder, 3_000_000, "participant gets 30%");
+    assert_eq!(sale, 6_000_000, "order-book account gets 60%");
+    assert_eq!(treasury, 1_000_000, "treasury gets its 10% share (no dust: splits evenly)");
     assert_eq!(supply, 10_000_000, "config supply grows by exactly the emission");
     assert_eq!(mint, 10_000_000, "mint supply grows by exactly the emission");
 }
@@ -137,14 +137,14 @@ async fn sole_participant_gets_the_full_85_15_split() {
 #[tokio::test]
 async fn fractional_participant_only_mints_its_own_prorated_share() {
     // pool = 10 SOL, this position is 20% of it. The position's emission is 20% of
-    // the 10_000_000 total = 2_000_000; split 85/15 that's 1_700_000 / 300_000,
-    // both exact, so treasury dust is 0 and NOTHING beyond this position's own
+    // the 10_000_000 total = 2_000_000; split 30/60/10 that's 600_000 / 1_200_000 / 200_000,
+    // all three exact, so there is no rounding dust and NOTHING beyond this position's own
     // share is minted. (A proration that measured dust against the whole-pool
     // emission would over-mint the other 80% to treasury.)
     let (holder, treasury, sale, supply, mint) = run_distribution(10 * LAMPORTS_PER_SOL, 2 * LAMPORTS_PER_SOL).await;
-    assert_eq!(holder, 1_700_000, "participant gets 85% of its own 20% share");
-    assert_eq!(sale, 300_000, "initial-sale account gets 15% of its own 20% share");
-    assert_eq!(treasury, 0, "treasury receives only true rounding dust, not the un-emitted remainder");
+    assert_eq!(holder, 600_000, "participant gets 30% of its own 20% share");
+    assert_eq!(sale, 1_200_000, "order-book account gets 60% of its own 20% share");
+    assert_eq!(treasury, 200_000, "treasury gets its 10% share plus any true rounding dust, not the un-emitted remainder");
     assert_eq!(supply, 2_000_000, "config supply grows only by this position's prorated emission");
     assert_eq!(mint, 2_000_000, "mint supply grows only by this position's prorated emission");
 }

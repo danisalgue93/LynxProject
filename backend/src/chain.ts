@@ -877,6 +877,9 @@ async function settleReadyDuels(keeper: Keypair, conn: Connection) {
             { pubkey: lynxMint, isSigner: false, isWritable: true },
             { pubkey: recipientLynxAccount, isSigner: false, isWritable: true },
             { pubkey: treasury, isSigner: false, isWritable: true },
+            // PASO 13: half the SOL the protocol wins is credited to LYNX stakers
+            // through the rewards vault, so the instruction now needs this account.
+            { pubkey: pda([Buffer.from('rewards_vault')], PROGRAM_ID!), isSigner: false, isWritable: true },
             { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
           ],
           data: IX.resolveProtocolDuel,

@@ -422,7 +422,7 @@ describe('Lynx backend API', () => {
     expect(response.body.position.amount).toBe(85);
   });
 
-  it('uses the 85/0/15 LYNX emission split after SOL event resolution', async () => {
+  it('uses the 30/60/10 LYNX emission split after SOL event resolution', async () => {
     const adminToken = await loginAdmin();
     const emitterA = await registerUser('emitter-a');
     const emitterB = await registerUser('emitter-b');
@@ -453,10 +453,15 @@ describe('Lynx backend API', () => {
       .expect(200);
     // Fresh seed() means circulating supply is 0 -> tier-1 mint ratio (1.00),
     // and the SOL pool is 6 + 4 = 10, so totalEmission = 10.
-    expect(a.body.lynxBalance).toBe(5.1);
-    expect(b.body.lynxBalance).toBe(3.4);
-    expect(store.treasury.lynx).toBe(0);
-    expect(store.treasury.lynxForInitialSale).toBe(1.5);
+    // Whitepaper PASO 4 split: 30% users / 60% order book / 10% treasury.
+    // A staked 6 of the 10 SOL pool -> 6 LYNX emitted for A, 30% = 1.8 to A.
+    expect(a.body.lynxBalance).toBe(1.8);
+    // B staked 4 -> 4 LYNX emitted for B, 30% = 1.2 to B.
+    expect(b.body.lynxBalance).toBe(1.2);
+    // 10% of the whole 10 LYNX emission is the protocol LYNX inventory.
+    expect(store.treasury.lynx).toBe(1);
+    // 60% goes to the order book.
+    expect(store.treasury.lynxForInitialSale).toBe(6);
   });
 
   it('splits 100% of the calculated LYNX emission across participant/treasury/initial-sale shares, with none lost', async () => {

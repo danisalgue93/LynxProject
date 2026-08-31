@@ -1585,9 +1585,16 @@ export class LynxState {
           this.mintProtocolDuelLynx(wallet.wallet, duel.amount);
           duel.winner = duel.creator;
         } else {
+          // PASO 13: el protocolo gana el 1v1vP -> el SOL se reparte 50% a los
+          // stakers de LYNX y 50% al treasury (antes iba 100% al treasury).
+          // distributeStakingRewards ya redirige al treasury si no hay stakers,
+          // asi que el SOL nunca queda sin destinatario.
+          const stakerShare = roundAmount(duel.amount / 2);
+          const treasuryShare = roundAmount(duel.amount - stakerShare);
           const protocolWallet = this.getWallet(TREASURY_WALLET);
-          this.credit(protocolWallet, 'SOL', duel.amount);
-          this.treasury.protocolDuelSol = roundAmount(this.treasury.protocolDuelSol + duel.amount);
+          this.credit(protocolWallet, 'SOL', treasuryShare);
+          this.treasury.protocolDuelSol = roundAmount(this.treasury.protocolDuelSol + treasuryShare);
+          this.distributeStakingRewards(stakerShare, 'SOL');
           duel.winner = TREASURY_WALLET;
         }
         continue;

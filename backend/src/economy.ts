@@ -36,15 +36,17 @@ export function getMintRatio(circulatingSupply: number): number {
   return LYNX_MINT_RATIO_FLOOR;
 }
 // Minting split for LYNX emitted on resolved SOL markets:
-// 85% to the participant (user), 15% sold on the order book at the
-// initial listing price (see LYNX_INITIAL_SALE_PRICE below).
-export const LYNX_PARTICIPANT_SHARE = 0.85;
-export const LYNX_TREASURY_SHARE = 0;
-export const LYNX_INITIAL_SALE_SHARE = 0.15;
+// 30% participants (users) / 60% order book / 10% treasury (whitepaper PASO 4).
+// The treasury share is the protocol LYNX inventory used first to settle a lost
+// 1v1vP (PASO 12). Must sum to 1.
+export const LYNX_PARTICIPANT_SHARE = 0.30;
+export const LYNX_TREASURY_SHARE = 0.10;
+export const LYNX_INITIAL_SALE_SHARE = 0.60;
 
-// Initial order-book listing price for the 15% sale share, in SOL per LYNX.
-// Must stay within the 0.6-0.7 SOL range.
-export const LYNX_INITIAL_SALE_PRICE = 0.65;
+// Initial order-book listing price for the 60% order-book share, in SOL per LYNX.
+// Set once at launch as close to 1:1 with SOL as possible; from then on the price
+// is set purely by the market/order book, never by the protocol (PASO 5).
+export const LYNX_INITIAL_SALE_PRICE = 1.0;
 
 export const DEV_WALLET = 'DEV_WALLET';
 

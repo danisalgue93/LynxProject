@@ -335,6 +335,9 @@ async fn protocol_duel_rejects_foreign_lynx_account() {
     pt.add_account(duel_pda, program_account(account_bytes(&duel), 0));
     pt.add_account(duel_vault_pda, program_account(account_bytes(&lynx_project::state::DuelVault { duel: duel_pda, bump: dv_bump }), LAMPORTS_PER_SOL));
     pt.add_account(lynx_mint, spl_mint(config));
+    // PASO 13: resolve_protocol_duel ahora acredita la mitad del SOL ganado a los
+    // stakers via el rewards_vault, asi que la cuenta debe existir en el test.
+    pt.add_account(rewards_vault_pda().0, program_account(account_bytes(&RewardsVault { bump: rewards_vault_pda().1 }), 0));
     pt.add_account(treasury.pubkey(), funded_wallet(LAMPORTS_PER_SOL));
     pt.add_account(creator.pubkey(), funded_wallet(LAMPORTS_PER_SOL));
     // The attack: a LYNX token account owned by the ATTACKER, not the creator.
@@ -354,6 +357,7 @@ async fn protocol_duel_rejects_foreign_lynx_account() {
             lynx_mint,
             recipient_lynx_account: attacker_lynx, // …but the LYNX leg is hijacked
             treasury: treasury.pubkey(),
+            rewards_vault: rewards_vault_pda().0,
             token_program: spl_token::id(),
         }
         .to_account_metas(None),
