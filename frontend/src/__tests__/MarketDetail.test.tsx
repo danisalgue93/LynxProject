@@ -173,4 +173,26 @@ describe('MarketDetail', () => {
       expect(mockFetchPositions).toHaveBeenCalled();
     });
   });
+
+  it('disables trading once the cutoff has elapsed, even while the status still reads ACTIVE', () => {
+    // The status lags on purpose here: on-chain it only advances when somebody
+    // cranks the permissionless cut_off_market(), so a closed market can still
+    // report ACTIVE. The clock has to be what closes the ticket, otherwise the
+    // button submits a transaction the program is guaranteed to reject.
+    const elapsed = makeMarket({
+      status: MarketStatus.ACTIVE,
+      cutoffAt: Date.now() - 1000,
+    });
+    render(<MarketDetail market={elapsed} onClose={onClose} />);
+
+    const button = screen.getByRole('button', { name: /betting closed/i });
+    expect(button).toBeDisabled();
+  });
+
+  it('keeps trading enabled while the cutoff is still ahead', () => {
+    render(<MarketDetail market={makeMarket()} onClose={onClose} />);
+
+    const button = screen.getByRole('button', { name: /confirm trade/i });
+    expect(button).not.toBeDisabled();
+  });
 });

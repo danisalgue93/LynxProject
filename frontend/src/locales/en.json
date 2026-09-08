@@ -180,6 +180,7 @@
     "estPayout": "Est. Payout",
     "processing": "Processing...",
     "confirmTrade": "Confirm Trade",
+    "bettingClosed": "Betting closed",
     "professionalMode": "Professional Mode",
     "bookInfo": "Select a price point on the left to pre-fill an order. Direct P2P matching with zero spread.",
     "duelsInfo": "Browse direct challenges for this event. These are fixed-odds duels with pre-defined stakes.",

@@ -82,7 +82,10 @@ export function PortfolioView() {
   useEffect(() => {
     const loadData = async () => {
       const [marketData, portfolioData] = await Promise.all([
-        fetchMarkets(),
+        // includeFinished: holdings are looked up against this list, and a
+        // position's market is usually past its cutoff (that is precisely when
+        // you are waiting to claim). The default listing excludes those.
+        fetchMarkets({ includeFinished: true }),
         fetchPortfolio()
       ]);
       setMarkets(marketData);

@@ -298,13 +298,20 @@ export function useProgram() {
     return currentWallet;
   }, [approveWallet, requireWallet]);
 
-  // Fetch all active markets from the backend indexer
-  const fetchMarkets = useCallback(async (): Promise<Market[]> => {
+  // Fetch markets from the backend indexer.
+  //
+  // By default this returns only markets you can still bet on: the backend
+  // drops everything past its cutoff. Pass { includeFinished: true } when the
+  // caller needs to look up a market it already references — the portfolio
+  // resolves each holding's market name this way, and those markets are, by
+  // definition, usually closed.
+  const fetchMarkets = useCallback(async (opts?: { includeFinished?: boolean }): Promise<Market[]> => {
     const opId = `fetchMarkets-${Date.now()}`;
     startOp(opId);
     setError(null);
     try {
-      const response = await apiFetch<{ data: Market[]; total: number; limit: number; offset: number }>('/api/markets?limit=200');
+      const query = opts?.includeFinished ? '/api/markets?limit=200&includeFinished=true' : '/api/markets?limit=200';
+      const response = await apiFetch<{ data: Market[]; total: number; limit: number; offset: number }>(query);
       return response.data;
     } catch (err) {
       console.error('Error fetching markets:', err);

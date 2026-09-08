@@ -329,6 +329,25 @@ export class LynxState {
   }
 
   /**
+   * True once a market can no longer be entered — the single source of truth
+   * for "this must not appear as bettable anywhere".
+   *
+   * Deliberately checks the wall clock as well as the status, because the two
+   * can disagree: the on-chain status only advances when somebody cranks
+   * cut_off_market(), which is permissionless and therefore may never happen.
+   * A market whose cutoff passed weeks ago can still read `Active` on-chain.
+   * The clock never lies, so it wins.
+   */
+  isPastCutoff(market: Market) {
+    return (
+      nowMs() >= market.cutoffAt ||
+      market.status === 'CUT_OFF' ||
+      market.status === 'RESOLVED' ||
+      market.status === 'EXPIRED'
+    );
+  }
+
+  /**
    * Reconciles in-memory statuses against real wall-clock time.
    * Called on startup (after loading from DB) and can be called anytime.
    * - Markets with cutoffAt in the past and status OPEN/ACTIVE → CUT_OFF
@@ -353,14 +372,18 @@ export class LynxState {
     return [...this.markets.values()]
       .filter(m => {
         if (includeFinished) return true;
-        // A market only disappears from the default listing once it's
-        // actually RESOLVED — i.e. finalized by the admin (or oracle).
-        // Reaching cutoffAt (and the resulting CUT_OFF status) only stops
-        // *new* entries, which assertMarketAcceptsEntries() already enforces
-        // independently of this listing. Hiding the market itself here too
-        // made live markets vanish with no warning while still awaiting
-        // resolution, even for users who already hold open positions in them.
-        return m.status !== 'RESOLVED';
+        // The default listing is the *betting* listing: it must only contain
+        // markets you can still enter. Once cutoffAt passes, every on-chain
+        // entry point rejects the transaction (`require!(now < cutoff_ts)` on
+        // bet/order/duel in lib.rs), so showing the market as if it were live
+        // just invites transactions that are guaranteed to fail.
+        //
+        // Previously this only hid RESOLVED markets, on the reasoning that
+        // holders of open positions must not lose sight of a market awaiting
+        // resolution. That concern is real but belongs to a different view:
+        // the portfolio fetches with includeFinished=true and looks holdings up
+        // there, so nothing becomes unreachable by filtering here.
+        return !this.isPastCutoff(m);
       })
       .sort((a, b) => b.createdAt - a.createdAt);
   }
@@ -389,14 +412,17 @@ export class LynxState {
         if (duel.status === 'RESOLVED' || duel.status === 'CANCELLED') return false;
         const market = this.markets.get(duel.parentMarketId);
         if (!market) return false;
-        // A duel (OPEN awaiting a rival, or ACTIVE with funds locked awaiting
-        // the market's outcome) stays listed for as long as its market hasn't
-        // been fully RESOLVED. Filtering it out as soon as the market hits
-        // cutoff/CUT_OFF was wrong: acceptDuel() explicitly still allows
-        // accepting an OPEN duel after cutoff (only RESOLVED blocks it), and
-        // an ACTIVE duel with two users' funds locked must stay visible while
-        // it's waiting on resolveMarket() to settle it.
-        return market.status !== 'RESOLVED';
+        // Same rule as listMarkets(): past the parent market's cutoff a duel
+        // can no longer be accepted on-chain (`require!(now < cutoff_ts)` in
+        // accept_duel), so keeping it in the default listing only renders an
+        // Accept button that cannot work.
+        //
+        // This used to keep duels listed until the market was RESOLVED, to
+        // match acceptDuel()'s old post-cutoff allowance. That allowance was
+        // itself the bug — it contradicted the program — and is now gone.
+        // ACTIVE duels awaiting settlement remain reachable through the
+        // includeFinished listing.
+        return !this.isPastCutoff(market);
       })
       .sort((a, b) => b.createdAt - a.createdAt);
   }
@@ -828,10 +854,13 @@ export class LynxState {
     const wallet = this.getWallet(input.wallet);
     if (wallet.wallet === duel.creator) throw new Error('Creator cannot accept their own duel');
     const market = this.getMarket(duel.parentMarketId);
-    // A duel can be accepted as long as the market has not been fully resolved yet.
-    // assertMarketAcceptsEntries is intentionally NOT used here: it blocks the moment
-    // the market cutoff passes, but a duel can legitimately still be OPEN and waiting.
-    if (market.status === 'RESOLVED') throw new Error('The market for this duel has already been resolved');
+    // Accepting a duel puts new money at risk, so it is an *entry* and obeys the
+    // cutoff like every other one. The program enforces exactly this in
+    // accept_duel (`require!(now < parent_market.cutoff_ts)`), so the previous
+    // "anything short of RESOLVED is fine" rule let the backend accept a duel
+    // the chain would then reject — off-chain state saying ACTIVE for a duel
+    // that was never matched on-chain.
+    assertMarketAcceptsEntries(market);
     const positionB = normalizePosition(input.side ?? opposingPosition(duel.positionA, duel.isTernary), duel.isTernary);
     assertPositionAllowed(positionB, duel.isTernary);
     if (positionB === duel.positionA) throw new Error('Rival must choose a different side');

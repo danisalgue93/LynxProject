@@ -1697,19 +1697,29 @@ app.use(onchainRouter);
 // lanza: si el indexador no tiene el dato todavia (recien creado, o
 // PROGRAM_ID no configurado en este entorno), se devuelve el mercado tal
 // cual venia del store off-chain, sin romper la respuesta.
-function overlayOnChainMarket<T extends { onChainMarket?: string; poolAmount: number; yesAmount: number; noAmount: number; drawAmount?: number; status: string; result?: string }>(market: T): T {
+function overlayOnChainMarket<T extends { onChainMarket?: string; poolAmount: number; yesAmount: number; noAmount: number; drawAmount?: number; status: string; result?: string; cutoffAt?: number }>(market: T): T {
   if (!market.onChainMarket) return market;
   const onChain = getIndexedMarket(market.onChainMarket);
   if (!onChain) return market;
   const factor = onChain.currency === 'SOL' ? 1_000_000_000 : 1_000_000;
   const statusMap: Record<string, string> = { Open: 'OPEN', Active: 'ACTIVE', CutOff: 'CUT_OFF', PendingResolution: 'CUT_OFF', Resolved: 'RESOLVED', Expired: 'EXPIRED' };
+  let status = statusMap[onChain.status] ?? market.status;
+  // The on-chain status is only as fresh as the last permissionless crank of
+  // cut_off_market() — which nobody is obliged to send. Left alone, this
+  // overlay would stamp a stale `Active` over the correctly reconciled
+  // CUT_OFF and re-advertise a market whose betting window closed weeks ago
+  // as live. The clock is authoritative for the cutoff, so never let the
+  // overlay walk a market back to a bettable status past cutoffAt.
+  if ((status === 'OPEN' || status === 'ACTIVE') && market.cutoffAt !== undefined && Date.now() >= market.cutoffAt) {
+    status = 'CUT_OFF';
+  }
   return {
     ...market,
     poolAmount: Number(onChain.poolTotal) / factor,
     yesAmount: Number(onChain.yesTotal) / factor,
     noAmount: Number(onChain.noTotal) / factor,
     drawAmount: Number(onChain.drawTotal) / factor,
-    status: statusMap[onChain.status] ?? market.status,
+    status,
     result: fromOnChainOutcomeName(onChain.result) ?? market.result,
   };
 }

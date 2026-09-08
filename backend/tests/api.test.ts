@@ -647,9 +647,12 @@ describe('Lynx backend API', () => {
       .expect(400);
   });
 
-  it('keeps a market in the default listing after cutoff, only dropping it once it is actually RESOLVED', async () => {
+  it('drops a market from the default listing as soon as it is cut off, keeping it reachable via includeFinished', async () => {
     const adminToken = await loginAdmin();
     const market = await createMarket(adminToken, { id: 'market-listing-cutoff' });
+
+    const beforeCutoff = await request(app).get('/api/markets').expect(200);
+    expect(beforeCutoff.body.data.some((m: any) => m.id === market.id)).toBe(true);
 
     await request(app)
       .post(`/api/admin/markets/${market.id}/cutoff`)
@@ -657,28 +660,28 @@ describe('Lynx backend API', () => {
       .send({ force: true, signature: sig })
       .expect(200);
 
-    // New entries are correctly blocked past cutoff (covered by the test
-    // above), but the market itself — now awaiting resolution — must still
-    // be visible in the default (non-includeFinished) listing.
+    // The default listing is the *betting* listing. Past cutoff no entry can
+    // succeed on-chain, so the market must not be advertised there any more.
     const afterCutoff = await request(app).get('/api/markets').expect(200);
-    const found = afterCutoff.body.data.find((m: any) => m.id === market.id);
-    expect(found).toBeDefined();
-    expect(found.status).toBe('CUT_OFF');
+    expect(afterCutoff.body.data.some((m: any) => m.id === market.id)).toBe(false);
+
+    // ...but nothing becomes unreachable: the portfolio looks holdings up
+    // through includeFinished=true, and the market is still addressable
+    // directly by id.
+    const direct = await request(app).get(`/api/markets/${market.id}`).expect(200);
+    expect(direct.body.status).toBe('CUT_OFF');
+    const withFinished = await request(app).get('/api/markets?includeFinished=true').expect(200);
+    expect(withFinished.body.data.some((m: any) => m.id === market.id)).toBe(true);
 
     await resolveMarket(market.id, 'YES');
 
-    // Only once the admin actually finalizes the market does it drop out.
     const afterResolve = await request(app).get('/api/markets').expect(200);
     expect(afterResolve.body.data.some((m: any) => m.id === market.id)).toBe(false);
-
-    // It's still reachable directly and via includeFinished=true.
-    const direct = await request(app).get(`/api/markets/${market.id}`).expect(200);
-    expect(direct.body.status).toBe('RESOLVED');
-    const withFinished = await request(app).get('/api/markets?includeFinished=true').expect(200);
-    expect(withFinished.body.data.some((m: any) => m.id === market.id)).toBe(true);
+    const resolvedDirect = await request(app).get(`/api/markets/${market.id}`).expect(200);
+    expect(resolvedDirect.body.status).toBe('RESOLVED');
   });
 
-  it('keeps a market listed past its cutoffAt timestamp even without a manual admin cutoff call', async () => {
+  it('drops a market once its cutoffAt elapses, with no manual admin cutoff call', async () => {
     const adminToken = await loginAdmin();
     const now = Date.now();
     const market = await createMarket(adminToken, {
@@ -687,20 +690,23 @@ describe('Lynx backend API', () => {
       resolveAt: now + 1000 * 60 * 60
     });
 
+    const beforeCutoff = await request(app).get('/api/markets').expect(200);
+    expect(beforeCutoff.body.data.some((m: any) => m.id === market.id)).toBe(true);
+
     await new Promise((resolve) => setTimeout(resolve, 80));
 
+    // The wall clock alone closes the market — no admin call, no cron, no
+    // on-chain crank. This is what stops long-expired markets from lingering
+    // in the UI as if they were still live.
     const listed = await request(app).get('/api/markets').expect(200);
-    const found = listed.body.data.find((m: any) => m.id === market.id);
-    expect(found).toBeDefined();
-    // Reading the list also reconciles the stale status on the fly — no
-    // server restart or background job required for the badge to be right.
-    expect(found.status).toBe('CUT_OFF');
+    expect(listed.body.data.some((m: any) => m.id === market.id)).toBe(false);
 
+    // Reading it directly also reconciles the stale status on the fly.
     const direct = await request(app).get(`/api/markets/${market.id}`).expect(200);
     expect(direct.body.status).toBe('CUT_OFF');
   });
 
-  it('keeps OPEN and ACTIVE duels in the default listing after their market is cut off, until it actually resolves', async () => {
+  it('drops duels from the default listing once their parent market is cut off, and refuses late accepts', async () => {
     const adminToken = await loginAdmin();
     const creator = await registerUser('duel-listing-creator');
     const rival = await registerUser('duel-listing-rival');
@@ -736,24 +742,37 @@ describe('Lynx backend API', () => {
       .send({ force: true, signature: sig })
       .expect(200);
 
-    // The ACTIVE duel has two users' funds locked and is waiting on
-    // resolveMarket() — it must still show up in the default
-    // (non-includeFinished) listing. The OPEN duel can still legitimately be
-    // accepted past cutoff (per acceptDuel()), so it must stay listed too.
+    // Past the parent market's cutoff no duel can be entered on-chain
+    // (accept_duel requires now < parent_market.cutoff_ts), so neither the
+    // ACTIVE one nor the still-OPEN one belongs in the default listing: an
+    // Accept button there could only produce a failing transaction.
     const listed = await request(app).get('/api/duels').expect(200);
     const listedIds = listed.body.data.map((d: any) => d.id);
-    expect(listedIds).toContain(created.body.id);
-    expect(listedIds).toContain(stillOpen.body.id);
+    expect(listedIds).not.toContain(created.body.id);
+    expect(listedIds).not.toContain(stillOpen.body.id);
 
-    const filteredByMarket = await request(app).get(`/api/duels?marketId=${market.id}`).expect(200);
-    expect(filteredByMarket.body.data.map((d: any) => d.id)).toContain(created.body.id);
+    // They remain inspectable through includeFinished — funds are still locked
+    // in the ACTIVE one until the market resolves.
+    const withFinished = await request(app).get('/api/duels?includeFinished=true').expect(200);
+    expect(withFinished.body.data.map((d: any) => d.id)).toContain(created.body.id);
+
+    // And accepting the still-OPEN duel now fails, matching the program
+    // instead of silently diverging from it.
+    const lateRival = await registerUser('duel-listing-late-rival');
+    await approveAndFund(lateRival.token, lateRival.wallet, { SOL: 1 });
+    await request(app)
+      .post(`/api/duels/${stillOpen.body.id}/accept`)
+      .set(auth(lateRival.token))
+      .send({ wallet: lateRival.wallet })
+      .expect(400);
 
     // Once the market actually resolves, resolveDuelsForMarket() settles the
-    // ACTIVE duel and it drops out of the default listing.
+    // ACTIVE duel and refunds the unmatched OPEN one.
     await resolveMarket(market.id, 'YES');
 
-    const afterResolve = await request(app).get('/api/duels').expect(200);
-    expect(afterResolve.body.data.some((d: any) => d.id === created.body.id)).toBe(false);
+    const afterResolve = await request(app).get('/api/duels?includeFinished=true').expect(200);
+    const settled = afterResolve.body.data.find((d: any) => d.id === created.body.id);
+    expect(settled.status).toBe('RESOLVED');
   });
 
   it('does not lock protocol SOL stake when creating a 1v1vP duel', async () => {

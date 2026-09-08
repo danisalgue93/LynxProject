@@ -180,6 +180,7 @@
     "estPayout": "Pago Est.",
     "processing": "Procesando...",
     "confirmTrade": "Confirmar Trade",
+    "bettingClosed": "Apuestas cerradas",
     "professionalMode": "Modo Profesional",
     "bookInfo": "Selecciona un precio a la izquierda para pre-llenar una orden. Match P2P directo sin spread.",
     "duelsInfo": "Explora desafíos directos para este evento. Estos son duelos de cuotas fijas con montos predefinidos.",

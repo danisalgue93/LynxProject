@@ -23,12 +23,37 @@ import {
 
 export const onchainRouter = Router();
 
+/**
+ * True once an indexed market's betting window has closed.
+ *
+ * Mirrors Store.isPastCutoff() for the on-chain side, and for the same reason:
+ * the program refuses every entry once `now >= cutoff_ts`, so anything past it
+ * must stop being advertised as bettable. The clock is checked directly rather
+ * than trusting `status`, because the on-chain status only advances when
+ * somebody cranks the permissionless cut_off_market() — which may never
+ * happen, leaving markets reading `Active` months after they closed.
+ */
+function indexedMarketIsPastCutoff(market: { status: string; cutoffTs: number }, nowSec: number) {
+  return (
+    nowSec >= market.cutoffTs ||
+    market.status === 'CutOff' ||
+    market.status === 'PendingResolution' ||
+    market.status === 'Resolved' ||
+    market.status === 'Expired'
+  );
+}
+
 onchainRouter.get('/api/onchain/status', (_req, res) => {
   res.json(getIndexerStatus());
 });
 
-onchainRouter.get('/api/onchain/markets', (_req, res) => {
-  res.json({ data: listIndexedMarkets() });
+// `includeFinished=true` returns the raw index (used for lookups and by the
+// admin panel); the default is the bettable listing.
+onchainRouter.get('/api/onchain/markets', (req, res) => {
+  const all = listIndexedMarkets();
+  if (req.query.includeFinished === 'true') { res.json({ data: all }); return; }
+  const nowSec = Math.floor(Date.now() / 1000);
+  res.json({ data: all.filter((m) => !indexedMarketIsPastCutoff(m, nowSec)) });
 });
 
 onchainRouter.get('/api/onchain/markets/:pubkey', (req, res) => {
@@ -51,8 +76,24 @@ onchainRouter.get('/api/onchain/spot-orders', (_req, res) => {
   res.json({ data: listOpenSpotOrders() });
 });
 
-onchainRouter.get('/api/onchain/duels', (_req, res) => {
-  res.json({ data: listIndexedDuels() });
+// This is the endpoint the duels UI actually reads (useProgram.fetchDuels
+// prefers it and only falls back to /api/duels), so the cutoff filter has to
+// live here too — filtering only the off-chain store would leave the grid
+// showing Accept buttons for duels the program can no longer accept.
+onchainRouter.get('/api/onchain/duels', (req, res) => {
+  const all = listIndexedDuels();
+  if (req.query.includeFinished === 'true') { res.json({ data: all }); return; }
+  const nowSec = Math.floor(Date.now() / 1000);
+  res.json({
+    data: all.filter((d) => {
+      if (d.status === 'Resolved' || d.status === 'Cancelled') return false;
+      // A duel also dies on its own expiry, independently of its market.
+      if (nowSec >= d.expiresTs) return false;
+      const market = getIndexedMarket(d.parentMarket);
+      if (!market) return false;
+      return !indexedMarketIsPastCutoff(market, nowSec);
+    }),
+  });
 });
 
 onchainRouter.get('/api/onchain/dao-proposals', (_req, res) => {

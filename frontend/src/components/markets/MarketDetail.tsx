@@ -184,6 +184,16 @@ export function MarketDetail({
   );
   const [showMobileTrade, setShowMobileTrade] = useState(false);
 
+  // Betting is closed the moment the cutoff passes — every on-chain entry
+  // point rejects the transaction from then on. Checking the clock as well as
+  // the status matters: the status can lag reality when nobody has cranked the
+  // permissionless cut_off_market() on-chain.
+  const isClosedForBetting =
+    market.status === "RESOLVED" ||
+    market.status === "CUT_OFF" ||
+    market.status === "EXPIRED" ||
+    (!!market.cutoffAt && Date.now() >= market.cutoffAt);
+
   // Load claimable position for this market if resolved
   useEffect(() => {
     if (market.status === "RESOLVED" && market.result) {
@@ -1003,7 +1013,7 @@ export function MarketDetail({
 
                   <button
                     onClick={handleQuickBet}
-                    disabled={isPending || market.status === "RESOLVED" || (parseFloat(betAmount) || 0) <= 0}
+                    disabled={isPending || isClosedForBetting || (parseFloat(betAmount) || 0) <= 0}
                     className={cn(
                       "w-full text-black font-black py-3 md:py-4 rounded uppercase tracking-tighter text-[10px] md:text-sm transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:scale-100 flex items-center justify-center gap-2 md:gap-3",
                       isLynx
@@ -1016,6 +1026,8 @@ export function MarketDetail({
                         <div className="w-3 h-3 md:w-4 md:h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
                         {t("marketDetail.processing", "Processing...")}
                       </>
+                    ) : isClosedForBetting ? (
+                      t("marketDetail.bettingClosed", "Betting closed")
                     ) : (
                       t("marketDetail.confirmTrade", "Confirm Trade")
                     )}
