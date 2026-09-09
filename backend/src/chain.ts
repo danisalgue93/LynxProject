@@ -55,6 +55,11 @@ const PROGRAM_ID = process.env.PROGRAM_ID ? new PublicKey(process.env.PROGRAM_ID
 const REFRESH_INTERVAL_MS = Number(process.env.CHAIN_INDEXER_INTERVAL_MS || 30_000);
 const KEEPER_INTERVAL_MS = Number(process.env.CHAIN_KEEPER_INTERVAL_MS || 6_000);
 
+// Must match constants.rs::DISPUTE_WINDOW_SECONDS. The keeper only uses it to
+// decide when to *try* finalize_resolution; the program enforces the real
+// deadline, so a drift here delays the crank but can never finalize early.
+const DISPUTE_WINDOW_SECONDS = 86_400; // 24 h
+
 // --- Indexado en vivo por WebSocket (preferido sobre el polling de
 // getProgramAccounts) ---
 // El indexador se suscribe a onProgramAccountChange y recibe cada cambio de
@@ -119,6 +124,8 @@ const IX = {
   resolveDuelSol: Buffer.from([129, 41, 7, 114, 73, 244, 181, 126]),
   resolveProtocolDuel: Buffer.from([35, 255, 3, 100, 146, 192, 185, 59]),
   finalizeDaoProposal: Buffer.from([76, 23, 122, 24, 113, 102, 12, 35]),
+  cutOffMarket: Buffer.from([214, 244, 195, 23, 81, 244, 64, 75]),
+  finalizeResolution: Buffer.from([191, 74, 94, 214, 45, 150, 152, 125]),
 };
 
 export type OnChainOutcome = 'Unresolved' | 'Yes' | 'No' | 'Draw';
@@ -138,6 +145,10 @@ export type IndexedMarket = {
   noTotal: string;
   drawTotal: string;
   result: OnChainOutcome;
+  // Timestamp at which propose_resolution() registered a result. The dispute
+  // window runs from here, so the keeper needs it to know when
+  // finalize_resolution() becomes callable. 0 while nothing is proposed.
+  proposedTs: number;
 };
 
 export type IndexedPredictionOrder = {
@@ -259,10 +270,21 @@ function decodeMarket(pubkey: PublicKey, data: Buffer): IndexedMarket {
   const yesTotal = r.u64();
   const noTotal = r.u64();
   const drawTotal = r.u64();
+  // Keep walking to proposed_ts — the keeper needs it to time
+  // finalize_resolution(). Order must track state.rs::Market exactly.
+  r.u64();  // winning_total
+  r.u64();  // burned_lynx
+  r.u8();   // bump
+  r.u8();   // vault_bump
+  r.u8();   // lynx_vault_bump
+  r.u64();  // mint_ratio_bps
+  r.bool(); // swept
+  r.u8();   // proposed_result
+  const proposedTs = Number(r.i64());
   return {
     pubkey: pubkey.toBase58(), id: id.toString(), title, currency: currency as 'SOL' | 'LYNX', status, isTernary,
     cutoffTs, resolveTs, poolTotal: poolTotal.toString(), yesTotal: yesTotal.toString(),
-    noTotal: noTotal.toString(), drawTotal: drawTotal.toString(), result,
+    noTotal: noTotal.toString(), drawTotal: drawTotal.toString(), result, proposedTs,
   };
 }
 
@@ -808,9 +830,89 @@ async function runKeeperCycle(keeper: Keypair) {
   }
 
   await matchSpotOrdersOnce(keeper, conn);
+  // Before settling duels: a market finalized in this pass is marked Resolved
+  // locally, so its duels settle in the same tick instead of waiting for the
+  // next one.
+  await advanceReadyMarkets(keeper, conn);
   await settleReadyDuels(keeper, conn);
   await finalizeReadyDaoProposals(keeper, conn);
   keeperConsecutiveErrors = 0; // Reset on successful completion
+}
+
+// Advance markets through the two permissionless steps of their lifecycle.
+//
+// The pipeline is Open/Active -> [cut_off_market] -> CutOff ->
+// [propose_resolution, oracle only] -> PendingResolution -> (dispute window)
+// -> [finalize_resolution] -> Resolved, and only then can settleReadyDuels()
+// pay anything out.
+//
+// Steps 1 and 4 take no signer beyond the fee payer, but "permissionless" only
+// means anyone MAY send them — it does not mean anyone will. Nothing was
+// sending them, so markets sat in Open with their cutoff months past, duels
+// waited forever on a `Resolved` that could not arrive, and user funds stayed
+// locked in the duel vaults. Cranking them is exactly the keeper's job.
+//
+// Step 2 is deliberately NOT automated: deciding the outcome is the oracle's
+// call, not a bot's.
+async function advanceReadyMarkets(keeper: Keypair, conn: Connection) {
+  if (!PROGRAM_ID) return;
+  const now = Math.floor(Date.now() / 1000);
+
+  let treasury: PublicKey;
+  try {
+    ({ treasury } = await getConfigInfo(conn));
+  } catch {
+    return; // config not readable — skip this pass
+  }
+  const configPk = pda([Buffer.from('config')], PROGRAM_ID);
+
+  for (const m of marketsByPubkey.values()) {
+    try {
+      const marketPk = new PublicKey(m.pubkey);
+
+      // 1. Cut off a market whose betting window has closed.
+      if ((m.status === 'Open' || m.status === 'Active') && now >= m.cutoffTs) {
+        const ix = new TransactionInstruction({
+          programId: PROGRAM_ID,
+          keys: [{ pubkey: marketPk, isSigner: false, isWritable: true }],
+          data: IX.cutOffMarket,
+        });
+        const tx = new Transaction().add(ix);
+        tx.feePayer = keeper.publicKey;
+        const signature = await sendAndConfirmTransaction(conn, tx, [keeper], { commitment: 'confirmed' });
+        // Optimistic local update, same reason as the other cranks: the index
+        // is only rebuilt every REFRESH_INTERVAL_MS and we would otherwise
+        // re-send this on every tick until then.
+        m.status = 'CutOff';
+        chainLog.info('keeper cut off market', { market: m.pubkey, signature });
+        continue; // propose_resolution must come next, and only the oracle can send it
+      }
+
+      // 2. Finalize a proposed resolution whose dispute window has elapsed.
+      // Nobody disputed it, so the result stands and the funds can move.
+      if (m.status === 'PendingResolution' && m.proposedTs > 0 && now >= m.proposedTs + DISPUTE_WINDOW_SECONDS) {
+        const ix = new TransactionInstruction({
+          programId: PROGRAM_ID,
+          // Account order MUST match FinalizeResolution in lib.rs.
+          keys: [
+            { pubkey: configPk, isSigner: false, isWritable: true },
+            { pubkey: marketPk, isSigner: false, isWritable: true },
+            { pubkey: pda([Buffer.from('vault'), marketPk.toBuffer()], PROGRAM_ID), isSigner: false, isWritable: true },
+            { pubkey: pda([Buffer.from('rewards_vault')], PROGRAM_ID), isSigner: false, isWritable: true },
+            { pubkey: treasury, isSigner: false, isWritable: true },
+          ],
+          data: IX.finalizeResolution,
+        });
+        const tx = new Transaction().add(ix);
+        tx.feePayer = keeper.publicKey;
+        const signature = await sendAndConfirmTransaction(conn, tx, [keeper], { commitment: 'confirmed' });
+        m.status = 'Resolved';
+        chainLog.info('keeper finalized market resolution', { market: m.pubkey, signature });
+      }
+    } catch (err: any) {
+      chainLog.warn('keeper failed to advance market', { market: m.pubkey, status: m.status, error: err?.message });
+    }
+  }
 }
 
 // Settle duels whose parent market has resolved. Permissionless cranks
